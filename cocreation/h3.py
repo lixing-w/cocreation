@@ -20,7 +20,7 @@ class H3Runtime:
     python: str = sys.executable
     auto_setup: bool = True
     local_files_only: bool = False
-    accept_model_license: bool = False
+    accept_model_license: bool = True
     timeout: float = 7200
     startup_timeout: float = 300
 

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 import sys
-
+import time
 
 def hf_options(runtime):
     return {k: runtime[k] for k in ("cache_dir", "revision", "local_files_only")
@@ -26,6 +26,7 @@ def run_qwen(request, directory):
     import torch
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
     from qwen_vl_utils import process_vision_info
+    job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
     torch.manual_seed(opts["seed"])
@@ -49,14 +50,19 @@ def run_qwen(request, directory):
     trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
     answer = processor.batch_decode(trimmed, skip_special_tokens=True,
                                    clean_up_tokenization_spaces=False)[0]
+    
+    job_end_time = time.perf_counter()
+    execution_time = job_end_time - job_start_time
+    execution_time_f = f"{execution_time:.2f}s"
     return dict(status="ok", text=answer, model_id=request["model_id"],
-                input_tokens=int(inputs.input_ids.shape[-1]), output_tokens=len(trimmed[0]))
+                input_tokens=int(inputs.input_ids.shape[-1]), output_tokens=len(trimmed[0]), time_elapsed=execution_time_f)
 
 
 def run_flux(request, directory):
     import torch
     from diffusers import Flux2KleinPipeline
     from PIL import Image, ImageOps
+    job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
     pipe = Flux2KleinPipeline.from_pretrained(request["model_id"],
@@ -78,7 +84,10 @@ def run_flux(request, directory):
         result = pipe(**kwargs).images[0]
     output = directory / "image.png"
     result.save(output)
-    return dict(status="ok", path=str(output), kind="image", model_id=request["model_id"])
+    job_end_time = time.perf_counter()
+    execution_time = job_end_time - job_start_time
+    execution_time_f = f"{execution_time:.2f}s"
+    return dict(status="ok", path=str(output), kind="image", model_id=request["model_id"], time_elapsed=execution_time_f)
 
 
 def main():

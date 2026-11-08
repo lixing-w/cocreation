@@ -93,10 +93,13 @@ def stage_media(request, directory):
     names, totals = [], {"video": 0.0, "audio": 0.0}
     metadata = []
     for i, ref in enumerate(request["references"]):
-        path, kind = Path(ref["path"]), ref["kind"]
+        path, kind = Path(ref["path"]).expanduser().resolve(strict=True), ref["kind"] # resolve to absolute dir
         if kind == "image":
             name = f"ref_{i}{path.suffix.lower()}"
-            (directory / name).symlink_to(path)
+            target = directory / name 
+            # known issue for comfy, doesnt accept ref files outside comfy work dir
+            # cannot use symlink
+            shutil.copy2(path, target)
         else:
             if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
                 raise RuntimeError("Install ffmpeg and ffprobe before using video/audio references")
@@ -114,7 +117,8 @@ def stage_media(request, directory):
                      "-pix_fmt", "yuv420p", directory / name])
             else:
                 name = f"ref_{i}{path.suffix.lower()}"
-                (directory / name).symlink_to(path)
+                target = directory / name 
+                shutil.copy2(path, target)
             metadata.append(dict(artifact_id=ref["artifact_id"], duration=duration,
                                  video_audio_used=False if kind == "video" else None))
         names.append(name)
@@ -189,6 +193,8 @@ def server(source, python, root, job, startup_timeout):
 
 
 def execute(request, job):
+    job_start_time = time.perf_counter()
+
     rt = request["runtime"]
     if not rt["accept_model_license"]:
         raise ValueError("Model license must be accepted before download/inference")
@@ -198,8 +204,6 @@ def execute(request, job):
     with (root / "runtime.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         source, python = prepare_runtime(rt)
-        # Check CUDA before spending bandwidth on weights.
-        run([python, "-c", "import torch; assert torch.cuda.is_available(), 'No CUDA GPU available'; print(torch.cuda.get_device_name(0), torch.__version__, flush=True)"])
         files = download_models(python, root, request["options"]["variant"], rt["local_files_only"])
         graph = build_graph(request, names)
         (job / "workflow.json").write_text(json.dumps(graph, indent=2))
@@ -216,13 +220,16 @@ def execute(request, job):
         outputs = list((job / "comfy_output").rglob("*.mp4"))
         if len(outputs) != 1 or outputs[0].stat().st_size == 0:
             raise RuntimeError("Comfy did not produce exactly one nonempty MP4")
-        target = job / "video.mp4"
-        shutil.move(str(outputs[0]), target)
+        target = str(outputs[0])
+        job_end_time = time.perf_counter()
+        execution_time = job_end_time - job_start_time
+        execution_time_f = f"{execution_time:.2f}s"
         return dict(status="ok", kind="video", path=str(target), model_id=MODEL_REPO,
                     model_revision=MODEL_REVISION, comfy_revision=COMFY_REVISION,
                     weights=files, variant=request["options"]["variant"],
                     frames=request["options"]["frames"], fps=24,
-                    seconds=request["options"]["frames"] / 24, reference_media=media_info)
+                    seconds=request["options"]["frames"] / 24, reference_media=media_info,
+                    time_elapsed=execution_time_f)
 
 
 def main():

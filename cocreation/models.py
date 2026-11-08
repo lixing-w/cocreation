@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
-import uuid
+import datetime
 
 from .references import Reference, prepare
 from .h3 import H3Runtime, MODEL_REPO, frame_count
@@ -36,6 +36,7 @@ class Runtime:
             raise ValueError("CPU offload requires CUDA")
 
 
+
 class _System:
     backend: str
 
@@ -49,9 +50,13 @@ class _System:
         for ref in request["references"]:
             if not Path(ref["path"]).is_file():
                 raise FileNotFoundError(ref["path"])
+        
         with _GPU_LOCK:
             ensure_scratch()
-            job_dir = self.output_dir / uuid.uuid4().hex
+            now = datetime.datetime.now()
+            formatted_time = now.strftime("%y-%m-%d-%H-%M-%S-") + now.strftime("%f")[:3]
+            # e.g. 26-11-08-17-29-43-823
+            job_dir = self.output_dir / formatted_time
             job_dir.mkdir(parents=True)
             request_path = job_dir / "request.json"
             request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
@@ -134,7 +139,7 @@ class MiniMaxH3(_System):
         self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
-                 seconds=5.0, width=768, height=512, steps=50, seed=0, dry_run=False):
+                 seconds=15.0, width=768, height=512, steps=50, seed=0, dry_run=False):
         import math
         if not math.isfinite(seconds) or not 5 <= seconds <= 15:
             raise ValueError("H3 duration must be between 5 and 15 seconds")
