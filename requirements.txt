@@ -6,7 +6,7 @@
 torch==2.10.0+cu128
 torchvision==0.25.0+cu128
 
-# Qwen3-VL and FLUX.2-klein; FreeVideo manages its own environment.
+# Qwen3-VL and FLUX.2-klein; Comfy H3 manages its own isolated environment.
 transformers>=4.57.1,<5
 diffusers>=0.37.0,<0.38
 accelerate>=1,<2

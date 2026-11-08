@@ -9,10 +9,10 @@ import threading
 import uuid
 
 from .references import Reference, prepare
+from .h3 import H3Runtime, MODEL_REPO, frame_count
 from .storage import scratch_root, ensure_scratch, runtime_environment
 
 _GPU_LOCK = threading.RLock()
-FREEVIDEO_REVISION = "7c3a03c1a93580454f71628b78ac3df9d9e1880e"
 
 
 @dataclass(frozen=True)
@@ -34,21 +34,6 @@ class Runtime:
             raise ValueError("CPU development requires dtype='float32'")
         if self.cpu_offload and self.device == "cpu":
             raise ValueError("CPU offload requires CUDA")
-
-
-@dataclass(frozen=True)
-class VideoRuntime:
-    source_dir: str = field(default_factory=lambda: str(scratch_root() / "runtime/FreeVideo"))
-    root: str = field(default_factory=lambda: str(scratch_root() / "runtime/freevideo-runtime"))
-    gpu: str | None = None
-    prepared_format: str = "auto"
-    auto_setup: bool = True
-    accept_model_license: bool = False
-    python: str = sys.executable
-
-    def __post_init__(self):
-        if self.prepared_format not in ("auto", "int8", "fp8"):
-            raise ValueError("prepared_format must be auto, int8 or fp8")
 
 
 class _System:
@@ -106,6 +91,10 @@ class Qwen(_System):
             raise ValueError("Qwen wrapper does not support cpu_offload; use a smaller model or FP8 checkpoint")
         self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
+    def _validate(self, request):
+        if any(r["kind"] == "audio" for r in request["references"]):
+            raise ValueError("Qwen wrapper accepts images and videos, not audio")
+
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
                  max_pixels=512 * 512, seed=0, dry_run=False):
@@ -136,87 +125,45 @@ class Flux(_System):
             guidance_scale=guidance_scale, seed=seed), dry_run)
 
 
-class FreeVideo(_System):
-    backend = "freevideo"
-    model_id = "MiniMax-H3/FreeVideo"
+class MiniMaxH3(_System):
+    backend = "minimax_h3"
+    model_id = MODEL_REPO
 
     def __init__(self, *, runtime=None, output_dir=None):
-        self.runtime = runtime or VideoRuntime()
+        self.runtime = runtime or H3Runtime()
         self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
-                 seconds=5.0, width=768, height=512, seed=0,
-                 first: Reference | None = None, last: Reference | None = None, dry_run=False):
-        if not 0 < seconds <= 15 or min(width, height) < 64 or width % 64 or height % 64:
-            raise ValueError("Video duration must be (0,15]; dimensions must be multiples of 64")
-        if (first or last) and references:
-            raise ValueError("FreeVideo keyframes and references cannot be mixed")
-        anchors = [r for r in (first, last) if r is not None]
-        if any(r.kind != "image" for r in anchors):
-            raise ValueError("First/last keyframes must be images")
-        refs = list(references or anchors)
-        task = "fl2va" if first and last else "i2va" if first else "l2va" if last else "ref2va" if refs else "t2va"
-        return self._invoke(prompt, refs, dict(seconds=seconds, width=width, height=height,
-            seed=seed, task=task, first=first.artifact_id if first else None,
-            last=last.artifact_id if last else None), dry_run)
+                 seconds=5.0, width=768, height=512, steps=50, seed=0, dry_run=False):
+        import math
+        if not math.isfinite(seconds) or not 5 <= seconds <= 15:
+            raise ValueError("H3 duration must be between 5 and 15 seconds")
+        if any(not isinstance(v, int) or v < 64 or v % 32 for v in (width, height)):
+            raise ValueError("H3 dimensions must be integer multiples of 32 (>=64)")
+        if not isinstance(steps, int) or not 1 <= steps <= 10000 or not isinstance(seed, int) or not 0 <= seed < 2**64:
+            raise ValueError("Invalid H3 steps or seed")
+        refs = list(references or [])
+        counts = {kind: sum(r.kind == kind for r in refs) for kind in ("image", "video", "audio")}
+        if len(refs) > 12 or counts["image"] > 9 or max(counts["video"], counts["audio"]) > 3:
+            raise ValueError("H3 allows 9 images, 3 videos, 3 audios; 12 references total")
+        if refs and not (counts["image"] or counts["video"]):
+            raise ValueError("H3 audio references require an image or video reference")
+        variant = "ref2va" if refs else "fl2va"
+        return self._invoke(prompt, refs, dict(seconds=seconds, frames=frame_count(seconds),
+            width=width, height=height, steps=steps, seed=seed, variant=variant,
+            task="ref2va" if refs else "t2va"), dry_run)
+
+    def _validate(self, request):
+        # Re-render from original placeholders rather than replacing literal text.
+        request.update(prepare(request["original_prompt"], [Reference(r["artifact_id"], r["path"], r["kind"])
+                       for r in request["references"]], labels={"image": "Picture", "video": "Video", "audio": "Audio"}))
 
     def _execute(self, request, job_dir):
         if not sys.platform.startswith("linux"):
-            raise RuntimeError("FreeVideo execution requires a Linux NVIDIA host; use dry_run=True on Mac")
-        rt = self.runtime
-        source = Path(rt.source_dir).expanduser().resolve()
-        root = Path(rt.root).expanduser().resolve()
-        if not source.exists():
-            if not rt.auto_setup:
-                raise FileNotFoundError(source)
-            source.parent.mkdir(parents=True, exist_ok=True)
-            _run(["git", "clone", "https://github.com/FlashML-org/FreeVideo.git", str(source)], job_dir)
-            _run(["git", "-C", str(source), "checkout", "--detach", FREEVIDEO_REVISION], job_dir)
-        revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-        if revision != FREEVIDEO_REVISION:
-            raise RuntimeError(f"FreeVideo source must be pinned to {FREEVIDEO_REVISION}; got {revision}")
+            raise RuntimeError("H3 execution requires a Linux NVIDIA host; use dry_run=True on Mac")
+        if not self.runtime.accept_model_license:
+            raise ValueError("Read the MiniMax H3 model license, then set accept_model_license=True")
         env = runtime_environment()
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(source), env.get("PYTHONPATH")]))
-        # Preserve scheduler-provided visibility unless explicitly overridden.
-        gpu = rt.gpu or env.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
-        env["CUDA_VISIBLE_DEVICES"] = gpu
-        command = [rt.python, "-m", "freevideo_engine.managed", "--root", str(root)]
-        machine_path = root / "machine.json"
-        ready = machine_path.is_file() and json.loads(machine_path.read_text()).get("ready", False)
-        if not ready:
-            if not rt.auto_setup:
-                raise RuntimeError("FreeVideo runtime is not prepared and auto_setup=False")
-            setup = command + ["setup", "--yes", "--no-launch", "--network", "official",
-                               "--gpu", gpu, "--prepared-format", rt.prepared_format]
-            if rt.accept_model_license:
-                setup.append("--accept-model-license")
-            _run(setup, job_dir, env)
-        prompt_file = job_dir / "prompt.txt"
-        prompt_file.write_text(request["prompt"], encoding="utf-8")
-        media = freevideo_media(request)
-        media_file = job_dir / "media.json"
-        media_file.write_text(json.dumps(media, indent=2))
-        opts = request["options"]
-        output = job_dir / "video.mp4"
-        args = command + ["generate", "--prompt-file", str(prompt_file), "--out", str(output)]
-        for key in ("task", "seconds", "width", "height", "seed"):
-            args += ["--" + key, str(opts[key])]
-        if request["references"]:
-            args += ["--media", str(media_file)]
-        _run(args, job_dir, env)
-        if not output.is_file() or not output.stat().st_size:
-            raise RuntimeError(f"FreeVideo returned no video; see {job_dir / 'runtime.log'}")
-        (job_dir / "result.json").write_text(json.dumps(dict(status="ok", path=str(output),
-            kind="video", source_revision=revision)))
-
-
-def freevideo_media(request):
-    opts = request["options"]
-    media = {"version": 1}
-    for key in ("first", "last"):
-        if opts.get(key):
-            media[key] = request["bindings"][opts[key]]["path"]
-    if not (opts.get("first") or opts.get("last")):
-        media["references"] = [dict(path=r["path"], kind=r["kind"],
-            **({"sound": False} if r["kind"] == "video" else {})) for r in request["references"]]
-    return media
+        package_root = str(Path(__file__).resolve().parent.parent)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
+        _run([self.runtime.python, "-m", "cocreation.comfy_worker", str(job_dir)], job_dir, env)

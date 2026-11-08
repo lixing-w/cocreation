@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from cocreation import Flux, Qwen, FreeVideo, Runtime, VideoRuntime
+from cocreation import Flux, Qwen, MiniMaxH3, Runtime, H3Runtime
 from cocreation.storage import scratch_root, runtime_environment, ensure_scratch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,10 +19,10 @@ class Storage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = (Path(tmp) / "scratch").resolve()
             with patch.dict(os.environ, {"COCREATION_SCRATCH": str(target)}):
-                for cls in (Qwen, Flux, FreeVideo):
+                for cls in (Qwen, Flux, MiniMaxH3):
                     self.assertEqual(cls().output_dir, target / "runs")
                 self.assertEqual(Runtime().cache_dir, str(target / "cache/huggingface/hub"))
-                self.assertEqual(VideoRuntime().root, str(target / "runtime/freevideo-runtime"))
+                self.assertEqual(H3Runtime().root, str(target / "runtime/minimax-h3"))
                 Qwen()("hello", dry_run=True)
                 self.assertFalse(target.exists())
 

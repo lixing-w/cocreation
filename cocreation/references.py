@@ -11,21 +11,22 @@ class Reference:
     kind: str
 
     def __post_init__(self):
-        if self.kind not in ("image", "video"):
-            raise ValueError("Reference kind must be image or video")
+        if self.kind not in ("image", "video", "audio"):
+            raise ValueError("Reference kind must be image, video or audio")
         if not re.fullmatch(r"[A-Za-z0-9_.:-]+", self.artifact_id):
             raise ValueError("artifact_id must contain only letters, digits, _, ., :, -")
 
 
-def prepare(prompt: str, references: list[Reference]):
-    counts = {"image": 0, "video": 0}
+def prepare(prompt: str, references: list[Reference], *, labels=None):
+    counts = {"image": 0, "video": 0, "audio": 0}
+    labels = labels or {"image": "Image", "video": "Video", "audio": "Audio"}
     bindings = {}
     media = []
     for ref in references:
         if ref.artifact_id in bindings:
             raise ValueError(f"Duplicate artifact: {ref.artifact_id}")
         counts[ref.kind] += 1
-        label = f"<{ref.kind.title()} {counts[ref.kind]}>"
+        label = f"<{labels[ref.kind]} {counts[ref.kind]}>"
         row = dict(artifact_id=ref.artifact_id, kind=ref.kind,
                    path=str(Path(ref.path).expanduser().resolve()), label=label)
         bindings[ref.artifact_id] = row

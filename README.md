@@ -2,235 +2,159 @@
 
 Multimodal co-creation with evolving intent: synthesizing interleaved creative sessions through attribute-grounded provenance graphs.
 
-## 服务器存储：repo 在 home，大文件在 scratch
+## Python 接口
 
-服务器布局：
+| 接口 | 后端 | 输入 → 输出 |
+|---|---|---|
+| `Qwen()` | Qwen3-VL-8B | 文字、图片、视频 → 文字 |
+| `Flux()` | FLUX.2-klein-4B | 文字、图片 → PNG |
+| `MiniMaxH3()` | 本地 ComfyUI / MiniMax-H3 pruned FP8 | 文字、图片／视频／音频参考 → 带生成音轨的 MP4 |
+
+CPG、属性来源、素材版本与复杂创作意图由上层维护。封装只执行单次请求，不隐式改写 prompt，不调用官方 Context-IR 或其他云端生成服务。
+
+```python
+from cocreation import MiniMaxH3, H3Runtime, Reference
+
+image = Reference("image_2", "/path/to/image.jpg", "image")
+video = Reference("video_4", "/path/to/video.mp4", "video")
+
+result = MiniMaxH3(
+    output_dir="/path/to/output/minimax_h3",
+    runtime=H3Runtime(accept_model_license=True),
+)(
+    "Create a new shot with the main subject and visual appearance from {{artifact:image_2}}. "
+    "The camera moves just like in {{artifact:video_4}}. Keep the action coherent.",
+    [video, image], seconds=5, seed=42, dry_run=True,
+)
+```
+
+`dry_run=True` 返回可序列化计划，不读取素材、不创建目录、不启动进程、不导入 ML 库、不联网。包导入和实例化也不下载模型。真实运行改为 `dry_run=False`，且必须在 Linux NVIDIA GPU 节点上执行。许可开关是调用方的确认，不代替阅读模型许可，也不自动申请商业授权。
+
+### 自动模型选择
+
+- 没有 references：FL2VA pruned FP8，执行纯文字 `t2va`。
+- 有 references：Ref2VA pruned FP8，执行多模态 `ref2va`。
+- 图片是人物／风格等参考，不承诺成为第一帧；当前没有 `first`／`last` 接口。
+- 不提供全尺寸 DiT 的隐式回退，也不使用 Turbo LoRA。
+
+每次只加载一套 DiT；编码器和两个 VAE 共用。H3 并不自己决定权重，选择记录在请求的 `options.variant` 中。
+
+### 引用与媒体语义
+
+只替换 `{{artifact:全局ID}}`，普通文字中的数字不变。未附加 ID、重复 ID、格式错误会报错。图片、视频、音频分别按引用列表中的各自出现顺序编号。H3 使用 `<Picture 1>`、`<Video 1>`、`<Audio 1>`；Qwen/FLUX 保持原有 `<Image 1>` 标签。绑定写入请求与结果。
+
+- H3 最多 9 张图片、3 段视频、3 段独立音频，总计最多 12 个素材；独立音频必须搭配图片或视频。
+- 视频只参考画面，音轨不会隐式参与；需要声音参考时另外传 `Reference(..., kind="audio")`。
+- 视频／音频参考须为 2–15 秒，同一类型总时长不超过 15 秒。
+- 视频在任务目录中转成 24 FPS，原文件不变。为避免上游节点静默截断，参考视频长于目标视频时会报错，调用方须明确裁剪或增加 `seconds`。上游还会按 17k+5 帧规整参考末尾，最多去掉 16 帧。
+- 生成时长接受 5–15 秒，按 24 FPS 向上规整到 17k+5 帧；`seconds=5` 实际为 124 帧（约 5.167 秒）。实际帧数和时长写入结果。
+- 默认 `width=768, height=512, steps=50`，尺寸须是 32 的倍数。高分辨率、多参考和长视频的峰值显存仍需实测。
+- Qwen 包装不接收音频；FLUX 仅接收图片。
+
+## 存储与环境
+
+服务器 repo 与大文件分离：
 
 ```text
-/users/lwang223/cocreation/                 # Git repo、代码
+/users/lwang223/cocreation/
   scratch -> /users/lwang223/scratch/cocreation
 
 /users/lwang223/scratch/cocreation/
-  data/samples/                            # 下载的根素材
-  runs/example/                            # 示例生成结果
-  cache/huggingface/                        # Qwen/FLUX 权重及配套组件
-  cache/pip/                               # pip 下载缓存
-  cache/torch/、triton/、cuda/ 等             # 推理/编译缓存
-  runtime/FreeVideo/                       # FreeVideo 源码
-  runtime/freevideo-runtime/               # FreeVideo 环境和权重
-  tmp/                                    # 临时文件
+  data/samples/
+  runs/example/
+  cache/huggingface/hub/
+  cache/pip/、torch/、triton/、cuda/
+  runtime/minimax-h3/
+    ComfyUI/              # 固定提交的引擎源码
+    venv/                 # 独立 Python 环境
+    models/               # 指向 HF 缓存的符号链接
+    ready.json
+  tmp/
 ```
 
-在服务器 repo 根目录初始化一次（不下载数据/模型）：
+初始化（不下载模型）：
 
 ```sh
 cd /users/lwang223/cocreation
 python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
 ```
 
-这相当于建立 `ln -s /users/lwang223/scratch/cocreation /users/lwang223/cocreation/scratch`。Python/命令行访问 `repo/scratch/...` 时实际读写目标目录，不复制数据、不占用 home 中相同大小的空间。代码记录的绝对路径可能显示链接解析后的 `/users/lwang223/scratch/cocreation/...`，这是正常的。
+`COCREATION_SCRATCH` 可覆盖根目录。Linux 上没有符号链接且没有该变量时，真实调用会报错，避免大文件写进 home。已有普通目录、冲突链接不会被覆盖；旧文件不会被自动迁移或删除。
 
-每次新 shell / sbatch 中，在 conda 激活后、pip 安装前执行：
-
-```sh
-conda activate cocreation
-cd /users/lwang223/cocreation
-source scripts/scratch_env.sh
-python -m pip install -r requirements.txt
-python -u scripts/download_samples.py
-python -u examples/plan.py --run
-```
-
-`scratch_env.sh` 面向 Bash（适用于 Linux shell / sbatch）。它把 pip 下载缓存和临时目录等也指向 scratch。Python 控制器会自行给推理子进程设置这些路径，故运行示例不依赖记得 source；但手动 pip/conda 安装时必须先 source。已经创建的 conda 主环境不会被这个脚本搬迁：包安装位置仍由 conda 环境决定，如果主环境也太占 home，可用 `conda create --prefix /users/lwang223/scratch/cocreation/runtime/conda-main python=3.11 pip` 创建 scratch 环境，再按 prefix 激活。
-
-默认所有模型封装的输出是 `scratch/runs`，示例细分为 `scratch/runs/example/<model>`。`COCREATION_SCRATCH` 可显式覆盖存储根目录；调用方指定的 `output_dir` / `Runtime.cache_dir` / `VideoRuntime` 路径仍优先。Linux 上没有符号链接且没有环境变量时，真实下载/推理会报错，避免意外在 home 创建大目录。dry-run 仍可在 Mac 上不初始化 scratch 直接执行。
-
-初始化可重复运行；遇到已有的普通 `scratch` 目录或指向别处的链接会停止，不覆盖。旧的 repo/data、repo/runs、~/.cache 下已下载的文件**不会自动迁移或删除**。`scratch` 链接已加入 Git ignore；每台机器单独初始化。
-
-## 第一版：三个独立模型系统
-
-| Python 接口 | 默认模型 | 输入 → 输出 |
-|---|---|---|
-| `Qwen()` | `Qwen/Qwen3-VL-8B-Instruct` | 文本、图片、视频 → 文本 |
-| `Flux()` | `black-forest-labs/FLUX.2-klein-4B` | 文本、可选多张图片 → PNG |
-| `FreeVideo()` | MiniMax H3，经 FreeVideo | 文本、图片/视频参考，或首尾帧 → MP4 |
-
-CPG、attribute 的版本、历史引用及对话序列由上层脚本维护。这里仅封装单次推理；不生成 CPG、不隐式改写生成意图、不把视频悄悄变成图片。视频生图须由上层显式抽帧后交给 FLUX。
-
-### Mac 上离线开发（不会下载权重）
-
-在仓库根目录运行，无须安装 ML 库：
-
-```sh
-python3 -m unittest discover -s tests -v
-python -u examples/plan.py
-```
-
-`dry_run=True` 仅返回可序列化的请求计划：不读取参考文件、不创建任务目录、不导入 torch、不启动子进程、不联网。导入包和实例化三个系统也无下载副作用。Mac 不自动使用 Metal；如要真正进行 CPU 推理，显式指定 `Runtime(device="cpu", dtype="float32")`，但那会加载/下载模型，且速度和 RAM 成本很高。FreeVideo 真实执行仅开放给 Linux NVIDIA 环境。
-
-### GPU 机器安装与自动下载
-
-建议 conda 只管理 Python 环境，环境内用 pip 安装项目和推理依赖。在 Linux NVIDIA 机器的仓库根目录执行：
+主环境只用于控制器、Qwen 和 FLUX：
 
 ```sh
 conda create -n cocreation python=3.11 pip -y
 conda activate cocreation
-python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
+cd /users/lwang223/cocreation
 source scripts/scratch_env.sh
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip check
-python -u examples/plan.py
-```
-
-`requirements.txt` 选用 PyTorch 2.10.0 / torchvision 0.25.0 的 CUDA 12.8 wheel，版本组合来自 [PyTorch 官方安装表](https://pytorch.org/get-started/previous-versions/#v2100)。它面向 Linux NVIDIA，不用于 Mac；不是完整的传递依赖锁文件，尚待服务器实测。无需另外用 conda 安装 `cudatoolkit` 来运行这些预编译 wheel；服务器仍须有兼容的 NVIDIA 驱动。
-
-系统安装 CUDA Toolkit 12.9，不意味着 pip wheel 必须是 `cu129`：这里的 cu128 wheel 自带 CUDA 12.8 运行库，兼容的 NVIDIA 驱动可以运行它。Blackwell 支持从 [PyTorch 2.7 的 CUDA 12.8 构建](https://pytorch.org/blog/pytorch-2-7/)开始提供。若“CUDA 12.9”指 `nvidia-smi` 顶部的版本，它表示驱动支持的 CUDA 上限，并不代表环境实际安装了哪个 Toolkit。自定义 CUDA 扩展的编译则需另外核对 Toolkit 与 PyTorch 的兼容性。
-
-选择 2.10.0 是为了升级同时保留当前 qwen-vl-utils 使用的 torchvision 视频读取接口；并非声称它是最新 PyTorch。FreeVideo 使用独立环境，其驱动要求与内部 PyTorch 版本仍由上游管理。
-
-`pyproject.toml` 只保留包名、Python 要求和构建配置，所有运行依赖统一维护在 `requirements.txt`。不能只删除它：requirements 中的 `-e .` 依赖此文件安装本地 `cocreation` 包。如果未来决定完全按脚本运行，可以一起移除 `-e .` 和包安装配置，但从任意目录导入包将不再自动成立。
-
-**`examples/plan.py` 默认只打印请求计划，不生成媒体、不下载权重。** 它默认引用 `scratch/data/samples/image.jpg` 和 `scratch/data/samples/video.mp4`，由下述下载脚本生成；dry-run 不读取文件。传入 `--run` 才真正推理，`-u` 只控制输出缓冲。
-
-在已分配 GPU 的节点上检查环境：
-
-```sh
-python -c "import torch; print(torch.__version__, torch.version.cuda); print('CUDA available:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No visible GPU')"
-```
-
-本 requirements 管理主程序、Qwen 和 FLUX 的环境；FreeVideo 仍使用它自己的独立环境，避免混装其特殊依赖。安装 Python 包不会下载模型权重；首次真实推理才会下载。
-
-
-Qwen 和 FLUX 在首次真实调用中通过 `from_pretrained()` 自动获取权重、processor/tokenizer、图像模型的 text encoder、VAE、scheduler 等全部配套组件。继承 `HF_TOKEN` 等认证设置；推理子进程的 HF、Torch、编译及临时缓存统一重定向到 scratch，覆盖父环境中对应缓存路径；`Runtime` 还提供 `cache_dir`、`revision`、`local_files_only`。第二次读取本地缓存，但仍重新加载模型。
-
-FreeVideo 自带独立环境与下载器。首次真实调用会克隆源代码到 `VideoRuntime.source_dir`，固定到提交 `7c3a03c1a93580454f71628b78ac3df9d9e1880e`，然后调用官方 managed setup 的 `--no-launch` 路径，安装推理环境及其模型组件，不启动 WebUI。使用官方模型下载源。已有安装可指定 `source_dir`、`root`；`auto_setup=False` 禁止自动安装。下载/访问需要的账户授权或上游许可确认仍遵守上游行为；确认过模型条款后可设置 `accept_model_license=True` 让 setup 非交互运行。
-
-FreeVideo 在 Linux 需要其上游要求的 NVIDIA 驱动（当前说明为 580+），以及安装工具所需的网络与磁盘空间。其缓存独立于 Qwen/FLUX 的 HF 缓存，源码和运行环境默认分别在 `scratch/runtime/FreeVideo` 和 `scratch/runtime/freevideo-runtime`。不要在 Mac 上运行真实 FreeVideo 请求。
-
-### 下载少量真实根素材与运行示例
-
-之前选定的数据集是 **DAVIS 2017**（视频）和 **Open Images V7**（图片）。数据准备只用 CPU，与模型推理相互独立。
-
-```sh
-# 在已激活的 conda 环境、仓库根目录中；只需执行一次依赖安装
 conda install -c conda-forge ffmpeg -y
-python -m pip install -r requirements.txt
-
-# 仅看计划，不下载
-python -u scripts/download_samples.py --dry-run
-
-# 真正下载：默认 4 张图片、bear 和 blackswan 两个视频序列
-python -u scripts/download_samples.py
-
-# 默认 dry-run；此时路径指向已下载的真实文件
-python -u examples/plan.py
-
-# 在 CUDA 节点上真实运行三个独立调用
-python -u examples/plan.py --run
-
-# 或先只验证一个模型
-python -u examples/plan.py --run --model flux
+python -m pip check
 ```
 
-脚本按 ID 从 Open Images 官方指定的 CVDF 镜像下载图片，流式读取少量 validation 元数据；保留图片 ID、原始元数据、来源地址。DAVIS 通过 HTTP Range 读取官方 ZIP 的目录和选中帧，不下载全部压缩包或分割标注。若服务器不支持 Range 会报错，不会自动改成下载全集；可用 `--davis-zip /path/to/existing.zip` 读取已有压缩包。当前脚本尚未真实联网下载验收。
+`requirements.txt` 使用 PyTorch 2.10.0 / torchvision 0.25.0 的 cu128 wheel。驱动 575 环境不应被安装步骤替换为 cu130 wheel。Comfy 使用独立 venv，避免其 PyAV、transformers 等依赖影响 Qwen/FLUX。需要 `git`、Python 的 `venv`、网络、足够的 scratch 空间；视频／音频预处理需要 `ffmpeg` 与 `ffprobe`。
 
-DAVIS 原始发布形式是 JPEG 帧序列。脚本每段最多取前 72 帧，以 **24 FPS 的演示播放帧率**合成为无声 MP4（最多 3 秒，源序列不足 72 帧则更短）；这不是对原始拍摄帧率的确认。帧名、合成 FPS、实际时长写进 manifest，避免后续把合成时间轴误当原视频时间轴。可通过 `--max-frames` 和 `--fps` 调整，输出时长限制为 1–15 秒。
+### 首次真实调用自动准备 H3
 
-下载完成后的固定入口是：
+首次调用 `MiniMaxH3(...)(..., dry_run=False)` 时：
+
+1. 验证输入及许可确认，在 scratch 建立独立环境。
+2. 克隆 ComfyUI 并固定提交；安装 cu128 PyTorch 和 Comfy 依赖。`pip check` 通过后写入准备标记。
+3. 检查 CUDA 可用，再通过 `huggingface_hub.hf_hub_download` 获取选中任务的四个文件。
+4. 启动仅监听 `127.0.0.1` 的临时 Comfy 服务，禁用自定义节点和云端 partner 节点。
+5. 提交生成的 API 工作流，等待完成、收集 MP4，并在成功或失败后关闭服务进程。
+
+**现在安装主项目、运行测试或 dry-run 都不下载权重。** 首次纯文字调用只下载 FL2VA DiT；首次参考调用只下载 Ref2VA DiT。后续复用 HF 磁盘缓存，不重复下载共用文件。HF 认证继承 `HF_TOKEN` 等环境配置。
+
+固定版本（实现常量位于 `cocreation/h3.py`）：
+
+- ComfyUI：`0decb39ee5b5e17c200334589fc317dbbe98310e`
+- Hugging Face `Comfy-Org/MiniMax-H3`：`54472221d27c695fca9621b0c3ed52f06c4af707`
+
+下载清单：
 
 ```text
-scratch/data/samples/
-  image.jpg             # 第一张 Open Images 图片的副本
-  video.mp4             # 第一段 DAVIS 合成视频的副本
-  manifest.json         # 固定入口 → 原素材 ID，以及 SHA256
-  images.json           # 图片来源与元数据
-  videos.json           # 视频来源、帧列表、播放帧率
-  openimages/*.jpg
-  davis/<sequence>/frames/*.jpg
-  davis/<sequence>/video.mp4
+diffusion_models/minimax_h3_{fl2va或ref2va}_pruned_fp8_scaled.safetensors
+text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+vae/minimax_h3_video_vae_fp16.safetensors
+vae/minimax_h3_audio_vae_fp32.safetensors
 ```
 
-这些 data 文件不会进入 Git。默认小样本预计数 MB 到几十 MB（取决于帧内容；未实测），不是几百 GB 的全量下载。可以用 `--output-dir` 改下载目录，并把结果交给示例：
+FP8 DiT + NVFP4-AWQ 编码器负责降低主要权重占用；VAE 保持 FP16/FP32，避免依赖 cu130 的 ConvRot VAE 路径。NVFP4-AWQ 是存储格式，不承诺原生 NVFP4 加速。Comfy 的 cu128 路径会禁用它要求 cu130 的优化 CUDA 后端，使用可用的回退算子；实际性能待 GPU 验收。
+
+权重缓存完成后，可使用 `H3Runtime(auto_setup=False, local_files_only=True, accept_model_license=True)` 禁止环境安装和 HF 联网下载；缺少所需文件会报错，不自动切换任务或模型。`root` 可指定已准备的独立运行目录。`timeout` 默认 7200 秒，`startup_timeout` 默认 300 秒。
+
+## 示例与样本
 
 ```sh
-python -u examples/plan.py --image /data/my-image.jpg --video /data/my-video.mp4 --run
+# 不下载、不推理
+python examples/plan.py --model minimax_h3
+
+# 下载少量根素材（不是模型）
+python scripts/download_samples.py --dry-run
+python scripts/download_samples.py
+
+# 首次真正执行才下载 H3 模型、准备环境
+python examples/plan.py --run --model minimax_h3 --accept-model-license
 ```
 
-**真实运行的预期输出：** 三个模型顺序执行且相互独立，不把前一个生成结果再接到下一个模型。Qwen 返回对两份媒体的文字观察；FLUX 以输入图片为参考生成水彩风格图片；FreeVideo 参考图片的主体/外观和视频的镜头运动生成约 5 秒视频。随机取来的图片和视频未必语义匹配，这只是接口 smoke test，不是完整 CPG 管线，质量与属性遵循情况须看实际结果。
+示例中的 `qwen`、`flux`、`minimax_h3` 可分别运行；默认 `all` 依次调用。`--image`、`--video` 可传自己的素材，`--output-dir` 可改输出目录。
 
-默认通过仓库的 scratch 符号链接保存到 scratch 磁盘（与启动时所在目录无关）：
+样本源是 DAVIS 2017 和 Open Images V7。脚本下载少量 DAVIS JPEG 帧并以 24 FPS 合成为无声视频；这只是演示播放帧率，不是对原视频 FPS 的确认。使用 HTTP Range 读取 ZIP；不支持 Range 时可用 `--davis-zip /path/to/existing.zip`。素材来源、原始元数据和合成配置写入 manifest。数据准备独立于模型推理。
 
-```text
-scratch/runs/example/
-  qwen/<uuid>/result.json      # text、token 统计
-  flux/<uuid>/image.png
-  freevideo/<uuid>/video.mp4
+## 生命周期、日志与验证
+
+同一主进程中三个模型共享串行锁。Qwen/FLUX 使用独立子进程，H3 使用任务 worker 管理 Comfy 进程；调用结束释放显存，不让三个模型同时常驻。H3 同一个运行目录另有进程锁，避免并发修改环境。不同主进程的 Qwen/FLUX 不共享锁，服务器调度仍应保证 worker 独占 GPU；保留调度器提供的 `CUDA_VISIBLE_DEVICES`。
+
+每个任务保存 `request.json`、`runtime.log`、`result.json`；H3 另存 `workflow.json`、`history.json`、预处理输入和 `video.mp4`。返回结果含路径、绑定、版本、实际帧数。失败抛异常并保留日志，不返回占位生成结果。
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 examples/plan.py
 ```
 
-每个任务目录还含 `request.json`、`result.json`、`runtime.log`；终端每完成一个模型立即打印结果和绝对路径，失败时保留已完成任务。日志内容在 `runtime.log` 中，不会持续打印模型加载进度。可以用 `--output-dir /scratch/my-run` 改输出根目录。FreeVideo 首次 setup 如果需要确认上游许可，在确认后传 `--accept-model-license`；已准备好的运行环境直接复用。
+已做离线接口、路由、下载清单、参考视频规整、错误传播和服务清理测试，并对照固定 Comfy 源码核实节点接口。**尚未下载权重或进行 GPU 端到端推理**，因此 575 驱动上的依赖安装、显存峰值、NVFP4 回退与生成质量仍须在服务器首次运行验收。依赖包含上游版本范围，不是完整的传递依赖锁文件。
 
-数据规模参考：DAVIS trainval 480p 官方 ZIP 的 HTTP Content-Length 为 **832,766,765 字节（约 833 MB / 794 MiB）**，包含图片和标注，脚本只读取选中帧。Open Images V7 约 900 万张图；官方指定的 CVDF 1024px 稠密标注子集约 190 万张、**561 GB**，其中 validation 41,620 张、约 **12 GB**。CVDF 对全部原分辨率图的历史估计约 **18 TB**，不是本脚本会下载的数量。
-
-来源：[DAVIS 官方下载页](https://davischallenge.org/davis2017/code.html)、[Open Images V7](https://storage.googleapis.com/openimages/web/download_v7.html)、[CVDF 下载规模](https://github.com/cvdfoundation/open-images-dataset)。
-
-### 调用示例
-
-```python
-from cocreation import Qwen, Flux, FreeVideo, Reference, Runtime, VideoRuntime
-
-qwen = Qwen()
-image_model = Flux(runtime=Runtime(cpu_offload=True))
-video_model = FreeVideo()
-
-video4 = Reference("video_4", "/data/video4.mp4", "video")
-video5 = Reference("video_5", "/data/video5.mp4", "video")
-portrait = Reference("portrait_v2", "/data/portrait.png", "image")
-
-plan = video_model(
-    "The camera moves forward, just like in {{artifact:video_4}}. "
-    "Use the character from {{artifact:video_5}}.",
-    references=[video4, video5],
-    seconds=5, seed=42, dry_run=True,
-)
-assert "<Video 1>" in plan["prompt"]
-assert plan["bindings"]["video_5"]["label"] == "<Video 2>"
-
-# GPU 机器上：删去 dry_run=True 才会下载/加载权重并推理。
-observation = qwen(
-    "Describe the camera motion in {{artifact:video_4}}.",
-    [video4], video_fps=1, video_max_frames=16, dry_run=True,
-)
-edit = image_model(
-    "Keep the identity in {{artifact:portrait_v2}}, change the hair to red.",
-    [portrait], seed=42, dry_run=True,
-)
-animation = video_model("The character turns and smiles.", first=portrait, dry_run=True)
-```
-
-只替换 `{{artifact:全局ID}}`，不做普通字符串的数字替换。引用列表顺序决定局部编号；图片与视频分别编号。每个 ID 应指向不可变的 artifact 版本。文本中 `just like` 等属性引用语义由调用方提供，封装保留原意并把对应文件一起传给模型。未挂载的 ID 和重复 ID 会报错。
-
-Qwen 的视频按可配置 fps 和帧数上限采样，同时将时间信息传给 processor；这只是输入采样，不是完整的上下文压缩系统。第一版 Qwen 使用确定性解码，可配置输出 token 数和视觉像素预算。
-
-FreeVideo 自动选择 `t2va`、`ref2va`、`i2va`、`l2va`、`fl2va`。首尾帧不能与普通参考列表混用。第一版不输入参考音轨（视频参考带 `sound:false`）；生成 MP4 仍可能包含模型生成的声音。参考时长、帧规整、数量和显存限制仍由上游执行；上游可能截短长参考，具体见每次调用的 `runtime.log`。不要把接口接收多参考理解成质量或任意数量的保证。
-
-### 单卡生命周期与输出
-
-同一主进程内的所有真实模型调用共用串行锁。Qwen/FLUX 每次在新 Python 子进程中加载并推理；子进程退出后释放全部模型组件和 CUDA 内存。FreeVideo 通过自己的 managed 运行环境启动推理进程。这样避免三个模型同时驻留；代价是每次重新加载。**这里保留磁盘权重缓存，不保留 RAM 中的常驻模型。** 不进行模型跨卡切分。
-
-每次真实调用创建独立 `scratch/runs/<uuid>/`，保存：
-
-- `request.json`：原始/实际 prompt、引用顺序、全局→局部映射、模型配置、seed。
-- `runtime.log`：加载和推理日志，包括失败信息。
-- `result.json`：文本结果或生成媒体路径。
-- `image.png` 或 `video.mp4`：生成产物；FreeVideo 另外保存 `prompt.txt`、`media.json`。
-
-函数返回字典，含 `text` 或 `path`，以及 `job_dir`、`request_path` 和 `bindings`。失败直接抛异常，保留日志，不用占位输出伪装成功。
-
-默认 Qwen/FLUX 使用 CUDA BF16。FLUX 可开 CPU offload；Qwen 可显式选择兼容的官方 FP8 checkpoint（例如 `Qwen/Qwen3-VL-8B-Instruct-FP8`，需要相应 GPU/运行库支持），这里不做未经验证的通用 INT8 转换。FreeVideo 通过 `prepared_format="auto"/"int8"/"fp8"` 使用其官方硬件策略。`CUDA_VISIBLE_DEVICES` 会被保留；FreeVideo 默认取其中第一张，显式 `VideoRuntime(gpu=...)` 可覆盖。不同外部主进程之间不共享这里的串行锁，调度时每个 worker 应独占一张 GPU。
-
-### 验证范围
-
-目前只完成无权重离线接口测试与官方源代码对照，尚未完成真实 CUDA 推理、显存测量或生成质量验收。依赖版本范围不是已验证的 GPU 环境锁文件；首次服务器 smoke test 后再锁定完整环境。
-
-接口依据：[Qwen3-VL 官方示例](https://github.com/QwenLM/Qwen3-VL)、[FLUX 模型卡](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)、[Diffusers v0.37.0 Klein 实现](https://github.com/huggingface/diffusers/blob/v0.37.0/src/diffusers/pipelines/flux2/pipeline_flux2_klein.py)、[FreeVideo 固定版本](https://github.com/FlashML-org/FreeVideo/tree/7c3a03c1a93580454f71628b78ac3df9d9e1880e)。
+参考：[H3 模型文件](https://huggingface.co/Comfy-Org/MiniMax-H3)、[Comfy H3 节点](https://github.com/Comfy-Org/ComfyUI/blob/0decb39ee5b5e17c200334589fc317dbbe98310e/comfy_extras/nodes_minimax_h3.py)、[Comfy 本地 API](https://docs.comfy.org/development/comfyui-server/comms_routes)。

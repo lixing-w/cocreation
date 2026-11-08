@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from cocreation import Flux, FreeVideo, Qwen, Reference, Runtime, VideoRuntime
-from cocreation.models import freevideo_media, FREEVIDEO_REVISION
+from cocreation import Flux, MiniMaxH3, Qwen, Reference, Runtime, H3Runtime
+from cocreation.h3 import build_graph, model_files
 from cocreation.worker import qwen_messages
 
 
@@ -40,32 +40,40 @@ class Contracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             Flux()("x", [Reference("v", "v.mp4", "video")], dry_run=True)
 
-    def test_video_tasks_and_media(self):
-        image = Reference("i", "i.png", "image")
-        last = Reference("j", "j.png", "image")
-        video = Reference("v", "v.mp4", "video")
-        for kwargs, task in [({}, "t2va"), ({"first": image}, "i2va"),
-            ({"last": last}, "l2va"), ({"first": image, "last": last}, "fl2va"),
-            ({"references": [video, image]}, "ref2va")]:
-            request = FreeVideo()("x", dry_run=True, **kwargs)
-            self.assertEqual(request["options"]["task"], task)
-            media = freevideo_media(request)
-            self.assertEqual(media["version"], 1)
-            if task == "ref2va":
-                self.assertEqual(media["references"][0]["sound"], False)
-                self.assertNotIn("artifact_id", media["references"][0])
-            if task == "fl2va":
-                self.assertNotIn("references", media)
+    def test_h3_routing_labels_and_graph(self):
+        refs = [Reference("v", "v.mp4", "video"), Reference("i", "i.png", "image"),
+                Reference("a", "a.wav", "audio")]
+        for selected, variant in [([], "fl2va"), (refs, "ref2va")]:
+            prompt = "x" if not selected else "{{artifact:i}} moves like {{artifact:v}} with {{artifact:a}}"
+            request = MiniMaxH3()(prompt, selected, dry_run=True)
+            self.assertEqual(request["options"]["variant"], variant)
+            self.assertEqual(request["options"]["frames"], 124)
+            graph = build_graph(request, [Path(r.path).name for r in selected])
+            self.assertIn(variant + "_pruned_fp8_scaled", graph["model"]["inputs"]["unet_name"])
+            self.assertEqual(graph["video"]["inputs"]["audio"], ["decode_audio", 0])
+            if selected:
+                self.assertEqual(request["prompt"], "<Picture 1> moves like <Video 1> with <Audio 1>")
+                self.assertEqual(graph["condition"]["inputs"]["ref_videos.ref_video_0"], ["media_0_components", 0])
+                self.assertNotIn("ref_video_audios.ref_video_audio_0", graph["condition"]["inputs"])
+            self.assertEqual(len(model_files(variant)), 4)
+
+    def test_h3_input_limits(self):
         with self.assertRaises(ValueError):
-            FreeVideo()("x", [video], first=image, dry_run=True)
+            MiniMaxH3()("x", seconds=0, dry_run=True)
+        with self.assertRaises(ValueError):
+            MiniMaxH3()("x", [Reference("a", "a.wav", "audio")], dry_run=True)
+        with self.assertRaises(ValueError):
+            MiniMaxH3()("x", [Reference(str(i), "a.png", "image") for i in range(10)], dry_run=True)
+        with self.assertRaises(ValueError):
+            Qwen()("x", [Reference("a", "a.wav", "audio")], dry_run=True)
 
     def test_dry_run_has_no_side_effects_or_heavy_imports(self):
         script = '''
 import sys
 from unittest.mock import patch
-from cocreation import Qwen, Flux, FreeVideo
+from cocreation import Qwen, Flux, MiniMaxH3
 with patch('subprocess.run', side_effect=AssertionError('spawned')):
-    for cls in (Qwen, Flux, FreeVideo):
+    for cls in (Qwen, Flux, MiniMaxH3):
         assert cls()('hello', dry_run=True)['status'] == 'planned'
 assert not {'torch','transformers','diffusers','qwen_vl_utils'} & set(sys.modules)
 '''
@@ -98,26 +106,19 @@ assert not {'torch','transformers','diffusers','qwen_vl_utils'} & set(sys.module
                 with self.assertRaisesRegex(RuntimeError, "runtime.log"):
                     Qwen(output_dir=tmp)("hello")
 
-    def test_freevideo_command_and_result(self):
+    def test_h3_worker_command_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            source, root = base / "source", base / "runtime"
-            source.mkdir()
-            root.mkdir()
-            (root / "machine.json").write_text('{"ready":true}')
             calls = []
             def fake_run(command, **kwargs):
                 calls.append(command)
-                output = Path(command[command.index("--out") + 1])
-                output.write_bytes(b"fake video")
-            rt = VideoRuntime(source_dir=str(source), root=str(root), auto_setup=False)
-            with patch("cocreation.models.sys.platform", "linux"), \
-                 patch("subprocess.check_output", return_value=FREEVIDEO_REVISION), \
-                 patch("subprocess.run", side_effect=fake_run):
-                result = FreeVideo(runtime=rt, output_dir=base / "jobs")("hello")
+                job = Path(command[-1])
+                (job / "video.mp4").write_bytes(b"video")
+                (job / "result.json").write_text(json.dumps(dict(status="ok", kind="video", path=str(job / "video.mp4"))))
+            with patch("cocreation.models.sys.platform", "linux"), patch("subprocess.run", side_effect=fake_run):
+                result = MiniMaxH3(runtime=H3Runtime(accept_model_license=True), output_dir=tmp)("hello")
             self.assertEqual(result["kind"], "video")
-            self.assertEqual(calls[0][calls[0].index("--task") + 1], "t2va")
-            self.assertNotIn("--media", calls[0])
+            self.assertEqual(calls[0][1:3], ["-m", "cocreation.comfy_worker"])
+
 
 
 if __name__ == "__main__":

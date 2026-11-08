@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
     sys.path.insert(0, str(ROOT))
 
-from cocreation import Flux, FreeVideo, Qwen, Reference, Runtime, VideoRuntime
+from cocreation import Flux, MiniMaxH3, Qwen, Reference, Runtime, H3Runtime
 from cocreation.storage import scratch_root
 
 
@@ -17,11 +17,11 @@ def main():
     parser.add_argument("--image", type=Path, default=scratch_root() / "data/samples/image.jpg")
     parser.add_argument("--video", type=Path, default=scratch_root() / "data/samples/video.mp4")
     parser.add_argument("--output-dir", type=Path, default=scratch_root() / "runs/example")
-    parser.add_argument("--model", choices=["all", "qwen", "flux", "freevideo"], default="all")
+    parser.add_argument("--model", choices=["all", "qwen", "flux", "minimax_h3"], default="all")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--run", action="store_true", help="Actually load/download models and run inference")
     mode.add_argument("--dry-run", action="store_true", help="Plan only (the default)")
-    parser.add_argument("--accept-model-license", action="store_true", help="Pass license acceptance to FreeVideo setup")
+    parser.add_argument("--accept-model-license", action="store_true", help="Acknowledge the MiniMax H3 model license before real execution")
     args = parser.parse_args()
     image_path = args.image.expanduser().resolve()
     video_path = args.video.expanduser().resolve()
@@ -39,11 +39,11 @@ def main():
             "Describe the main subjects, colors, background and composition in {{artifact:image_2}}. "
             "Then describe the subject motion and camera motion in {{artifact:video_4}}.",
             [image, video], dry_run=dry_run),
-        "flux": lambda: Flux(output_dir=output / "flux", runtime=Runtime(cpu_offload=True))(
+        "flux": lambda: Flux(output_dir=output / "flux")(
             "Create a watercolor illustration of {{artifact:image_2}}. "
             "Preserve the main subjects and composition, change only the visual style.",
             [image], seed=42, dry_run=dry_run),
-        "freevideo": lambda: FreeVideo(output_dir=output / "freevideo", runtime=VideoRuntime(
+        "minimax_h3": lambda: MiniMaxH3(output_dir=output / "minimax_h3", runtime=H3Runtime(
             accept_model_license=args.accept_model_license))(
             "Create a new shot with the main subject and visual appearance from {{artifact:image_2}}. "
             "The camera moves just like in {{artifact:video_4}}. Keep the action coherent.",
