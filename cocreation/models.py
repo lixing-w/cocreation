@@ -1,5 +1,5 @@
 """Lightweight controller. Heavy runtimes exist only in inference children."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
@@ -9,6 +9,7 @@ import threading
 import uuid
 
 from .references import Reference, prepare
+from .storage import scratch_root, ensure_scratch, runtime_environment
 
 _GPU_LOCK = threading.RLock()
 FREEVIDEO_REVISION = "7c3a03c1a93580454f71628b78ac3df9d9e1880e"
@@ -18,7 +19,7 @@ FREEVIDEO_REVISION = "7c3a03c1a93580454f71628b78ac3df9d9e1880e"
 class Runtime:
     device: str = "cuda:0"
     dtype: str = "bfloat16"
-    cache_dir: str | None = None
+    cache_dir: str | None = field(default_factory=lambda: str(scratch_root() / "cache/huggingface/hub"))
     revision: str | None = None
     local_files_only: bool = False
     cpu_offload: bool = False
@@ -37,8 +38,8 @@ class Runtime:
 
 @dataclass(frozen=True)
 class VideoRuntime:
-    source_dir: str = "~/.cache/cocreation/FreeVideo"
-    root: str = "~/.cache/cocreation/freevideo-runtime"
+    source_dir: str = field(default_factory=lambda: str(scratch_root() / "runtime/FreeVideo"))
+    root: str = field(default_factory=lambda: str(scratch_root() / "runtime/freevideo-runtime"))
     gpu: str | None = None
     prepared_format: str = "auto"
     auto_setup: bool = True
@@ -64,6 +65,7 @@ class _System:
             if not Path(ref["path"]).is_file():
                 raise FileNotFoundError(ref["path"])
         with _GPU_LOCK:
+            ensure_scratch()
             job_dir = self.output_dir / uuid.uuid4().hex
             job_dir.mkdir(parents=True)
             request_path = job_dir / "request.json"
@@ -79,7 +81,7 @@ class _System:
         pass
 
     def _execute(self, request, job_dir):
-        env = os.environ.copy()
+        env = runtime_environment()
         package_root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
         _run([self.runtime.python, "-m", "cocreation.worker", str(job_dir)], job_dir, env)
@@ -89,7 +91,7 @@ def _run(command, job_dir, env=None):
     log = job_dir / "runtime.log"
     with log.open("a") as stream:
         try:
-            subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT, env=env)
+            subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT, env=env if env is not None else runtime_environment())
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"Inference/setup failed (exit {exc.returncode}); see {log}") from exc
 
@@ -97,12 +99,12 @@ def _run(command, job_dir, env=None):
 class Qwen(_System):
     backend = "qwen"
 
-    def __init__(self, model_id="Qwen/Qwen3-VL-8B-Instruct", *, runtime=None, output_dir="runs"):
+    def __init__(self, model_id="Qwen/Qwen3-VL-8B-Instruct", *, runtime=None, output_dir=None):
         self.model_id = model_id
         self.runtime = runtime or Runtime()
         if self.runtime.cpu_offload:
             raise ValueError("Qwen wrapper does not support cpu_offload; use a smaller model or FP8 checkpoint")
-        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
@@ -117,10 +119,10 @@ class Qwen(_System):
 class Flux(_System):
     backend = "flux"
 
-    def __init__(self, model_id="black-forest-labs/FLUX.2-klein-4B", *, runtime=None, output_dir="runs"):
+    def __init__(self, model_id="black-forest-labs/FLUX.2-klein-4B", *, runtime=None, output_dir=None):
         self.model_id = model_id
         self.runtime = runtime or Runtime()
-        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def _validate(self, request):
         if any(r["kind"] != "image" for r in request["references"]):
@@ -138,9 +140,9 @@ class FreeVideo(_System):
     backend = "freevideo"
     model_id = "MiniMax-H3/FreeVideo"
 
-    def __init__(self, *, runtime=None, output_dir="runs"):
+    def __init__(self, *, runtime=None, output_dir=None):
         self.runtime = runtime or VideoRuntime()
-        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  seconds=5.0, width=768, height=512, seed=0,
@@ -173,7 +175,7 @@ class FreeVideo(_System):
         revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
         if revision != FREEVIDEO_REVISION:
             raise RuntimeError(f"FreeVideo source must be pinned to {FREEVIDEO_REVISION}; got {revision}")
-        env = os.environ.copy()
+        env = runtime_environment()
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(source), env.get("PYTHONPATH")]))
         # Preserve scheduler-provided visibility unless explicitly overridden.
         gpu = rt.gpu or env.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]

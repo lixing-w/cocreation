@@ -8,10 +8,14 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
+from cocreation.storage import scratch_root, ensure_scratch
 DAVIS_URL = "https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip"
 OI_METADATA = "https://storage.googleapis.com/openimages/2018_04/validation/validation-images-with-rotation.csv"
 OI_BUCKET = "https://open-images-dataset.s3.amazonaws.com/validation/"
@@ -120,7 +124,7 @@ def download_videos(directory, sequences, frame_limit, fps, ffmpeg, local_zip=No
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "data" / "samples")
+    parser.add_argument("--output-dir", type=Path, default=scratch_root() / "data" / "samples")
     parser.add_argument("--images", type=int, default=4)
     parser.add_argument("--sequences", nargs="+", default=["bear", "blackswan"])
     parser.add_argument("--max-frames", type=int, default=72)
@@ -141,6 +145,7 @@ def main():
             openimages_metadata=OI_METADATA, image_path=str(directory / "image.jpg"),
             video_path=str(directory / "video.mp4")), indent=2))
         return
+    ensure_scratch()
     ffmpeg = shutil.which(args.ffmpeg)
     if not ffmpeg:
         parser.error("ffmpeg is required; install it with conda install -c conda-forge ffmpeg")

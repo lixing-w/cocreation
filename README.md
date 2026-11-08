@@ -2,6 +2,51 @@
 
 Multimodal co-creation with evolving intent: synthesizing interleaved creative sessions through attribute-grounded provenance graphs.
 
+## 服务器存储：repo 在 home，大文件在 scratch
+
+服务器布局：
+
+```text
+/users/lwang223/cocreation/                 # Git repo、代码
+  scratch -> /users/lwang223/scratch/cocreation
+
+/users/lwang223/scratch/cocreation/
+  data/samples/                            # 下载的根素材
+  runs/example/                            # 示例生成结果
+  cache/huggingface/                        # Qwen/FLUX 权重及配套组件
+  cache/pip/                               # pip 下载缓存
+  cache/torch/、triton/、cuda/ 等             # 推理/编译缓存
+  runtime/FreeVideo/                       # FreeVideo 源码
+  runtime/freevideo-runtime/               # FreeVideo 环境和权重
+  tmp/                                    # 临时文件
+```
+
+在服务器 repo 根目录初始化一次（不下载数据/模型）：
+
+```sh
+cd /users/lwang223/cocreation
+python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
+```
+
+这相当于建立 `ln -s /users/lwang223/scratch/cocreation /users/lwang223/cocreation/scratch`。Python/命令行访问 `repo/scratch/...` 时实际读写目标目录，不复制数据、不占用 home 中相同大小的空间。代码记录的绝对路径可能显示链接解析后的 `/users/lwang223/scratch/cocreation/...`，这是正常的。
+
+每次新 shell / sbatch 中，在 conda 激活后、pip 安装前执行：
+
+```sh
+conda activate cocreation
+cd /users/lwang223/cocreation
+source scripts/scratch_env.sh
+python -m pip install -r requirements.txt
+python -u scripts/download_samples.py
+python -u examples/plan.py --run
+```
+
+`scratch_env.sh` 面向 Bash（适用于 Linux shell / sbatch）。它把 pip 下载缓存和临时目录等也指向 scratch。Python 控制器会自行给推理子进程设置这些路径，故运行示例不依赖记得 source；但手动 pip/conda 安装时必须先 source。已经创建的 conda 主环境不会被这个脚本搬迁：包安装位置仍由 conda 环境决定，如果主环境也太占 home，可用 `conda create --prefix /users/lwang223/scratch/cocreation/runtime/conda-main python=3.11 pip` 创建 scratch 环境，再按 prefix 激活。
+
+默认所有模型封装的输出是 `scratch/runs`，示例细分为 `scratch/runs/example/<model>`。`COCREATION_SCRATCH` 可显式覆盖存储根目录；调用方指定的 `output_dir` / `Runtime.cache_dir` / `VideoRuntime` 路径仍优先。Linux 上没有符号链接且没有环境变量时，真实下载/推理会报错，避免意外在 home 创建大目录。dry-run 仍可在 Mac 上不初始化 scratch 直接执行。
+
+初始化可重复运行；遇到已有的普通 `scratch` 目录或指向别处的链接会停止，不覆盖。旧的 repo/data、repo/runs、~/.cache 下已下载的文件**不会自动迁移或删除**。`scratch` 链接已加入 Git ignore；每台机器单独初始化。
+
 ## 第一版：三个独立模型系统
 
 | Python 接口 | 默认模型 | 输入 → 输出 |
@@ -30,6 +75,8 @@ python -u examples/plan.py
 ```sh
 conda create -n cocreation python=3.11 pip -y
 conda activate cocreation
+python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
+source scripts/scratch_env.sh
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip check
@@ -44,7 +91,7 @@ python -u examples/plan.py
 
 `pyproject.toml` 只保留包名、Python 要求和构建配置，所有运行依赖统一维护在 `requirements.txt`。不能只删除它：requirements 中的 `-e .` 依赖此文件安装本地 `cocreation` 包。如果未来决定完全按脚本运行，可以一起移除 `-e .` 和包安装配置，但从任意目录导入包将不再自动成立。
 
-**`examples/plan.py` 默认只打印请求计划，不生成媒体、不下载权重。** 它默认引用 `data/samples/image.jpg` 和 `data/samples/video.mp4`，由下述下载脚本生成；dry-run 不读取文件。传入 `--run` 才真正推理，`-u` 只控制输出缓冲。
+**`examples/plan.py` 默认只打印请求计划，不生成媒体、不下载权重。** 它默认引用 `scratch/data/samples/image.jpg` 和 `scratch/data/samples/video.mp4`，由下述下载脚本生成；dry-run 不读取文件。传入 `--run` 才真正推理，`-u` 只控制输出缓冲。
 
 在已分配 GPU 的节点上检查环境：
 
@@ -55,11 +102,11 @@ python -c "import torch; print(torch.__version__, torch.version.cuda); print('CU
 本 requirements 管理主程序、Qwen 和 FLUX 的环境；FreeVideo 仍使用它自己的独立环境，避免混装其特殊依赖。安装 Python 包不会下载模型权重；首次真实推理才会下载。
 
 
-Qwen 和 FLUX 在首次真实调用中通过 `from_pretrained()` 自动获取权重、processor/tokenizer、图像模型的 text encoder、VAE、scheduler 等全部配套组件。遵循 Hugging Face 的 `HF_HOME`、`HF_TOKEN` 和缓存约定；`Runtime` 还提供 `cache_dir`、`revision`、`local_files_only`。第二次读取本地缓存，但仍重新加载模型。
+Qwen 和 FLUX 在首次真实调用中通过 `from_pretrained()` 自动获取权重、processor/tokenizer、图像模型的 text encoder、VAE、scheduler 等全部配套组件。继承 `HF_TOKEN` 等认证设置；推理子进程的 HF、Torch、编译及临时缓存统一重定向到 scratch，覆盖父环境中对应缓存路径；`Runtime` 还提供 `cache_dir`、`revision`、`local_files_only`。第二次读取本地缓存，但仍重新加载模型。
 
 FreeVideo 自带独立环境与下载器。首次真实调用会克隆源代码到 `VideoRuntime.source_dir`，固定到提交 `7c3a03c1a93580454f71628b78ac3df9d9e1880e`，然后调用官方 managed setup 的 `--no-launch` 路径，安装推理环境及其模型组件，不启动 WebUI。使用官方模型下载源。已有安装可指定 `source_dir`、`root`；`auto_setup=False` 禁止自动安装。下载/访问需要的账户授权或上游许可确认仍遵守上游行为；确认过模型条款后可设置 `accept_model_license=True` 让 setup 非交互运行。
 
-FreeVideo 在 Linux 需要其上游要求的 NVIDIA 驱动（当前说明为 580+），以及安装工具所需的网络与磁盘空间。其缓存独立于 Qwen/FLUX 的 HF 缓存。不要在 Mac 上运行真实 FreeVideo 请求。
+FreeVideo 在 Linux 需要其上游要求的 NVIDIA 驱动（当前说明为 580+），以及安装工具所需的网络与磁盘空间。其缓存独立于 Qwen/FLUX 的 HF 缓存，源码和运行环境默认分别在 `scratch/runtime/FreeVideo` 和 `scratch/runtime/freevideo-runtime`。不要在 Mac 上运行真实 FreeVideo 请求。
 
 ### 下载少量真实根素材与运行示例
 
@@ -93,7 +140,7 @@ DAVIS 原始发布形式是 JPEG 帧序列。脚本每段最多取前 72 帧，�
 下载完成后的固定入口是：
 
 ```text
-data/samples/
+scratch/data/samples/
   image.jpg             # 第一张 Open Images 图片的副本
   video.mp4             # 第一段 DAVIS 合成视频的副本
   manifest.json         # 固定入口 → 原素材 ID，以及 SHA256
@@ -112,10 +159,10 @@ python -u examples/plan.py --image /data/my-image.jpg --video /data/my-video.mp4
 
 **真实运行的预期输出：** 三个模型顺序执行且相互独立，不把前一个生成结果再接到下一个模型。Qwen 返回对两份媒体的文字观察；FLUX 以输入图片为参考生成水彩风格图片；FreeVideo 参考图片的主体/外观和视频的镜头运动生成约 5 秒视频。随机取来的图片和视频未必语义匹配，这只是接口 smoke test，不是完整 CPG 管线，质量与属性遵循情况须看实际结果。
 
-默认保存到仓库下（与启动时所在目录无关）：
+默认通过仓库的 scratch 符号链接保存到 scratch 磁盘（与启动时所在目录无关）：
 
 ```text
-runs/example/
+scratch/runs/example/
   qwen/<uuid>/result.json      # text、token 统计
   flux/<uuid>/image.png
   freevideo/<uuid>/video.mp4
@@ -171,7 +218,7 @@ FreeVideo 自动选择 `t2va`、`ref2va`、`i2va`、`l2va`、`fl2va`。首尾帧
 
 同一主进程内的所有真实模型调用共用串行锁。Qwen/FLUX 每次在新 Python 子进程中加载并推理；子进程退出后释放全部模型组件和 CUDA 内存。FreeVideo 通过自己的 managed 运行环境启动推理进程。这样避免三个模型同时驻留；代价是每次重新加载。**这里保留磁盘权重缓存，不保留 RAM 中的常驻模型。** 不进行模型跨卡切分。
 
-每次真实调用创建独立 `runs/<uuid>/`，保存：
+每次真实调用创建独立 `scratch/runs/<uuid>/`，保存：
 
 - `request.json`：原始/实际 prompt、引用顺序、全局→局部映射、模型配置、seed。
 - `runtime.log`：加载和推理日志，包括失败信息。

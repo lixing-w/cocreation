@@ -9,13 +9,14 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(ROOT))
 
 from cocreation import Flux, FreeVideo, Qwen, Reference, Runtime, VideoRuntime
+from cocreation.storage import scratch_root
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, default=ROOT / "data/samples/image.jpg")
-    parser.add_argument("--video", type=Path, default=ROOT / "data/samples/video.mp4")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "runs/example")
+    parser.add_argument("--image", type=Path, default=scratch_root() / "data/samples/image.jpg")
+    parser.add_argument("--video", type=Path, default=scratch_root() / "data/samples/video.mp4")
+    parser.add_argument("--output-dir", type=Path, default=scratch_root() / "runs/example")
     parser.add_argument("--model", choices=["all", "qwen", "flux", "freevideo"], default="all")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--run", action="store_true", help="Actually load/download models and run inference")

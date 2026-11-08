@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,13 @@ from cocreation.worker import qwen_messages
 
 
 class Contracts(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        env_patch = patch.dict(os.environ, {"COCREATION_SCRATCH": temporary.name})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
     def test_numbering_preserves_order_per_kind(self):
         refs = [Reference("v4", "4.mp4", "video"), Reference("i7", "7.png", "image"),
                 Reference("v5", "5.mp4", "video")]
