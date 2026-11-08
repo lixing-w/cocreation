@@ -1,0 +1,23 @@
+# Linux NVIDIA / Python 3.11. Run from the repository root.
+# CUDA 12.9 hosts can use these CUDA 12.8 wheels with a compatible NVIDIA driver.
+# Blackwell support is included; keep torchvision paired with torch.
+# Explicit +cu128 pins prevent silently selecting CPU wheels.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
+
+# Qwen3-VL and FLUX.2-klein; FreeVideo manages its own environment.
+transformers>=4.57.1,<5
+diffusers>=0.37.0,<0.38
+accelerate>=1,<2
+qwen-vl-utils==0.0.14
+Pillow>=10,<13
+av>=14,<17
+safetensors>=0.4,<1
+sentencepiece>=0.2,<0.3
+
+# Small dataset subset downloader (HTTP Range ZIP reads).
+remotezip>=0.12.3,<0.13
+
+# Install this repository so imports also work outside its root.
+-e .

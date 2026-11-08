@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cocreation"
+version = "0.1.0"
+description = "Lazy, single-GPU model adapters for CPG data generation"
+requires-python = ">=3.10"
+dependencies = []
+
+# Runtime dependencies are maintained in requirements.txt.
+# Retain this metadata for the editable installation (-e .).
+
+[tool.setuptools.packages.find]
+include = ["cocreation*"]
