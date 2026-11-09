@@ -51,8 +51,22 @@ def patch_sources(freevideo, comfy):
     if marker not in text:
         text += marker + "def installed_backends():\n    return {'cudnn', 'torch-flash'}\n"
         hardware.write_text(text)
+    # Torch 2.10 cannot parse the newer pinned-host allocator rounding option.
+    # Patch the policy too: encoder/decode children overwrite inherited settings.
+    allocator_files = []
+    for name, before, after in (
+        ('policy.py', 'backend:native,pinned_max_round_threshold_mb:1,expandable_segments:True',
+         'backend:native,expandable_segments:True'),
+        ('generate.py', 'backend:native,pinned_max_round_threshold_mb:128', 'backend:native'),
+        ('prediction_cli.py', 'backend:native,pinned_max_round_threshold_mb:128', 'backend:native'),
+    ):
+        path = freevideo / 'freevideo_engine' / name
+        # Include quotes so a short replacement cannot match the old literal.
+        replace_once(path, repr(before), repr(after))
+        allocator_files.append((freevideo, path))
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for root, p in ((freevideo, encoder), (freevideo, hardware), (comfy, quant))}
+            for root, p in [(freevideo, encoder), (freevideo, hardware), (comfy, quant),
+                            *allocator_files]}
 
 
 def environment(root, env=None):
@@ -120,7 +134,9 @@ def prepare_runtime(rt):
                     diffusers=DIFFUSERS_REVISION, torch=TORCH_VERSION, patch=PATCH_VERSION)
     if receipt.exists() and python.exists():
         actual = json.loads(receipt.read_text())
-        if actual.get('versions') != expected:
+        previous = dict(expected, patch=1)
+        upgrade = actual.get('versions') == previous and PATCH_VERSION == 2
+        if actual.get('versions') != expected and not upgrade:
             raise RuntimeError('VDN runtime pins changed; select a new VDNRuntime(root=...)')
         # Validate the interpreter even on reused installations; never trust a stale marker.
         for name, revision in (('FreeVideo', FREEVIDEO_REVISION), ('vdn', VDN_REVISION), ('ComfyUI', COMFY_REVISION)):
@@ -131,7 +147,15 @@ def prepare_runtime(rt):
             parent = 'ComfyUI' if name.startswith('comfy/') else 'FreeVideo'
             if hashlib.sha256((root / 'vendor' / parent / name).read_bytes()).hexdigest() != digest:
                 raise RuntimeError('VDN compatibility patch changed: ' + name)
+        if upgrade:
+            # Local compatibility-only migration; retain all weights and packages.
+            actual['patches'] = patch_sources(root / 'vendor/FreeVideo', root / 'vendor/ComfyUI')
+            actual['versions'] = expected
         check_torch(python, environment(root))
+        if upgrade:
+            temporary = receipt.with_suffix('.tmp')
+            temporary.write_text(json.dumps(actual, indent=2))
+            temporary.replace(receipt)
         return root, python
     if not rt['auto_setup'] or rt['local_files_only']:
         raise RuntimeError('VDN runtime not prepared. Run python scripts/setup_vdn.py on the server first.')

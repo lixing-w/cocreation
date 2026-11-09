@@ -70,6 +70,33 @@ class VDNTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 replace_once(path, 'missing', 'other')
 
+    def test_existing_runtime_patch_upgrade_without_reinstall(self):
+        from cocreation.vdn_setup import prepare_runtime
+        from cocreation.vdn import (FREEVIDEO_REVISION, VDN_REVISION, COMFY_REVISION,
+                                    DIFFUSERS_REVISION, TORCH_VERSION, PATCH_VERSION)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            python = root / 'venv/bin/python'
+            python.parent.mkdir(parents=True)
+            python.touch()
+            for name in ('FreeVideo', 'vdn', 'ComfyUI'):
+                (root / 'vendor' / name / '.git').mkdir(parents=True)
+            versions = dict(freevideo=FREEVIDEO_REVISION, vdn=VDN_REVISION,
+                            comfy=COMFY_REVISION, diffusers=DIFFUSERS_REVISION,
+                            torch=TORCH_VERSION, patch=1)
+            receipt = root / 'runtime-ready.json'
+            receipt.write_text(json.dumps(dict(versions=versions, patches={})))
+            rt = dict(root=tmp, auto_setup=False, local_files_only=True)
+            with patch('cocreation.vdn_setup.checkout'), \
+                 patch('cocreation.vdn_setup.patch_sources', return_value={}) as patches, \
+                 patch('cocreation.vdn_setup.check_torch'), \
+                 patch('cocreation.vdn_setup.run') as install:
+                self.assertEqual(prepare_runtime(rt), (root, python))
+                self.assertEqual(json.loads(receipt.read_text())['versions']['patch'], PATCH_VERSION)
+                prepare_runtime(rt)
+                patches.assert_called_once()
+                install.assert_not_called()
+
     def test_environment_isolation(self):
         env = environment(Path('/tmp/vdn'), {'FREEVIDEO_RESIDENT_SESSION': 'stale', 'PYTHONPATH': 'bad'})
         self.assertNotIn('FREEVIDEO_RESIDENT_SESSION', env)

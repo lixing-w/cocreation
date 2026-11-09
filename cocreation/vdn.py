@@ -13,7 +13,7 @@ DIFFUSERS_REVISION = '3a2f35d4efa4c059c8bfb3bc0d6c906264895c81'
 TORCH_VERSION = '2.10.0+cu128'
 ENCODER = 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors'
 MODEL_REPO = 'OpenVDN/vdn-minimax-h3-edge'
-PATCH_VERSION = 1
+PATCH_VERSION = 2
 
 
 @dataclass(frozen=True)
