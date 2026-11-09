@@ -27,7 +27,10 @@ class ExtractionTests(unittest.TestCase):
     def test_invalid_contracts_return_none(self):
         mutations = [
             lambda d: d.update(artifact_id='wrong'),
-            lambda d: d['attributes'].pop('style'),
+            lambda d: d['attributes'].update(unknown=[]),
+            lambda d: d['attributes'].update(style=None),
+            lambda d: d['attributes']['style'][0].update(parent_id=None),
+            lambda d: d['attributes']['style'][0].update(links=[]),
             lambda d: d['attributes'].update(style=[]),
             lambda d: d['attributes']['style'][0].update(text='word '*16),
             lambda d: d['attributes']['identity.appearance'][0].update(parent_id='missing'),
@@ -46,6 +49,23 @@ class ExtractionTests(unittest.TestCase):
         self.assertIsNone(parse_attributes(json.dumps(d),'example_video','image'))
         self.assertEqual(parse_attributes('```json\n'+json.dumps(IMAGE_EXAMPLE)+'\n```',
                                          'example_image','image'),IMAGE_EXAMPLE)
+
+    def test_sparse_categories_and_optional_metadata(self):
+        d=copy.deepcopy(IMAGE_EXAMPLE)
+        d['attributes'].pop('style')
+        self.assertEqual(parse_attributes(json.dumps(d),'example_image','image'),d)
+        d['attributes']={}
+        self.assertEqual(parse_attributes(json.dumps(d),'example_image','image'),d)
+        for example in (IMAGE_EXAMPLE,VIDEO_EXAMPLE):
+            self.assertNotIn(': null',json.dumps(example))
+            self.assertNotIn(': []',json.dumps(example))
+            for category, entries in example['attributes'].items():
+                for entry in entries:
+                    if '.' not in category:
+                        self.assertNotIn('parent_id',entry)
+        prompt=extraction_system_prompt()
+        self.assertNotIn('"time_range":null',prompt)
+        self.assertNotIn('contains EVERY',prompt)
 
     def test_owned_and_shared_lifecycle(self):
         with tempfile.TemporaryDirectory() as tmp:

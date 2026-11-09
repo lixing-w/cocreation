@@ -43,30 +43,30 @@ def validate_attributes(result, artifact_id, kind):
     require(isinstance(result, dict) and set(result) == {'artifact_id','kind','attributes'})
     require(result['artifact_id'] == artifact_id and result['kind'] == kind)
     attrs = result['attributes']
-    require(isinstance(attrs, dict) and set(attrs) == set(CATEGORY_RULES))
+    require(isinstance(attrs, dict) and set(attrs) <= set(CATEGORY_RULES))
     nodes = {}
     for category, entries in attrs.items():
-        if entries is None:
-            continue
         rule = CATEGORY_RULES[category]
         require(isinstance(entries, list) and bool(entries))
         require(kind != 'image' or rule['temporal'] != 'Yes')
         parents = set()
         for entry in entries:
-            require(isinstance(entry, dict) and set(entry) ==
+            require(isinstance(entry, dict) and {'id','text'} <= set(entry) <=
                     {'id','text','parent_id','links','time_range'})
-            key, text, parent = entry['id'], entry['text'], entry['parent_id']
+            require(all(value is not None for value in entry.values()))
+            key, text, parent = entry['id'], entry['text'], entry.get('parent_id')
             require(isinstance(key, str) and re.fullmatch(r'[A-Za-z0-9_-]+', key))
             require(key not in nodes)
             require(isinstance(text, str) and 0 < len(text.split()) <= 15)
             require(text.strip().lower() not in ('none','null','unknown'))
             require(parent is None or isinstance(parent, str))
-            require(isinstance(entry['links'], list) and
-                    all(isinstance(x,str) for x in entry['links']))
+            links = entry.get('links', [])
+            require(isinstance(links, list) and all(isinstance(x,str) for x in links))
+            require('links' not in entry or bool(links))
             if not rule['multiple']:
                 require(parent not in parents)
             parents.add(parent)
-            span = entry['time_range']
+            span = entry.get('time_range')
             require(kind != 'image' or span is None)
             if span is not None:
                 require(isinstance(span,list) and len(span)==2)
@@ -78,7 +78,7 @@ def validate_attributes(result, artifact_id, kind):
                'identity.pose_change':'identity.body_pose',
                'environment_change':'environment', 'viewpoint_change':'viewpoint'}
     for category, entry in nodes.values():
-        parent, links = entry['parent_id'], entry['links']
+        parent, links = entry.get('parent_id'), entry.get('links', [])
         if '.' in category:
             require(parent in nodes and nodes[parent][0] == category.split('.')[0])
         else:
@@ -92,7 +92,7 @@ def validate_attributes(result, artifact_id, kind):
         elif category in changes:
             require(len(set(links)) >= 2 and all(t == changes[category] for t in types))
             if parent is not None:
-                require(all(nodes[link][1]['parent_id'] == parent for link in links))
+                require(all(nodes[link][1].get('parent_id') == parent for link in links))
         elif category == 'visible_text':
             require(all(t == 'identity' for t in types) and len(set(links)) == len(links))
         else:

@@ -237,10 +237,11 @@ python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifac
 ```
 
 The prompt file contains a copied Definitions snapshot without the document's
-narrative examples, followed by two complete JSON examples. All 29 categories are
-present, with null for unobserved categories. Observed entries have local IDs,
-text (at most 15 English whitespace-separated words), parent_id, links and optional
-time_range. Arrays encode multiple parents even for per-parent single values.
+narrative examples, followed by two complete JSON examples. Only observed categories are emitted; unobserved categories are omitted.
+Observed entries require local IDs and text (at most 15 English whitespace-separated
+words). parent_id is required for dotted categories; links and time_range appear
+only when applicable. Null fields and empty arrays are rejected. An empty attributes
+object is valid when nothing is clear. Examples sent to Qwen use compact JSON. Arrays encode multiple parents even for per-parent single values.
 Validation checks schema, cardinality, reference types and image temporal exclusions;
 it cannot certify observational accuracy. Video extraction uses official sampled
 video input (default 2 fps, cap 32 frames), so brief events can be missed. No CPG
