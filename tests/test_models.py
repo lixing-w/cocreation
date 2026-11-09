@@ -26,9 +26,12 @@ class Contracts(unittest.TestCase):
         request = Qwen()("Video 99 stays literal; follow {{artifact:v5}} and {{artifact:v4}}", refs, dry_run=True)
         self.assertEqual(request["prompt"], "Video 99 stays literal; follow <Video 2> and <Video 1>")
         content = qwen_messages(request)[0]["content"]
-        self.assertEqual([content[i]["text"] for i in (0, 2, 4)], ["<Video 1>", "<Image 1>", "<Video 2>"])
-        self.assertEqual(content[1]["video"], request["bindings"]["v4"]["path"])
-        self.assertEqual(content[1]["max_frames"], 16)
+        self.assertEqual(content[0]["text"], "<Image 1>")
+        self.assertEqual(content[2]["text"], "Video 99 stays literal; follow <Video 2>")
+        self.assertEqual(content[4]["text"], " and <Video 1>")
+        self.assertEqual(content[3]["video"], request["bindings"]["v5"]["path"])
+        self.assertEqual(content[5]["video"], request["bindings"]["v4"]["path"])
+        self.assertEqual(content[5]["max_frames"], 16)
 
     def test_bad_references(self):
         ref = Reference("x", "x.png", "image")

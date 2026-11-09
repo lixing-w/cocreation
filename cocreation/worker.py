@@ -1,5 +1,6 @@
 """Inference handlers with optional object-owned model state; no conversation cache."""
 import json
+import re
 from pathlib import Path
 import sys
 import time
@@ -10,15 +11,46 @@ def hf_options(runtime):
 
 
 def qwen_messages(request):
+    """Place attached media after its first label mention; prepend unmentioned media.
+
+    Args:
+        request: Prepared Qwen request with resolved labels, paths and options.
+
+    Repeated labels remain text to avoid duplicating visual context. Label numbers
+    retain reference-list identity even when textual mentions reorder the media.
+    The returned structured content is encoded by the official Qwen processor.
+    """
     content = []
     opts = request["options"]
-    for ref in request["references"]:
-        content.append(dict(type="text", text=ref["label"]))
+    refs = {ref["label"]: ref for ref in request["references"]}
+    prompt = request["prompt"]
+
+    def media_item(ref):
+        """Build official image/video content for one prepared reference."""
         media = dict(type=ref["kind"], **{ref["kind"]: ref["path"]}, max_pixels=opts["max_pixels"])
         if ref["kind"] == "video":
             media.update(fps=opts["video_fps"], max_frames=opts["video_max_frames"])
-        content.append(media)
-    content.append(dict(type="text", text=request["prompt"]))
+        return media
+
+    for label, ref in refs.items():
+        if label not in prompt:
+            content.extend([dict(type="text", text=label), media_item(ref)])
+    if not refs:
+        content.append(dict(type="text", text=prompt))
+    else:
+        pattern = "|".join(re.escape(label) for label in refs)
+        seen = set()
+        cursor = 0
+        for match in re.finditer(pattern, prompt):
+            label = match.group()
+            if label in seen:
+                continue
+            content.append(dict(type="text", text=prompt[cursor:match.end()]))
+            content.append(media_item(refs[label]))
+            seen.add(label)
+            cursor = match.end()
+        if cursor < len(prompt) or not prompt:
+            content.append(dict(type="text", text=prompt[cursor:]))
     return [dict(role="user", content=content)]
 
 
