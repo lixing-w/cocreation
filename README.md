@@ -158,3 +158,16 @@ python3 examples/plan.py
 已做离线接口、路由、下载清单、参考视频规整、错误传播和服务清理测试，并对照固定 Comfy 源码核实节点接口。**尚未下载权重或进行 GPU 端到端推理**，因此 575 驱动上的依赖安装、显存峰值、NVFP4 回退与生成质量仍须在服务器首次运行验收。依赖包含上游版本范围，不是完整的传递依赖锁文件。
 
 参考：[H3 模型文件](https://huggingface.co/Comfy-Org/MiniMax-H3)、[Comfy H3 节点](https://github.com/Comfy-Org/ComfyUI/blob/0decb39ee5b5e17c200334589fc317dbbe98310e/comfy_extras/nodes_minimax_h3.py)、[Comfy 本地 API](https://docs.comfy.org/development/comfyui-server/comms_routes)。
+
+## VDN-H3 (FreeVideo CLI, FP8)
+
+`VDNH3` adds mixed image/video/audio references with two-pass **8+3** generation.
+It uses an isolated Python 3.12 runtime constrained to **torch 2.10.0+cu128**;
+no ComfyUI web server or automatic cu130 upgrade. See [VDN setup and GPU testing](docs/vdn.md).
+
+```bash
+python scripts/setup_vdn.py --python /path/to/python3.12 --probe
+python examples/plan.py --model vdn_h3 --run --vdn-python /path/to/python3.12
+```
+
+The CUDA compatibility adaptation is ready for server testing, not yet GPU validated.

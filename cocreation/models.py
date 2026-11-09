@@ -172,3 +172,45 @@ class MiniMaxH3(_System):
         package_root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
         _run([self.runtime.python, "-m", "cocreation.comfy_worker", str(job_dir)], job_dir, env)
+
+
+class VDNH3(_System):
+    """VDN FP8 through FreeVideo, with ordered image/video/audio references."""
+    backend = 'vdn_h3'
+    model_id = 'OpenVDN/vdn-minimax-h3-edge'
+
+    def __init__(self, *, runtime=None, output_dir=None):
+        from .vdn import VDNRuntime
+        self.runtime = runtime or VDNRuntime()
+        self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / 'runs').expanduser().resolve()
+
+    def __call__(self, prompt, references=None, *, seconds=5.0, width=768, height=512,
+                 seed=0, two_pass=True, dry_run=False):
+        import math
+        if isinstance(seconds, bool) or not math.isfinite(seconds) or not 5 <= seconds <= 15:
+            raise ValueError('VDN duration must be 5–15 seconds')
+        if any(type(v) is not int or v < (512 if two_pass else 256) or v % 64 for v in (width, height)):
+            raise ValueError('VDN dimensions must be multiples of 64, >=512 for two-pass or >=256 for single-pass')
+        if type(seed) is not int or not 0 <= seed < 2**63 or type(two_pass) is not bool:
+            raise ValueError('Invalid seed or two_pass')
+        refs = list(references or [])
+        if len(refs) > 32:
+            raise ValueError('VDN supports at most 32 reference items')
+        return self._invoke(prompt, refs, dict(seconds=seconds, frames=frame_count(seconds),
+            width=width, height=height, seed=seed, two_pass=two_pass, base_steps=8,
+            refine_steps=3 if two_pass else 0, precision='fp8',
+            task='ref2va' if refs else 't2va'), dry_run)
+
+    def _validate(self, request):
+        request.update(prepare(request['original_prompt'], [Reference(r['artifact_id'], r['path'], r['kind'])
+            for r in request['references']], labels={'image': 'Picture', 'video': 'Video', 'audio': 'Audio'}))
+
+    def _execute(self, request, job_dir):
+        if not sys.platform.startswith('linux'):
+            raise RuntimeError('VDN execution requires a Linux NVIDIA host; use dry_run=True on Mac')
+        if not self.runtime.accept_model_license:
+            raise ValueError('Accept the MiniMax H3 model license before running VDN')
+        env = runtime_environment()
+        package_root = str(Path(__file__).resolve().parent.parent)
+        env['PYTHONPATH'] = os.pathsep.join(filter(None, [package_root, env.get('PYTHONPATH')]))
+        _run([self.runtime.python, '-m', 'cocreation.vdn_worker', str(job_dir)], job_dir, env)
