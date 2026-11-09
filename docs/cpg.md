@@ -22,14 +22,14 @@ omitted rather than invented.
 | Category | Definition and scope | Need flow in time? | Allow multiple? |
 |---|---|---|---|
 | identity | A perceptually coherent subject or meaningful object group | No | Yes |
-| identity.description | Overall identity/design description | No | No |
-| identity.appearance | Local appearance: clothing, color, material, shape, texture | No | Yes |
-| identity.body_pose | A body's configuration and orientation at a given state | No | Yes |
-| identity.expression | A visible facial/expressive state | No | Yes |
-| identity.appearance_change | Timeline connecting this identity's appearance states | Yes | No |
-| identity.expression_change | Timeline connecting this identity's expression states | Yes | No |
-| identity.pose_change | Timeline connecting this identity's body-pose states | Yes | No |
-| identity.motion | A subject's activity and phases, including trajectory, speed, rhythm or deformation | Yes | Yes |
+| &nbsp;&nbsp;identity.description | Overall identity/design description | No | No |
+| &nbsp;&nbsp;identity.appearance | Local appearance: clothing, color, material, shape, texture | No | Yes |
+| &nbsp;&nbsp;identity.body_pose | A body's configuration and orientation at a given state | No | Yes |
+| &nbsp;&nbsp;identity.expression | A visible facial/expressive state | No | Yes |
+| &nbsp;&nbsp;identity.appearance_change | Timeline connecting this identity's appearance states | Yes | No |
+| &nbsp;&nbsp;identity.expression_change | Timeline connecting this identity's expression states | Yes | No |
+| &nbsp;&nbsp;identity.pose_change | Timeline connecting this identity's body-pose states | Yes | No |
+| &nbsp;&nbsp;identity.motion | A subject's activity and phases, including trajectory, speed, rhythm or deformation | Yes | Yes |
 
 **Fictional video example (6 seconds).** A woman in an open red coat stands facing
 left, buttons her coat, turns toward the camera, smiles, and sits on a stool.
@@ -95,17 +95,17 @@ unconnected object type. An environment is a coherent setting, physical or imagi
 | Category | Definition and scope | Need flow in time? | Allow multiple? |
 |---|---|---|---|
 | environment | A distinct setting/background, independent of shot boundaries | No | Yes |
-| environment.description | Overall setting, including abstract or virtual worlds | No | No |
-| environment.location | Place, spatial layout or imagined spatial context | No | No |
-| environment.space_type | Indoor, outdoor, mixed, or non-spatial/abstract | No | No |
-| environment.season | Visible seasonal setting; optional for nonliteral worlds | No | No |
-| environment.weather | Weather or analogous atmospheric phenomena | No | Yes |
-| environment.time_of_day | Visible day/night or other temporal setting cues | No | No |
-| environment.lighting | Illumination, direction, contrast and visible light sources | No | Yes |
-| environment.structure | Architecture, terrain, layers or abstract geometric fields | No | Yes |
-| environment.atmosphere | Visible atmospheric qualities: fog, openness, density, haze | No | Yes |
-| environment.mood | Perceived scene tone, such as tranquil, tense or surreal | No | Yes |
-| environment.motion | Within-setting changes, each bound to one environment | Yes | Yes |
+| &nbsp;&nbsp;environment.description | Overall setting, including abstract or virtual worlds | No | No |
+| &nbsp;&nbsp;environment.location | Place, spatial layout or imagined spatial context | No | No |
+| &nbsp;&nbsp;environment.space_type | Indoor, outdoor, mixed, or non-spatial/abstract | No | No |
+| &nbsp;&nbsp;environment.season | Visible seasonal setting; optional for nonliteral worlds | No | No |
+| &nbsp;&nbsp;environment.weather | Weather or analogous atmospheric phenomena | No | Yes |
+| &nbsp;&nbsp;environment.time_of_day | Visible day/night or other temporal setting cues | No | No |
+| &nbsp;&nbsp;environment.lighting | Illumination, direction, contrast and visible light sources | No | Yes |
+| &nbsp;&nbsp;environment.structure | Architecture, terrain, layers or abstract geometric fields | No | Yes |
+| &nbsp;&nbsp;environment.atmosphere | Visible atmospheric qualities: fog, openness, density, haze | No | Yes |
+| &nbsp;&nbsp;environment.mood | Perceived scene tone, such as tranquil, tense or surreal | No | Yes |
+| &nbsp;&nbsp;environment.motion | Within-setting changes, each bound to one environment | Yes | Yes |
 | environment_change | Global timeline connecting distinct environment IDs | Yes | No |
 
 **Fictional video example (9 seconds).** Two shots show the same office: daylight
@@ -174,7 +174,7 @@ Attribute states may carry time ranges without themselves requiring flow.
 | identity_relations | Spatial/contact/interaction relation between exactly two identities | Optional | Yes |
 | identity_background_relations | Placement/scale/occlusion relation between one identity and one background | Optional | Yes |
 | viewpoint | One shot's viewing/framing configuration, including its internal stages | No | Yes |
-| viewpoint.viewpoint_motion | Continuous viewing/framing evolution within one shot | Yes | No |
+| &nbsp;&nbsp;viewpoint.viewpoint_motion | Continuous viewing/framing evolution within one shot | Yes | No |
 | viewpoint_change | Global timeline connecting viewpoints across shot transitions | Yes | No |
 | style | Artifact-wide rendering medium and visual treatment | No | No |
 | visible_text | Actually legible text, its presentation and placement | No | Yes |

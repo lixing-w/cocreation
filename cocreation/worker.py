@@ -51,7 +51,11 @@ def qwen_messages(request):
             cursor = match.end()
         if cursor < len(prompt) or not prompt:
             content.append(dict(type="text", text=prompt[cursor:]))
-    return [dict(role="user", content=content)]
+    messages = []
+    if opts.get("system_prompt") is not None:
+        messages.append(dict(role="system", content=opts["system_prompt"]))
+    messages.append(dict(role="user", content=content))
+    return messages
 
 
 def run_qwen(request, directory, state=None):

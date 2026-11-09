@@ -1,4 +1,4 @@
-"""Download a tiny Open Images V7 + DAVIS 2017 subset, not the full datasets."""
+"""Download a tiny Open Images V7 + DAVIS 2017 subset for smoke tests, not the full datasets."""
 import argparse
 import csv
 import hashlib

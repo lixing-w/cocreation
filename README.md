@@ -78,7 +78,7 @@ Qwen 将文本中首次出现的已绑定 `<Image N>` / `<Video N>` 标签与对
 
 ```sh
 cd /users/lwang223/cocreation
-python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
+python scripts/setup/setup_scratch.py --target /users/lwang223/scratch/cocreation
 ```
 
 `COCREATION_SCRATCH` 可覆盖根目录。Linux 上没有符号链接且没有该变量时，真实调用会报错，避免大文件写进 home。已有普通目录、冲突链接不会被覆盖；旧文件不会被自动迁移或删除。
@@ -89,7 +89,7 @@ python scripts/setup_scratch.py --target /users/lwang223/scratch/cocreation
 conda create -n cocreation python=3.11 pip -y
 conda activate cocreation
 cd /users/lwang223/cocreation
-source scripts/scratch_env.sh
+source scripts/setup/scratch_env.sh
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 conda install -c conda-forge ffmpeg -y
@@ -132,17 +132,17 @@ FP8 DiT + NVFP4-AWQ 编码器负责降低主要权重占用；VAE 保持 FP16/FP
 
 ```sh
 # 不下载、不推理
-python examples/plan.py --model minimax_h3
+python examples/plan.py --model vdn_h3
 
 # 下载少量根素材（不是模型）
-python scripts/download_samples.py --dry-run
-python scripts/download_samples.py
+python scripts/setup/download_samples.py --dry-run
+python scripts/setup/download_samples.py
 
 # 首次真正执行才下载 H3 模型、准备环境
-python examples/plan.py --run --model minimax_h3 --accept-model-license
+python examples/plan.py --run --model vdn_h3 --accept-model-license
 ```
 
-示例中的 `qwen`、`flux`、`minimax_h3` 可分别运行；默认 `all` 依次调用。`--image`、`--video` 可传自己的素材，`--output-dir` 可改输出目录。
+示例中的 `qwen`、`flux`、`vdn_h3` 可分别运行；默认 `all` 依次调用。`--image`、`--video` 可传自己的素材，`--output-dir` 可改输出目录。
 
 样本源是 DAVIS 2017 和 Open Images V7。脚本下载少量 DAVIS JPEG 帧并以 24 FPS 合成为无声视频；这只是演示播放帧率，不是对原视频 FPS 的确认。使用 HTTP Range 读取 ZIP；不支持 Range 时可用 `--davis-zip /path/to/existing.zip`。素材来源、原始元数据和合成配置写入 manifest。数据准备独立于模型推理。
 
@@ -165,8 +165,6 @@ python3 examples/plan.py
 
 已做离线接口、路由、下载清单、参考视频规整、错误传播和服务清理测试，并对照固定 Comfy 源码核实节点接口。**尚未下载权重或进行 GPU 端到端推理**，因此 575 驱动上的依赖安装、显存峰值、NVFP4 回退与生成质量仍须在服务器首次运行验收。依赖包含上游版本范围，不是完整的传递依赖锁文件。
 
-参考：[H3 模型文件](https://huggingface.co/Comfy-Org/MiniMax-H3)、[Comfy H3 节点](https://github.com/Comfy-Org/ComfyUI/blob/0decb39ee5b5e17c200334589fc317dbbe98310e/comfy_extras/nodes_minimax_h3.py)、[Comfy 本地 API](https://docs.comfy.org/development/comfyui-server/comms_routes)。
-
 ## VDN-H3 (FreeVideo CLI, FP8)
 
 `VDNH3` adds mixed image/video/audio references with two-pass **8+3** generation.
@@ -174,7 +172,7 @@ It uses an isolated Python 3.12 runtime constrained to **torch 2.10.0+cu128**;
 no ComfyUI web server or automatic cu130 upgrade. See [VDN setup and GPU testing](docs/vdn.md).
 
 ```bash
-python scripts/setup_vdn.py --probe
+python scripts/setup/setup_vdn.py --probe
 python examples/plan.py --model vdn_h3 --run
 ```
 
@@ -212,3 +210,38 @@ stdout 仅输出一个秒数或 `null`。时间以视频第一个显示帧为零
 工具的 Python 返回值为 `float | None`；可选 `frame_output` 导出选中 PNG，默认不覆盖已有文件。详细来源、原视频帧序号、两轮候选及选中 PNG 保存在 `scratch/runs/find_video_frame/<id>/`；未找到时不导出图。推理失败、无效 JSON、非法候选编号会报错，不伪装成未找到。支持本地视频路径，不自动下载远程 URL。
 
 工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。CPG 属性与模态抽样的讨论稿见 [docs/cpg.md](docs/cpg.md)。
+
+
+### Extract visual attribute nodes
+
+`Qwen(...)(prompt, references, system_prompt=None)` accepts a per-call system
+message. None preserves the user-only input; system messages are not retained
+between calls and do not affect model-weight reuse.
+
+```python
+from cocreation import Qwen, Reference
+from tools.extract_attribute_nodes import extract_attribute_nodes
+
+with Qwen() as qwen:
+    result = extract_attribute_nodes(
+        Reference("root_video", "scratch/data/samples/video.mp4", "video"), qwen=qwen)
+```
+
+The tool accepts a Reference or `{artifact_id, path, kind}` mapping. A supplied
+Qwen remains open; an internally created Qwen is closed on every exit. It returns
+a Python dictionary (JSON object), or None for invalid model output. Missing files
+and inference errors raise. The CLI prints JSON/null:
+
+```bash
+python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifact-id root_image --kind image
+```
+
+The prompt file contains a copied Definitions snapshot without the document's
+narrative examples, followed by two complete JSON examples. All 29 categories are
+present, with null for unobserved categories. Observed entries have local IDs,
+text (at most 15 English whitespace-separated words), parent_id, links and optional
+time_range. Arrays encode multiple parents even for per-parent single values.
+Validation checks schema, cardinality, reference types and image temporal exclusions;
+it cannot certify observational accuracy. Video extraction uses official sampled
+video input (default 2 fps, cap 32 frames), so brief events can be missed. No CPG
+storage is modified. The future orchestrator belongs in scripts/cpg/.
