@@ -54,17 +54,20 @@ class ComfyWorkerTests(unittest.TestCase):
             root = Path(tmp)
             video = root/'source.mp4'
             video.write_bytes(b'placeholder')
-            request = MiniMaxH3()('x', [Reference('v', video, 'video')], dry_run=True)
+            request = MiniMaxH3()('x', [Reference('v', video, 'video')], seconds=5, dry_run=True)
             with patch('cocreation.comfy_worker.shutil.which', return_value='/bin/ffmpeg'), \
+                 patch('cocreation.comfy_worker.subprocess.check_output', return_value='{"streams": [{"index": 1}]}'), \
                  patch('cocreation.comfy_worker.probe_media', return_value=3), \
                  patch('cocreation.comfy_worker.run') as run:
                 names, metadata = stage_media(request, root/'input')
                 command = run.call_args.args[0]
-                self.assertIn('-an', command)
+                self.assertNotIn('-an', command)
+                self.assertIn('0:a:0?', command)
                 self.assertIn('fps=24', command[command.index('-vf') + 1])
-                self.assertFalse(metadata[0]['video_audio_used'])
+                self.assertTrue(metadata[0]['video_audio_used'])
                 self.assertEqual(names, ['ref_0.mp4'])
             with patch('cocreation.comfy_worker.shutil.which', return_value='/bin/ffmpeg'), \
+                 patch('cocreation.comfy_worker.subprocess.check_output', return_value='{"streams": [{"index": 1}]}'), \
                  patch('cocreation.comfy_worker.probe_media', return_value=10), \
                  patch('cocreation.comfy_worker.run') as run:
                 with self.assertRaisesRegex(ValueError, 'exceeds output'):

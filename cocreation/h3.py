@@ -1,6 +1,7 @@
 """Lightweight H3 contract and pinned Comfy API graph; no ML imports."""
 from dataclasses import dataclass, field
 import math
+import re
 from pathlib import Path
 import sys
 
@@ -40,7 +41,7 @@ def frame_count(seconds):
     return math.ceil((seconds * 24 - 5) / 17) * 17 + 5
 
 
-def build_graph(request, media):
+def build_graph(request, media, media_info=None):
     """media: staged Comfy input filenames, in request reference order."""
     opts = request["options"]
     if len(media) != len(request["references"]):
@@ -54,7 +55,12 @@ def build_graph(request, media):
     clip = add("encoder", "CLIPLoader", clip_name=ENCODER, type="minimax", device="default")
     vae = add("video_vae", "VAELoader", vae_name=VIDEO_VAE)
     audio_vae = add("audio_vae", "VAELoader", vae_name=AUDIO_VAE)
-    inputs = dict(clip=clip, vae=vae, prompt=request["prompt"], width=opts["width"],
+    prompt = request["prompt"]
+    # Comfy numbers video soundtracks before standalone audio references.
+    soundtrack_count = sum(bool(item.get("video_audio_used")) for item in (media_info or []))
+    if soundtrack_count:
+        prompt = re.sub(r"<Audio (\d+)>", lambda m: f"<Audio {int(m[1]) + soundtrack_count}>", prompt)
+    inputs = dict(clip=clip, vae=vae, prompt=prompt, width=opts["width"],
                   height=opts["height"], length=opts["frames"])
     if opts["variant"] == "ref2va":
         inputs.update(audio_vae=audio_vae, ref_image_size="match")
@@ -71,7 +77,7 @@ def build_graph(request, media):
                 video = add(key, "LoadVideo", file=filename)
                 value = add(key + "_components", "GetVideoComponents", video=video)
                 inputs[f"ref_videos.ref_video_{index}"] = value
-                # Visual motion only, matching the public Reference contract.
+                inputs[f"ref_video_audios.ref_video_audio_{index}"] = [key + "_components", 1]
             else:
                 value = add(key, "LoadAudio", audio=filename)
                 inputs[f"ref_audios.ref_audio_{index}"] = value

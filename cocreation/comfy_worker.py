@@ -103,6 +103,12 @@ def stage_media(request, directory):
         else:
             if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
                 raise RuntimeError("Install ffmpeg and ffprobe before using video/audio references")
+            has_audio = False
+            if kind == "video":
+                streams = json.loads(subprocess.check_output(
+                    ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                     "stream=index", "-of", "json", str(path)], text=True))
+                has_audio = bool(streams.get("streams"))
             duration = probe_media(path, kind)
             totals[kind] += duration
             if totals[kind] > 15.001:
@@ -112,7 +118,7 @@ def stage_media(request, directory):
                 if duration > request["options"]["frames"] / 24 + 0.05:
                     raise ValueError("Reference video exceeds output duration; explicitly trim it or increase seconds")
                 name = f"ref_{i}.mp4"
-                run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-map", "0:v:0", "-an",
+                run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-map", "0:v:0", "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k",
                      "-vf", "fps=24,scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-crf", "18",
                      "-pix_fmt", "yuv420p", directory / name])
             else:
@@ -120,7 +126,7 @@ def stage_media(request, directory):
                 target = directory / name 
                 shutil.copy2(path, target)
             metadata.append(dict(artifact_id=ref["artifact_id"], duration=duration,
-                                 video_audio_used=False if kind == "video" else None))
+                                 video_audio_used=has_audio if kind == "video" else None))
         names.append(name)
     return names, metadata
 
@@ -205,7 +211,7 @@ def execute(request, job):
         fcntl.flock(lock, fcntl.LOCK_EX)
         source, python = prepare_runtime(rt)
         files = download_models(python, root, request["options"]["variant"], rt["local_files_only"])
-        graph = build_graph(request, names)
+        graph = build_graph(request, names, media_info)
         (job / "workflow.json").write_text(json.dumps(graph, indent=2))
         with server(source, python, root, job, rt["startup_timeout"]) as (base, process):
             info = api(base, "/object_info")

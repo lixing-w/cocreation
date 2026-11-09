@@ -2,6 +2,7 @@
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -14,7 +15,7 @@ from .vdn_assets import verify_fp8
 
 
 def validate_media(request):
-    """Reject implicit truncation; video audio is always ignored by this adapter."""
+    """Reject implicit truncation and record reference video soundtracks."""
     result = []
     limit = min(15., request['options']['frames'] / 24)
     for ref in request['references']:
@@ -30,8 +31,24 @@ def validate_media(request):
             raise ValueError(f'Reference {ref["artifact_id"]} is {duration}s; explicitly trim it to 1–{limit:.3f}s '
                              'or increase output seconds. References are never silently truncated.')
         result.append(dict(artifact_id=ref['artifact_id'], duration=duration,
-                           video_audio_used=False if ref['kind'] == 'video' else None))
+                           video_audio_used=any(s['codec_type'] == 'audio' for s in info['streams']) if ref['kind'] == 'video' else None))
     return result
+
+
+
+def reference_prompt(request, metadata):
+    """Account for embedded soundtracks in FreeVideo's ordered audio labels."""
+    sounded = {m['artifact_id'] for m in metadata if m.get('video_audio_used')}
+    standalone = total = 0
+    labels = {}
+    for ref in request['references']:
+        if ref['kind'] == 'video' and ref['artifact_id'] in sounded:
+            total += 1
+        elif ref['kind'] == 'audio':
+            standalone += 1
+            total += 1
+            labels[standalone] = total
+    return re.sub(r'<Audio (\d+)>', lambda m: f"<Audio {labels.get(int(m[1]), int(m[1]))}>", request['prompt'])
 
 
 def prepare_assets(root, python, rt, env):
@@ -81,7 +98,7 @@ def execute(request, job):
         if rt['local_files_only']:
             env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
         installation = prepare_assets(root, python, rt, env)
-        (job / 'prompt.txt').write_text(request['prompt'])
+        (job / 'prompt.txt').write_text(reference_prompt(request, metadata))
         (job / 'media.json').write_text(json.dumps(media_request(request), indent=2))
         command = generation_command(request, job, installation)
         (job / 'command.json').write_text(json.dumps(command, indent=2))

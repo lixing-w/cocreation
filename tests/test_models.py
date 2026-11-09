@@ -45,7 +45,7 @@ class Contracts(unittest.TestCase):
                 Reference("a", "a.wav", "audio")]
         for selected, variant in [([], "fl2va"), (refs, "ref2va")]:
             prompt = "x" if not selected else "{{artifact:i}} moves like {{artifact:v}} with {{artifact:a}}"
-            request = MiniMaxH3()(prompt, selected, dry_run=True)
+            request = MiniMaxH3()(prompt, selected, seconds=5, dry_run=True)
             self.assertEqual(request["options"]["variant"], variant)
             self.assertEqual(request["options"]["frames"], 124)
             graph = build_graph(request, [Path(r.path).name for r in selected])
@@ -54,7 +54,9 @@ class Contracts(unittest.TestCase):
             if selected:
                 self.assertEqual(request["prompt"], "<Picture 1> moves like <Video 1> with <Audio 1>")
                 self.assertEqual(graph["condition"]["inputs"]["ref_videos.ref_video_0"], ["media_0_components", 0])
-                self.assertNotIn("ref_video_audios.ref_video_audio_0", graph["condition"]["inputs"])
+                self.assertEqual(graph["condition"]["inputs"]["ref_video_audios.ref_video_audio_0"], ["media_0_components", 1])
+                audio_graph = build_graph(request, [Path(r.path).name for r in selected], [{"video_audio_used": True}])
+                self.assertIn("<Audio 2>", audio_graph["condition"]["inputs"]["prompt"])
             self.assertEqual(len(model_files(variant)), 4)
 
     def test_h3_input_limits(self):

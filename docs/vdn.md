@@ -62,8 +62,8 @@ in memory. Default budgets are 80 GiB VRAM / 64 GiB RAM, with 3 / 8 GiB reserves
 FreeVideo also considers actual detected/free capacity. Adjust these runtime fields
 if the server's quota differs. More/longer references increase memory and latency.
 
-Video soundtrack is explicitly disabled (`sound: false`), matching the existing
-Reference contract. Pass audio separately to condition on sound. Non-image references
+Video soundtracks are enabled (`sound: true`); standalone audio references are also supported.
+Qwen3-VL continues to read video frames only. Non-image references
 must be 1–15 seconds and no longer than the aligned target clip; the wrapper rejects
 longer clips instead of letting upstream silently trim them. Frames still undergo
 FreeVideo's normal 24-fps and H3 grid normalization. This is reference-conditioned

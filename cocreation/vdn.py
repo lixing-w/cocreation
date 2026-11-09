@@ -45,7 +45,7 @@ class VDNRuntime:
 
 def media_request(request):
     return {'version': 1, 'references': [dict(path=r['path'], kind=r['kind'],
-        **({'sound': False} if r['kind'] == 'video' else {})) for r in request['references']]}
+        **({'sound': True} if r['kind'] == 'video' else {})) for r in request['references']]}
 
 
 def generation_command(request, job, installation):

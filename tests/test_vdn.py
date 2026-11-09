@@ -24,7 +24,7 @@ class VDNTests(unittest.TestCase):
         self.assertEqual([r['options'][k] for k in ('precision', 'two_pass', 'base_steps', 'refine_steps')],
                          ['fp8', True, 8, 3])
         media = media_request(r)
-        self.assertEqual(media['references'][0]['sound'], False)
+        self.assertEqual(media['references'][0]['sound'], True)
         self.assertEqual([v['kind'] for v in media['references']], ['video', 'audio', 'image', 'image'])
         installation = dict(python='python', cache='cache', base='base', checkpoint='checkpoint',
                             comfy_root='comfy', model_paths='paths')
@@ -33,6 +33,16 @@ class VDNTests(unittest.TestCase):
         self.assertIn('--two-pass', command)
         self.assertEqual(command[command.index('--refine-steps') + 1], '3')
         self.assertEqual(command[command.index('--prompt-file') + 1], '/tmp/job with spaces/prompt.txt')
+
+    def test_soundtrack_audio_labels(self):
+        from cocreation.vdn_worker import reference_prompt
+        refs = [Reference('v', 'v.mp4', 'video'), Reference('a', 'a.wav', 'audio'),
+                Reference('v2', 'silent.mp4', 'video'), Reference('a2', 'a2.wav', 'audio')]
+        request = VDNH3()('{{artifact:a}} then {{artifact:a2}}', refs, dry_run=True)
+        metadata = [{'artifact_id': 'v', 'video_audio_used': True},
+                    {'artifact_id': 'v2', 'video_audio_used': False}]
+        self.assertEqual(reference_prompt(request, metadata), '<Audio 2> then <Audio 3>')
+        self.assertEqual(reference_prompt(request, []), '<Audio 1> then <Audio 2>')
 
     def test_reject_non_fp8_cache(self):
         with tempfile.TemporaryDirectory() as folder:
