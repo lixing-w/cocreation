@@ -37,7 +37,7 @@ def benchmark(image_path, video_path, output_dir, *, rounds=3, model='all',
     with ExitStack() as stack:
         qwen = stack.enter_context(Qwen(output_dir=output / 'qwen'))
         flux = stack.enter_context(Flux(output_dir=output / 'flux'))
-        minimax_h3 = stack.enter_context(MiniMaxH3(output_dir=output / 'minimax_h3'))
+        # minimax_h3 = stack.enter_context(MiniMaxH3(output_dir=output / 'minimax_h3'))
         vdn_h3 = stack.enter_context(VDNH3(
             runtime=VDNRuntime(bootstrap_python=vdn_python), output_dir=output / 'vdn_h3'))
         requests = {
@@ -58,8 +58,6 @@ def benchmark(image_path, video_path, output_dir, *, rounds=3, model='all',
                 'Follow the camera motion in {{artifact:video_4}}.',
                 [image, video], dict(seconds=15, seed=42, dry_run=dry_run)),
         }
-        if model != 'all' and model not in requests:
-            raise ValueError('minimax_h3 call is commented out; uncomment its requests entry to benchmark it')
         names = list(requests) if model == 'all' else [model]
         if not dry_run:
             for name in names:
