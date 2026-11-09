@@ -130,7 +130,7 @@ def find_video_frame(video_path, description, *, qwen=None, coarse_frames=24,
     def choose(indices, name):
         files = extract_frames(path, indices, directory / name)
         refs = [Reference(f'frame_{i}', image, 'image') for i, image in enumerate(files)]
-        response = model(selection_prompt(description, len(indices)), refs, max_new_tokens=128)
+        response = model(selection_prompt(description, len(indices)), refs, max_new_tokens=16)
         selected = parse_selection(response['text'], len(indices))
         rounds.append({'indices': indices, 'timestamps': [timestamps[i] for i in indices],
                        'selected': selected, 'request_path': response.get('request_path')})
@@ -140,7 +140,7 @@ def find_video_frame(video_path, description, *, qwen=None, coarse_frames=24,
         # Do not impersonate its video token/temporal-patch format using image inputs.
         response = model(localization_prompt(description),
                          [Reference('source_video', path, 'video')],
-                         video_fps=video_fps, video_max_frames=coarse_frames, max_new_tokens=128)
+                         video_fps=video_fps, video_max_frames=coarse_frames, max_new_tokens=16)
         location = parse_location(response['text'], timestamps[-1])
         rounds.append({'mode': 'official_video', 'timestamp_seconds': location,
                        'video_fps': video_fps, 'max_frames': coarse_frames,
