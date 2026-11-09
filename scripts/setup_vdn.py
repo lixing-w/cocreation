@@ -37,7 +37,7 @@ def main():
         if not args.runtime_only:
             print(json.dumps(prepare_assets(root, python, rt, env), indent=2))
         if args.probe:
-            run([python, '-m', 'freevideo_engine.cli', 'doctor', '--probe',
+            run([python, '-m', 'freevideo_engine', 'doctor', '--probe',
                  '--out', root / 'gpu-probe.json'], env=env)
     print('Prepared runtime: ' + str(root))
     print('GPU generation remains unvalidated until a real multi-reference request succeeds.')

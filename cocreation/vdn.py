@@ -50,7 +50,7 @@ def media_request(request):
 
 def generation_command(request, job, installation):
     rt, opts = request['runtime'], request['options']
-    return [installation['python'], '-m', 'freevideo_engine.cli', 'generate',
+    return [installation['python'], '-m', 'freevideo_engine', 'generate',
         '--prompt-file', str(job / 'prompt.txt'), '--media', str(job / 'media.json'),
         '--cache', installation['cache'], '--base', installation['base'],
         '--checkpoint', installation['checkpoint'],

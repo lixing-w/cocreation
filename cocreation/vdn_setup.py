@@ -175,7 +175,7 @@ def prepare_runtime(rt):
     run([python, '-m', 'pip', 'check'], env=env)
     check_torch(python, env)
     # Basic import/CLI checks do not load weights or claim GPU correctness.
-    run([python, '-m', 'freevideo_engine.cli', 'generate', '--help'], env=env)
+    run([python, '-m', 'freevideo_engine', 'generate', '--help'], env=env)
     with (root / 'installed-packages.txt').open('w') as output:
         run([python, '-m', 'pip', 'freeze'], env=env, stdout=output)
     receipt.write_text(json.dumps(dict(versions=expected, patches=patches, gpu_validated=False), indent=2))

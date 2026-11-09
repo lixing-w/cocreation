@@ -29,6 +29,7 @@ class VDNTests(unittest.TestCase):
         installation = dict(python='python', cache='cache', base='base', checkpoint='checkpoint',
                             comfy_root='comfy', model_paths='paths')
         command = generation_command(r, Path('/tmp/job with spaces'), installation)
+        self.assertEqual(command[:4], ['python', '-m', 'freevideo_engine', 'generate'])
         self.assertIn('--two-pass', command)
         self.assertEqual(command[command.index('--refine-steps') + 1], '3')
         self.assertEqual(command[command.index('--prompt-file') + 1], '/tmp/job with spaces/prompt.txt')
