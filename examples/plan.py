@@ -43,10 +43,10 @@ def main():
             "Create a watercolor illustration of {{artifact:image_2}}. "
             "Preserve the main subjects and composition, change only the visual style.",
             [image], seed=42, dry_run=dry_run),
-        "minimax_h3": lambda: MiniMaxH3(output_dir=output / "minimax_h3")(
-            "Create a new shot with the main subject and visual appearance from {{artifact:image_2}}. "
-            "The camera moves just like in {{artifact:video_4}}. Keep the action coherent.",
-            [video, image], seconds=15, seed=42, dry_run=dry_run),
+        # "minimax_h3": lambda: MiniMaxH3(output_dir=output / "minimax_h3")(
+        #     "Create a new shot with the main subject and visual appearance from {{artifact:image_2}}. "
+        #     "The camera moves just like in {{artifact:video_4}}. Keep the action coherent.",
+        #     [video, image], seconds=15, seed=42, dry_run=dry_run),
         "vdn_h3": lambda: VDNH3(runtime=VDNRuntime(bootstrap_python=args.vdn_python), output_dir=output / "vdn_h3")(
             "Create a new shot with the subject from {{artifact:image_2}}. "
             "Follow the camera motion in {{artifact:video_4}}.",

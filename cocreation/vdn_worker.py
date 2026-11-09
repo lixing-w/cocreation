@@ -85,7 +85,7 @@ def execute(request, job):
         (job / 'media.json').write_text(json.dumps(media_request(request), indent=2))
         command = generation_command(request, job, installation)
         (job / 'command.json').write_text(json.dumps(command, indent=2))
-        started = time.monotonic()
+        started = time.perf_counter()
         process = subprocess.Popen(command, env=env, cwd=root / 'vendor/FreeVideo', start_new_session=True)
         try:
             code = process.wait(timeout=rt['timeout'])
@@ -101,7 +101,7 @@ def execute(request, job):
             torch=TORCH_VERSION, precision='fp8', base_steps=8,
             refine_steps=request['options']['refine_steps'], two_pass=request['options']['two_pass'],
             fps=24, frames=request['options']['frames'], seconds=request['options']['frames']/24,
-            reference_media=metadata, generation_seconds=time.monotonic()-started,
+            reference_media=metadata, time_elapsed=time.perf_counter()-started,
             upstream_report=str(output.with_suffix('.request.json')))
 
 
