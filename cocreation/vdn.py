@@ -19,7 +19,8 @@ PATCH_VERSION = 1
 @dataclass(frozen=True)
 class VDNRuntime:
     root: str = field(default_factory=lambda: str(scratch_root() / 'runtime/vdn'))
-    python: str = sys.executable
+    python: str = sys.executable  # lightweight controller interpreter
+    bootstrap_python: str | None = None  # optional existing 3.12; otherwise download locally
     auto_setup: bool = True
     local_files_only: bool = False
     accept_model_license: bool = True

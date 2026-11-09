@@ -11,21 +11,27 @@ Do not cast the whole VAE to half precision. No optional approximate step cache.
 
 ## Server setup
 
-Requirements: Linux NVIDIA, Python **3.12**, git, ffmpeg/ffprobe, a working C compiler,
+Requirements: Linux NVIDIA, an existing controller Python, git, ffmpeg/ffprobe, a working C compiler,
 compatible NVIDIA driver, disk for Hugging Face assets plus runtime caches. Use fast
 local storage. Download volume is substantial; FP8 avoids downloading the original
 BF16 transformer. Cross-filesystem assets are copied instead of hard-linked, so keep
 the HF cache and runtime root on the same filesystem to avoid duplicates.
 
-The controller may use Python 3.11; select Python 3.12 for the isolated VDN venv.
+The controller may use Python 3.11. By default setup installs uv in
+`scratch/runtime/vdn/bootstrap`, downloads Python 3.12 into
+`scratch/runtime/vdn/python`, and creates `scratch/runtime/vdn/venv/bin/python3.12`.
+No system Python 3.12 or global uv installation is needed. The venv references the
+managed base interpreter, so keep both directories. Subsequent calls reuse them.
+Optionally use `setup_vdn.py --python /path/to/python3.12` or
+`VDNRuntime(bootstrap_python="/path/to/python3.12")` to use an existing interpreter.
 Configure the repository's scratch directory first as described in the main README.
 Model download/use requires accepting the MiniMax H3 model license; this project
 retains its existing `accept_model_license` runtime convention.
 
 ```bash
-python scripts/setup_vdn.py --python /path/to/python3.12 --probe
+python scripts/setup_vdn.py --probe
 python examples/plan.py --model vdn_h3 --dry-run
-python examples/plan.py --model vdn_h3 --run --vdn-python /path/to/python3.12
+python examples/plan.py --model vdn_h3 --run
 ```
 
 `--runtime-only` installs code and dependencies without downloading models.
@@ -37,7 +43,7 @@ longer than 5 seconds, or omit the video and supply two images.
 ```python
 from cocreation import VDNH3, VDNRuntime, Reference
 
-model = VDNH3(runtime=VDNRuntime(python="/path/to/python3.12"))
+model = VDNH3(runtime=VDNRuntime())
 result = model(
     "Use the subject in {{artifact:person}} and setting in {{artifact:place}}. "
     "Follow the camera motion in {{artifact:motion}}.",

@@ -69,6 +69,49 @@ def environment(root, env=None):
     return env
 
 
+UV_VERSION = '0.9.11'
+
+
+def ensure_python(root, rt):
+    """Provision Python locally; never install packages into the caller's environment."""
+    python = root / 'venv/bin/python'
+    env = dict(os.environ)
+    for key in ('PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'PIP_CONSTRAINT',
+                'PIP_TARGET', 'PIP_PREFIX', 'PIP_USER'):
+        env.pop(key, None)
+    if python.exists():
+        version = subprocess.check_output([str(python), '-c',
+            'import sys; print("%d.%d" % sys.version_info[:2])'], text=True, env=env).strip()
+        if version != '3.12':
+            raise RuntimeError('Existing VDN venv is not Python 3.12; use a fresh runtime root')
+        return python
+    if not rt['auto_setup'] or rt['local_files_only']:
+        raise RuntimeError('VDN Python is missing; online auto_setup is required for the first installation')
+    explicit = rt.get('bootstrap_python')
+    if explicit:
+        version = subprocess.check_output([explicit, '-c',
+            'import sys; print("%d.%d" % sys.version_info[:2])'], text=True, env=env).strip()
+        if version != '3.12':
+            raise ValueError('Explicit bootstrap_python must be Python 3.12')
+        run([explicit, '-m', 'venv', root / 'venv'], env=env)
+    else:
+        # uv itself lives in a small venv made with the controller's existing Python.
+        # uv then downloads the actual CPython 3.12 distribution under this runtime.
+        bootstrap = root / 'bootstrap/bin/python'
+        if not bootstrap.exists():
+            run([rt['python'], '-m', 'venv', root / 'bootstrap'], env=env)
+        run([bootstrap, '-m', 'pip', 'install', '--disable-pip-version-check',
+             'uv==' + UV_VERSION], env=env)
+        env.update(UV_PYTHON_INSTALL_DIR=str(root / 'python'),
+                   UV_PYTHON_BIN_DIR=str(root / 'python-bin'), UV_PYTHON_INSTALL_BIN='0',
+                   UV_CACHE_DIR=str(root / 'bootstrap-cache'), UV_NO_CONFIG='1',
+                   UV_PYTHON_DOWNLOADS='automatic', UV_MANAGED_PYTHON='1')
+        run([root / 'bootstrap/bin/uv', 'venv', '--python', '3.12', '--managed-python',
+             '--seed', root / 'venv'], env=env)
+    # Check the resulting executable, including failed/interrupted setup retries.
+    return ensure_python(root, dict(rt, auto_setup=False))
+
+
 def prepare_runtime(rt):
     root = Path(rt['root']).expanduser().resolve()
     python = root / 'venv/bin/python'
@@ -109,12 +152,7 @@ def prepare_runtime(rt):
             run(['git', '-C', diffusers, 'apply', '--check', patch])
             run(['git', '-C', diffusers, 'apply', patch])
     patches = patch_sources(fv, comfy)
-    # FreeVideo requires Python 3.12. Let the caller select its bootstrap interpreter.
-    version = subprocess.check_output([rt['python'], '-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], text=True).strip()
-    if version != '3.12':
-        raise RuntimeError('VDN needs Python 3.12. Set VDNRuntime(python="/path/to/python3.12") or setup_vdn.py --python.')
-    if not python.exists():
-        run([rt['python'], '-m', 'venv', root / 'venv'])
+    ensure_python(root, rt)
     constraints = root / 'cu128-constraints.txt'
     constraints.write_text('torch==2.10.0+cu128\ntorchvision==0.25.0+cu128\ntorchaudio==2.10.0+cu128\ntriton==3.6.0\n')
     env = environment(root)

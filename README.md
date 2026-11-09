@@ -166,8 +166,8 @@ It uses an isolated Python 3.12 runtime constrained to **torch 2.10.0+cu128**;
 no ComfyUI web server or automatic cu130 upgrade. See [VDN setup and GPU testing](docs/vdn.md).
 
 ```bash
-python scripts/setup_vdn.py --python /path/to/python3.12 --probe
-python examples/plan.py --model vdn_h3 --run --vdn-python /path/to/python3.12
+python scripts/setup_vdn.py --probe
+python examples/plan.py --model vdn_h3 --run
 ```
 
 The CUDA compatibility adaptation is ready for server testing, not yet GPU validated.

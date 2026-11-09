@@ -21,7 +21,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--run", action="store_true", help="Actually load/download models and run inference")
     mode.add_argument("--dry-run", action="store_true", help="Plan only (the default)")
-    parser.add_argument("--vdn-python", default=sys.executable, help="Python 3.12 for VDN isolated runtime setup")
+    parser.add_argument("--vdn-python", default=None, help="Optional existing Python 3.12; default installs it under VDN runtime")
     args = parser.parse_args()
     image_path = args.image.expanduser().resolve()
     video_path = args.video.expanduser().resolve()
@@ -47,7 +47,7 @@ def main():
             "Create a new shot with the main subject and visual appearance from {{artifact:image_2}}. "
             "The camera moves just like in {{artifact:video_4}}. Keep the action coherent.",
             [video, image], seconds=15, seed=42, dry_run=dry_run),
-        "vdn_h3": lambda: VDNH3(runtime=VDNRuntime(python=args.vdn_python), output_dir=output / "vdn_h3")(
+        "vdn_h3": lambda: VDNH3(runtime=VDNRuntime(bootstrap_python=args.vdn_python), output_dir=output / "vdn_h3")(
             "Create a new shot with the subject from {{artifact:image_2}}. "
             "Follow the camera motion in {{artifact:video_4}}.",
             [image, video], seconds=15, seed=42, dry_run=dry_run),

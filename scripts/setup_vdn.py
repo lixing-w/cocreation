@@ -15,7 +15,7 @@ from cocreation.vdn_worker import prepare_assets
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--python', default=sys.executable, help='Python 3.12 used to create isolated venv')
+    parser.add_argument('--python', default=None, help='Optional existing Python 3.12; default downloads Python into runtime root')
     parser.add_argument('--root', type=Path)
     parser.add_argument('--offline', action='store_true', help='Use an already installed runtime and cached assets')
     parser.add_argument('--probe', action='store_true', help='Run GPU kernel probes after setup')
@@ -24,7 +24,7 @@ def main():
     if not sys.platform.startswith('linux'):
         parser.error('Run setup on the Linux NVIDIA server; Mac supports dry-run and contract tests only.')
     runtime_environment()  # establish the shared cache environment below
-    rt = asdict(VDNRuntime(python=args.python, local_files_only=args.offline,
+    rt = asdict(VDNRuntime(bootstrap_python=args.python, local_files_only=args.offline,
                           **({'root': str(args.root.resolve())} if args.root else {})))
     root = Path(rt['root']).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)

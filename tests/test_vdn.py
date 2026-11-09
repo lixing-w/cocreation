@@ -11,7 +11,7 @@ from unittest.mock import patch
 from cocreation import VDNH3, VDNRuntime, Reference
 from cocreation.vdn import generation_command, media_request
 from cocreation.vdn_assets import verify_fp8
-from cocreation.vdn_setup import replace_once, patch_sources, environment
+from cocreation.vdn_setup import replace_once, patch_sources, environment, ensure_python
 from cocreation.vdn_worker import validate_media, prepare_assets, stop
 
 
@@ -89,6 +89,33 @@ class VDNTests(unittest.TestCase):
         import signal
         self.assertEqual(kill.call_args_list[0].args, (12345, signal.SIGTERM))
         self.assertEqual(kill.call_args_list[-1].args, (12345, signal.SIGKILL))
+
+    def test_managed_python_download_stays_under_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commands = []
+            def fake_run(command, **kwargs):
+                commands.append((list(map(str, command)), kwargs))
+                if '--seed' in command:
+                    binary = root / 'venv/bin/python'
+                    binary.parent.mkdir(parents=True)
+                    binary.touch()
+            rt = dict(python=sys.executable, bootstrap_python=None, auto_setup=True, local_files_only=False)
+            with patch('cocreation.vdn_setup.run', side_effect=fake_run), patch('subprocess.check_output', return_value='3.12'):
+                self.assertEqual(ensure_python(root, rt), root / 'venv/bin/python')
+                count = len(commands)
+                ensure_python(root, rt)
+                self.assertEqual(len(commands), count)
+            command, kwargs = commands[-1]
+            self.assertIn('--managed-python', command)
+            self.assertEqual(kwargs['env']['UV_PYTHON_INSTALL_DIR'], str(root / 'python'))
+            self.assertEqual(kwargs['env']['UV_PYTHON_INSTALL_BIN'], '0')
+
+    def test_python_bootstrap_respects_offline(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('cocreation.vdn_setup.run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'online auto_setup'):
+                ensure_python(Path(tmp), dict(auto_setup=True, local_files_only=True))
+            run.assert_not_called()
 
     def test_worker_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
