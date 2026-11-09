@@ -104,13 +104,20 @@ specific dependency can be patched or pinned.
 
 ## Lifecycle and diagnostics
 
-Each invocation creates a fresh CLI worker tree and terminates its process group
-on completion, timeout or failure. A file lock serializes this backend across local
-processes. It does not coordinate external Qwen/Flux services. There is no persistent
-service or sleep/wake promise in this first version; runtime preparation and CLI
-execution are separated for a future worker implementation.
+Each VDNH3 object lazily owns a persistent isolated controller and a native
+FreeVideo SessionOwner/model bank. Requests launch lightweight CLI orchestration
+with FREEVIDEO_RESIDENT_SESSION bound to that object's endpoint; encoder/engine
+work is dispatched to the same resident worker. The object does not schedule an
+idle-release timer. close(), context-manager exit, and final object deletion close
+the owned worker tree. Failures also close the session before reuse.
 
-Each job keeps `request.json`, `prompt.txt`, `media.json`, `command.json`, `runtime.log`,
+Upstream ModelBank still performs budget-aware offload/eviction and invalidates
+incompatible execution configurations. This is reuse of compatible cached weights,
+not a promise that every component stays in GPU memory regardless of RAM/VRAM.
+Runtime preparation is locked; FreeVideo's runtime lease guards inference.
+Independent Qwen/Flux objects may retain memory: explicitly close them when needed.
+
+Each job keeps `request.json`, `prompt.txt`, `media.json`, `command.json`, `runtime.log` (a pointer to the owning session log),
 `result.json` or `error.json`, plus FreeVideo's `video.request.json`, engine logs and
 any `video.debug.json` it produces. `generation_seconds` excludes initial setup.
 For server debugging send the failing log and error report; `runtime-ready.json`,

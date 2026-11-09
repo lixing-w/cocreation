@@ -146,9 +146,15 @@ python examples/plan.py --run --model minimax_h3 --accept-model-license
 
 ## 生命周期、日志与验证
 
-同一主进程中三个模型共享串行锁。Qwen/FLUX 使用独立子进程，H3 使用任务 worker 管理 Comfy 进程；调用结束释放显存，不让三个模型同时常驻。H3 同一个运行目录另有进程锁，避免并发修改环境。不同主进程的 Qwen/FLUX 不共享锁，服务器调度仍应保证 worker 独占 GPU；保留调度器提供的 `CUDA_VISIBLE_DEVICES`。
+四个模型对象均采用 lazy persistent session：实例化和 dry-run 不加载模型；首次真实调用启动对象专属 worker，后续调用复用。Qwen/FLUX 缓存已加载的 model/processor/pipeline；MiniMaxH3 保持 Comfy 服务和 loader cache；VDNH3 连接 FreeVideo 原生 resident worker/model bank，而不是每轮启动一个独立推理 worker。
 
-每个任务保存 `request.json`、`runtime.log`、`result.json`；H3 另存 `workflow.json`、`history.json`、预处理输入和 `video.mp4`。返回结果含路径、绑定、版本、实际帧数。失败抛异常并保留日志，不返回占位生成结果。
+`model.close()`、退出 `with` 或对象最后一个引用被释放时关闭 worker，归还其资源。`close()` 可重复调用，之后再次生成会重新加载。`model.generate(...)` 是 `model(...)` 的别名。会话异常或超时会关闭失败 worker；下一次调用重新加载。不要在已加载对象上改 model_id/runtime；先 close。
+
+权重复用与聊天历史独立：Qwen 每次调用只组装本次 messages，不保存聊天历史或跨请求 KV cache。可以将同一个 Qwen 对象传给找帧工具，复用权重而保持干净上下文。
+
+同一主进程的调用共享串行锁，但不同对象可以同时持有权重；切换大模型前由调用方 close 不再使用的对象。不同主进程不共享这个锁。视频后端内部仍保留原生显存调度：offload、显存/内存压力或模型分区/执行配置变化可能淘汰组件并重新加载；持久 session 并不保证每个视频组件永远驻留 HBM。保留调度器提供的 `CUDA_VISIBLE_DEVICES`。
+
+每个任务保存 `request.json`、`runtime.log`、`result.json`；`runtime.log` 指向该对象首次请求目录下的 `session/session.log`，后续请求共用这一进程日志；H3 另存 `workflow.json`、`history.json`、预处理输入和 `video.mp4`。返回结果含路径、绑定、版本、实际帧数。失败抛异常并保留日志，不返回占位生成结果。
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -171,3 +177,36 @@ python examples/plan.py --model vdn_h3 --run
 ```
 
 The CUDA compatibility adaptation is ready for server testing, not yet GPU validated.
+
+
+## 对象生命周期与找帧工具
+
+```python
+from cocreation import Qwen, Flux, Reference
+from tools.find_video_frame import find_video_frame
+
+qwen = Qwen()  # 不加载
+first = qwen("Describe the image.", [Reference("i", "/data/image.jpg", "image")])
+second = qwen.generate("Describe its colors.", [Reference("i", "/data/image.jpg", "image")])
+# 同一套权重，两个互不携带聊天历史的请求。
+timestamp = find_video_frame("/data/video.mp4", "The person facing the camera, face unobstructed",
+                             qwen=qwen, frame_output="/data/selected.png")
+qwen.close()  # 切换大模型前显式释放；del qwen 且没有其他引用也会释放。
+if timestamp is not None:
+    with Flux() as flux:
+        image = flux("Use the person from {{artifact:frame}} in a watercolor portrait.",
+                     [Reference("frame", "/data/selected.png", "image")])
+```
+
+命令行：
+
+```sh
+python tools/find_video_frame.py scratch/data/samples/video.mp4 \
+  "A clear front view of the main subject" --frame-output scratch/runs/reference.png
+```
+
+stdout 仅输出一个秒数或 `null`。时间以视频第一个显示帧为零点；最终帧选择使用 ffprobe 的实际帧时间戳；官方粗定位使用帧索引/FPS 的时间编码，对可变帧率视频可能有近似误差。第一轮直接将视频传给官方 `qwen-vl-utils==0.0.14` 与 `Qwen3VLProcessor`，默认请求 2 fps、最多 24 帧（由官方按时间 patch 约束调整），让 Qwen 返回粗定位时间或 null。第二轮在粗定位附近按真实 PTS 抽出最多 17 张图，Qwen 选择候选 ID，程序映射为确定的原视频帧与时间戳。最终返回值不是第一轮模型估计的时间。`--video-fps`、`--coarse-frames`、`--refine-frames` 可配置预算。搜索范围有限，`null` 表示在检查的候选帧中未找到，不证明全片不存在。
+
+工具的 Python 返回值为 `float | None`；可选 `frame_output` 导出选中 PNG，默认不覆盖已有文件。详细来源、原视频帧序号、两轮候选及选中 PNG 保存在 `scratch/runs/find_video_frame/<id>/`；未找到时不导出图。推理失败、无效 JSON、非法候选编号会报错，不伪装成未找到。支持本地视频路径，不自动下载远程 URL。
+
+工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。CPG 属性与模态抽样的讨论稿见 [docs/cpg.md](docs/cpg.md)。

@@ -1,4 +1,4 @@
-"""One local Comfy process per H3 request; first real call prepares runtime/assets."""
+"""Persistent object-owned Comfy server; first real call prepares runtime/assets."""
 import contextlib
 import fcntl
 import json
@@ -171,7 +171,7 @@ def server(source, python, root, job, startup_timeout):
     command = [str(python), str(source / "main.py"), "--listen", "127.0.0.1", "--port", str(port),
         "--input-directory", str(job / "input"), "--output-directory", str(job / "comfy_output"),
         "--user-directory", str(root / "user"), "--extra-model-paths-config", str(paths),
-        "--disable-auto-launch", "--disable-all-custom-nodes", "--offline", "--cache-none",
+        "--disable-auto-launch", "--disable-all-custom-nodes", "--offline", "--cache-classic",
         "--use-pytorch-cross-attention", "--preview-method", "none"]
     process = subprocess.Popen(command, cwd=source, start_new_session=True)
     base = f"http://127.0.0.1:{port}"
@@ -198,44 +198,73 @@ def server(source, python, root, job, startup_timeout):
                 process.wait()
 
 
-def execute(request, job):
-    job_start_time = time.perf_counter()
+class ComfySession:
+    """Keep the Comfy server and loader-node cache across calls."""
+    def __init__(self):
+        self.stack = contextlib.ExitStack()
+        self.endpoint = None
+        self.files = {}
+        self.runtime = None
 
-    rt = request["runtime"]
-    if not rt["accept_model_license"]:
-        raise ValueError("Model license must be accepted before download/inference")
-    names, media_info = stage_media(request, job / "input")
-    root = Path(rt["root"]).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / "runtime.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        source, python = prepare_runtime(rt)
-        files = download_models(python, root, request["options"]["variant"], rt["local_files_only"])
+    def execute(self, request, job):
+        started = time.perf_counter()
+        rt = request['runtime']
+        if not rt['accept_model_license']:
+            raise ValueError('Model license must be accepted before download/inference')
+        if self.runtime is not None and rt != self.runtime:
+            raise ValueError('Close the object before changing runtime configuration')
+        root = Path(rt['root']).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        variant = request['options']['variant']
+        with (root / 'runtime.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if self.endpoint is None:
+                self.runtime = dict(rt)
+                self.source, self.python = prepare_runtime(rt)
+                self.home = job / 'comfy_session'
+                (self.home / 'input').mkdir(parents=True)
+            if variant not in self.files:
+                self.files[variant] = download_models(self.python, root, variant, rt['local_files_only'])
+            if self.endpoint is None:
+                self.endpoint = self.stack.enter_context(server(self.source, self.python, root,
+                    self.home, rt['startup_timeout']))
+        base, process = self.endpoint
+        names, media_info = stage_media(request, self.home / 'input' / job.name)
+        names = [job.name + '/' + name for name in names]
         graph = build_graph(request, names, media_info)
-        (job / "workflow.json").write_text(json.dumps(graph, indent=2))
-        with server(source, python, root, job, rt["startup_timeout"]) as (base, process):
-            info = api(base, "/object_info")
-            missing = {n["class_type"] for n in graph.values()} - info.keys()
-            if missing:
-                raise RuntimeError(f"Missing Comfy nodes: {sorted(missing)}")
-            submitted = api(base, "/prompt", {"prompt": graph})
-            if submitted.get("node_errors") or not submitted.get("prompt_id"):
-                raise RuntimeError("Invalid H3 workflow: " + json.dumps(submitted))
-            history = wait_result(base, submitted["prompt_id"], process, rt["timeout"])
-            (job / "history.json").write_text(json.dumps(history, indent=2))
-        outputs = list((job / "comfy_output").rglob("*.mp4"))
+        graph['save']['inputs']['filename_prefix'] = job.name + '/video'
+        (job / 'workflow.json').write_text(json.dumps(graph, indent=2))
+        info = api(base, '/object_info')
+        missing = {n['class_type'] for n in graph.values()} - info.keys()
+        if missing:
+            raise RuntimeError(f'Missing Comfy nodes: {sorted(missing)}')
+        submitted = api(base, '/prompt', {'prompt': graph})
+        if submitted.get('node_errors') or not submitted.get('prompt_id'):
+            raise RuntimeError('Invalid H3 workflow: ' + json.dumps(submitted))
+        history = wait_result(base, submitted['prompt_id'], process, rt['timeout'])
+        (job / 'history.json').write_text(json.dumps(history, indent=2))
+        outputs = list((self.home / 'comfy_output' / job.name).rglob('*.mp4'))
         if len(outputs) != 1 or outputs[0].stat().st_size == 0:
-            raise RuntimeError("Comfy did not produce exactly one nonempty MP4")
-        target = str(outputs[0])
-        job_end_time = time.perf_counter()
-        execution_time = job_end_time - job_start_time
-        execution_time_f = f"{execution_time:.2f}s"
-        return dict(status="ok", kind="video", path=str(target), model_id=MODEL_REPO,
-                    model_revision=MODEL_REVISION, comfy_revision=COMFY_REVISION,
-                    weights=files, variant=request["options"]["variant"],
-                    frames=request["options"]["frames"], fps=24,
-                    seconds=request["options"]["frames"] / 24, reference_media=media_info,
-                    time_elapsed=execution_time_f)
+            raise RuntimeError('Comfy did not produce exactly one nonempty MP4')
+        target = job / 'video.mp4'
+        shutil.move(str(outputs[0]), target)
+        return dict(status='ok', kind='video', path=str(target), model_id=MODEL_REPO,
+            model_revision=MODEL_REVISION, comfy_revision=COMFY_REVISION,
+            weights=self.files[variant], variant=variant, frames=request['options']['frames'],
+            fps=24, seconds=request['options']['frames']/24, reference_media=media_info,
+            comfy_pid=process.pid, time_elapsed=time.perf_counter()-started)
+
+    def close(self):
+        self.stack.close()
+        self.endpoint = None
+
+
+def execute(request, job):
+    session = ComfySession()
+    try:
+        return session.execute(request, job)
+    finally:
+        session.close()
 
 
 def main():

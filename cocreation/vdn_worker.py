@@ -1,4 +1,4 @@
-"""One managed FreeVideo CLI invocation; terminate its entire process group on failure."""
+"""Object-owned FreeVideo resident session with per-request CLI orchestration."""
 import fcntl
 import json
 import os
@@ -82,34 +82,79 @@ def stop(process):
     process.wait()
 
 
-def execute(request, job):
-    if not sys.platform.startswith('linux'):
-        raise RuntimeError('VDN inference requires Linux/NVIDIA')
-    rt = request['runtime']
-    if not rt['accept_model_license']:
-        raise ValueError('MiniMax H3 license acceptance required')
-    metadata = validate_media(request)
-    root = Path(rt['root']).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / 'runtime.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        root, python = prepare_runtime(rt)
+class VDNSession:
+    """Prepare once, then own a persistent controller in the isolated environment."""
+    def __init__(self):
+        self.session = None
+        self.runtime = None
+        self.installation = None
+
+    def execute(self, request, job):
+        if not sys.platform.startswith('linux'):
+            raise RuntimeError('VDN inference requires Linux/NVIDIA')
+        rt = request['runtime']
+        if not rt['accept_model_license']:
+            raise ValueError('MiniMax H3 license acceptance required')
+        if self.runtime is not None and self.runtime != rt:
+            raise ValueError('Close the object before changing runtime configuration')
+        if self.session is None:
+            from .session import ProcessSession
+            root = Path(rt['root']).expanduser().resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            with (root / 'runtime.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                root, python = prepare_runtime(rt)
+                env = environment(root)
+                if rt['local_files_only']:
+                    env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
+                self.installation = prepare_assets(root, python, rt, env)
+            env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent) + os.pathsep + env['PYTHONPATH']
+            env['FREEVIDEO_KEEP_MODELS'] = 'on'
+            self.session = ProcessSession('vdn_native', python, env, job / 'vdn_session')
+            self.runtime = dict(rt)
+        (job / 'installation.json').write_text(json.dumps(self.installation))
+        self.session.call(job, rt['timeout'])
+        return json.loads((job / 'result.json').read_text())
+
+    def close(self):
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+
+
+class NativeVDNSession:
+    """Own FreeVideo's native model bank, not just a long-lived CLI shell."""
+    def __init__(self):
+        from freevideo_engine.resident_process import SessionOwner
+        self.owner = SessionOwner()
+
+    def execute(self, request, job):
+        from freevideo_engine.resident_process import ENV, status
+        rt = request['runtime']
+        root = Path(rt['root']).expanduser().resolve()
+        metadata = validate_media(request)
+        installation = json.loads((job / 'installation.json').read_text())
         env = environment(root)
+        env['FREEVIDEO_KEEP_MODELS'] = 'on'
         if rt['local_files_only']:
             env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
-        installation = prepare_assets(root, python, rt, env)
+        # No idle timer/watch is scheduled: ownership lasts until close().
+        env[ENV] = self.owner.start(root, root / 'vendor/FreeVideo', installation['python'], env, busy=True)
         (job / 'prompt.txt').write_text(reference_prompt(request, metadata))
         (job / 'media.json').write_text(json.dumps(media_request(request), indent=2))
         command = generation_command(request, job, installation)
         (job / 'command.json').write_text(json.dumps(command, indent=2))
         started = time.perf_counter()
-        process = subprocess.Popen(command, env=env, cwd=root / 'vendor/FreeVideo', start_new_session=True)
+        process = None
         try:
+            process = subprocess.Popen(command, env=env, cwd=root / 'vendor/FreeVideo', start_new_session=True)
             code = process.wait(timeout=rt['timeout'])
             if code:
-                raise RuntimeError(f'FreeVideo exited {code}; inspect runtime.log and video.debug.json')
+                raise RuntimeError(f'FreeVideo exited {code}; inspect session.log and video.debug.json')
         finally:
-            stop(process)
+            if process is not None:
+                stop(process)
+            self.owner.active = False
         output = job / 'video.mp4'
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError('FreeVideo did not produce a nonempty video.mp4')
@@ -119,7 +164,18 @@ def execute(request, job):
             refine_steps=request['options']['refine_steps'], two_pass=request['options']['two_pass'],
             fps=24, frames=request['options']['frames'], seconds=request['options']['frames']/24,
             reference_media=metadata, time_elapsed=time.perf_counter()-started,
-            upstream_report=str(output.with_suffix('.request.json')))
+            resident=status(env), upstream_report=str(output.with_suffix('.request.json')))
+
+    def close(self):
+        self.owner.close()
+
+
+def execute(request, job):
+    session = VDNSession()
+    try:
+        return session.execute(request, job)
+    finally:
+        session.close()
 
 
 def main():

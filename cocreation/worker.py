@@ -1,4 +1,4 @@
-"""One request per child; process exit releases all model components and CUDA memory."""
+"""Inference handlers with optional object-owned model state; no conversation cache."""
 import json
 from pathlib import Path
 import sys
@@ -22,7 +22,7 @@ def qwen_messages(request):
     return [dict(role="user", content=content)]
 
 
-def run_qwen(request, directory):
+def run_qwen(request, directory, state=None):
     import torch
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
     from qwen_vl_utils import process_vision_info
@@ -30,10 +30,13 @@ def run_qwen(request, directory):
 
     rt, opts = request["runtime"], request["options"]
     torch.manual_seed(opts["seed"])
-    model = Qwen3VLForConditionalGeneration.from_pretrained(request["model_id"],
-        dtype=getattr(torch, rt["dtype"]), device_map={"": rt["device"]},
-        attn_implementation="sdpa", **hf_options(rt)).eval()
-    processor = AutoProcessor.from_pretrained(request["model_id"], **hf_options(rt))
+    state = {} if state is None else state
+    if 'model' not in state:
+        state['model'] = Qwen3VLForConditionalGeneration.from_pretrained(request['model_id'],
+            dtype=getattr(torch, rt['dtype']), device_map={'': rt['device']},
+            attn_implementation='sdpa', **hf_options(rt)).eval()
+        state['processor'] = AutoProcessor.from_pretrained(request['model_id'], **hf_options(rt))
+    model, processor = state['model'], state['processor']
     messages = qwen_messages(request)
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     images, videos, video_kwargs = process_vision_info(messages, image_patch_size=16,
@@ -58,19 +61,23 @@ def run_qwen(request, directory):
                 input_tokens=int(inputs.input_ids.shape[-1]), output_tokens=len(trimmed[0]), time_elapsed=execution_time_f)
 
 
-def run_flux(request, directory):
+def run_flux(request, directory, state=None):
     import torch
     from diffusers import Flux2KleinPipeline
     from PIL import Image, ImageOps
     job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
-    pipe = Flux2KleinPipeline.from_pretrained(request["model_id"],
-        torch_dtype=getattr(torch, rt["dtype"]), **hf_options(rt))
-    if rt["cpu_offload"]:
-        pipe.enable_model_cpu_offload(device=rt["device"])
-    else:
-        pipe.to(rt["device"])
+    state = {} if state is None else state
+    if 'pipe' not in state:
+        pipe = Flux2KleinPipeline.from_pretrained(request['model_id'],
+            torch_dtype=getattr(torch, rt['dtype']), **hf_options(rt))
+        if rt['cpu_offload']:
+            pipe.enable_model_cpu_offload(device=rt['device'])
+        else:
+            pipe.to(rt['device'])
+        state['pipe'] = pipe
+    pipe = state['pipe']
     images = []
     for ref in request["references"]:
         with Image.open(ref["path"]) as source:
@@ -96,6 +103,23 @@ def main():
     handlers = {"qwen": run_qwen, "flux": run_flux}
     result = handlers[request["backend"]](request, directory)
     (directory / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+class ModelSession:
+    def __init__(self, backend):
+        self.backend = backend
+        self.state = {}
+        self.identity = None
+
+    def execute(self, request, directory):
+        identity = (request['model_id'], request['runtime'])
+        if self.identity is not None and identity != self.identity:
+            raise ValueError('Close the object before changing model/runtime configuration')
+        self.identity = identity
+        return {'qwen': run_qwen, 'flux': run_flux}[self.backend](request, directory, self.state)
+
+    def close(self):
+        self.state.clear()
 
 
 if __name__ == "__main__":

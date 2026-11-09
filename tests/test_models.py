@@ -95,31 +95,31 @@ assert not {'torch','transformers','diffusers','qwen_vl_utils'} & set(sys.module
 
     def test_worker_job_roundtrip_and_failure_log(self):
         with tempfile.TemporaryDirectory() as tmp:
-            def fake_run(command, **kwargs):
-                job = Path(command[-1])
-                request = json.loads((job / "request.json").read_text())
-                self.assertEqual(request["prompt"], "hello")
-                (job / "result.json").write_text(json.dumps(dict(status="ok", text="answer")))
-            with patch("subprocess.run", side_effect=fake_run):
-                result = Qwen(output_dir=tmp)("hello")
-            self.assertEqual(result["text"], "answer")
-            self.assertTrue(Path(result["request_path"]).is_file())
-            with patch("subprocess.run", side_effect=subprocess.CalledProcessError(2, "worker")):
-                with self.assertRaisesRegex(RuntimeError, "runtime.log"):
-                    Qwen(output_dir=tmp)("hello")
+            def fake_call(session, job, timeout):
+                request = json.loads((job / 'request.json').read_text())
+                self.assertEqual(request['prompt'], 'hello')
+                (job / 'result.json').write_text(json.dumps(dict(status='ok', text='answer')))
+            with patch('cocreation.session.ProcessSession.call', autospec=True, side_effect=fake_call):
+                with Qwen(output_dir=tmp) as model:
+                    result = model('hello')
+                    session = model._session
+                    model('hello')
+                    self.assertIs(model._session, session)
+            self.assertEqual(result['text'], 'answer')
+            self.assertTrue(Path(result['request_path']).is_file())
+            with patch('cocreation.session.ProcessSession.call', side_effect=RuntimeError('worker failed')):
+                with self.assertRaisesRegex(RuntimeError, 'worker failed'):
+                    Qwen(output_dir=tmp)('hello')
 
     def test_h3_worker_command_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:
-            calls = []
-            def fake_run(command, **kwargs):
-                calls.append(command)
-                job = Path(command[-1])
-                (job / "video.mp4").write_bytes(b"video")
-                (job / "result.json").write_text(json.dumps(dict(status="ok", kind="video", path=str(job / "video.mp4"))))
-            with patch("cocreation.models.sys.platform", "linux"), patch("subprocess.run", side_effect=fake_run):
-                result = MiniMaxH3(runtime=H3Runtime(accept_model_license=True), output_dir=tmp)("hello")
-            self.assertEqual(result["kind"], "video")
-            self.assertEqual(calls[0][1:3], ["-m", "cocreation.comfy_worker"])
+            def fake_call(session, job, timeout):
+                self.assertEqual(session.backend, 'minimax_h3')
+                (job / 'result.json').write_text(json.dumps(dict(status='ok', kind='video')))
+            with patch('cocreation.models.sys.platform', 'linux'), \
+                 patch('cocreation.session.ProcessSession.call', autospec=True, side_effect=fake_call):
+                with MiniMaxH3(runtime=H3Runtime(accept_model_license=True), output_dir=tmp) as model:
+                    self.assertEqual(model('hello')['kind'], 'video')
 
 
 

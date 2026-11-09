@@ -157,12 +157,13 @@ class VDNTests(unittest.TestCase):
 
     def test_worker_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            def fake(command, **kw):
-                self.assertEqual(command[1:3], ['-m', 'cocreation.vdn_worker'])
-                job = Path(command[-1])
+            def fake(session, job, timeout):
+                self.assertEqual(session.backend, 'vdn_h3')
                 (job / 'result.json').write_text(json.dumps(dict(status='ok', kind='video')))
-            with patch.dict(os.environ, {'COCREATION_SCRATCH': tmp}), patch('sys.platform', 'linux'), patch('subprocess.run', side_effect=fake):
-                self.assertEqual(VDNH3(output_dir=tmp)('x')['kind'], 'video')
+            with patch.dict(os.environ, {'COCREATION_SCRATCH': tmp}), patch('sys.platform', 'linux'), \
+                 patch('cocreation.session.ProcessSession.call', autospec=True, side_effect=fake):
+                with VDNH3(output_dir=tmp) as model:
+                    self.assertEqual(model('x')['kind'], 'video')
 
 
 if __name__ == '__main__':

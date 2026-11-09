@@ -3,10 +3,10 @@ from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import threading
 import datetime
+import uuid
 
 from .references import Reference, prepare
 from .h3 import H3Runtime, MODEL_REPO, frame_count
@@ -40,6 +40,39 @@ class Runtime:
 class _System:
     backend: str
 
+    def close(self):
+        """Release this object's worker and weights. A later call loads afresh."""
+        with _GPU_LOCK:
+            session = getattr(self, '_session', None)
+            if session is not None:
+                session.close()
+                self._session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def generate(self, *args, **kwargs):
+        return self(*args, **kwargs)
+
+    def _persistent_execute(self, request, job_dir):
+        from .session import ProcessSession
+        session = getattr(self, '_session', None)
+        if session is None:
+            env = runtime_environment()
+            package_root = str(Path(__file__).resolve().parent.parent)
+            env['PYTHONPATH'] = os.pathsep.join(filter(None, [package_root, env.get('PYTHONPATH')]))
+            session = ProcessSession(self.backend, self.runtime.python, env, job_dir / 'session')
+            self._session = session
+        (job_dir / 'runtime.log').write_text('Persistent worker log: ' + str(session.directory / 'session.log') + '\n')
+        try:
+            session.call(job_dir, timeout=getattr(self.runtime, 'timeout', 7200))
+        except BaseException:
+            self.close()
+            raise
+
     def _invoke(self, prompt, references, options, dry_run):
         request = prepare(prompt, list(references or []))
         request.update(backend=self.backend, model_id=self.model_id,
@@ -56,7 +89,7 @@ class _System:
             now = datetime.datetime.now()
             formatted_time = now.strftime("%y-%m-%d-%H-%M-%S-") + now.strftime("%f")[:3]
             # e.g. 26-11-08-17-29-43-823
-            job_dir = self.output_dir / formatted_time
+            job_dir = self.output_dir / (formatted_time + '-' + uuid.uuid4().hex[:8])
             job_dir.mkdir(parents=True)
             request_path = job_dir / "request.json"
             request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
@@ -71,19 +104,8 @@ class _System:
         pass
 
     def _execute(self, request, job_dir):
-        env = runtime_environment()
-        package_root = str(Path(__file__).resolve().parent.parent)
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
-        _run([self.runtime.python, "-m", "cocreation.worker", str(job_dir)], job_dir, env)
+        self._persistent_execute(request, job_dir)
 
-
-def _run(command, job_dir, env=None):
-    log = job_dir / "runtime.log"
-    with log.open("a") as stream:
-        try:
-            subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT, env=env if env is not None else runtime_environment())
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Inference/setup failed (exit {exc.returncode}); see {log}") from exc
 
 
 class Qwen(_System):
@@ -168,10 +190,7 @@ class MiniMaxH3(_System):
             raise RuntimeError("H3 execution requires a Linux NVIDIA host; use dry_run=True on Mac")
         if not self.runtime.accept_model_license:
             raise ValueError("Read the MiniMax H3 model license, then set accept_model_license=True")
-        env = runtime_environment()
-        package_root = str(Path(__file__).resolve().parent.parent)
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [package_root, env.get("PYTHONPATH")]))
-        _run([self.runtime.python, "-m", "cocreation.comfy_worker", str(job_dir)], job_dir, env)
+        self._persistent_execute(request, job_dir)
 
 
 class VDNH3(_System):
@@ -210,7 +229,4 @@ class VDNH3(_System):
             raise RuntimeError('VDN execution requires a Linux NVIDIA host; use dry_run=True on Mac')
         if not self.runtime.accept_model_license:
             raise ValueError('Accept the MiniMax H3 model license before running VDN')
-        env = runtime_environment()
-        package_root = str(Path(__file__).resolve().parent.parent)
-        env['PYTHONPATH'] = os.pathsep.join(filter(None, [package_root, env.get('PYTHONPATH')]))
-        _run([self.runtime.python, '-m', 'cocreation.vdn_worker', str(job_dir)], job_dir, env)
+        self._persistent_execute(request, job_dir)

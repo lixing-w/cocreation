@@ -13,4 +13,4 @@ dependencies = []
 # Retain this metadata for the editable installation (-e .).
 
 [tool.setuptools.packages.find]
-include = ["cocreation*"]
+include = ["cocreation*", "tools*"]
