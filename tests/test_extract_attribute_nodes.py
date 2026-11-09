@@ -75,6 +75,10 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual(extract_attribute_nodes(ref,qwen=model),IMAGE_EXAMPLE)
             model.close.assert_not_called()
             self.assertIn('system_prompt',model.call_args.kwargs)
+            self.assertTrue(str(model.call_args.kwargs['system_cache_path']).endswith(
+                'kvcache/extract_attribute_nodes/system_prompt.kvcache'))
+            extract_attribute_nodes(ref,qwen=model,use_system_cache=False)
+            self.assertIsNone(model.call_args.kwargs['system_cache_path'])
             self.assertEqual(model.call_args.args[1],[Reference(ref.artifact_id,path.resolve(),'image')])
             with patch('tools.extract_attribute_nodes.Qwen', return_value=model) as factory:
                 self.assertEqual(extract_attribute_nodes(ref),IMAGE_EXAMPLE)
@@ -96,3 +100,6 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual([m['role'] for m in qwen_messages(one)],['system','user'])
         self.assertEqual([m['role'] for m in qwen_messages(two)],['user'])
         with self.assertRaises(TypeError):model('user',system_prompt=[],dry_run=True)
+        with self.assertRaises(ValueError):model('user',system_cache_path='/tmp/cache',dry_run=True)
+        request=model('user',system_prompt='Rules',system_cache_path='/tmp/cache',dry_run=True)
+        self.assertEqual(request['options']['system_cache_path'],str(Path('/tmp/cache').resolve()))

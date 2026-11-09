@@ -9,6 +9,7 @@ import sys
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cocreation import Qwen, Reference
+from cocreation.storage import scratch_root
 from tools.extract_attribute_nodes_prompts import (
     CATEGORY_RULES, extraction_prompt, extraction_system_prompt)
 
@@ -119,7 +120,7 @@ def parse_attributes(text, artifact_id, kind):
 
 def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
                             max_new_tokens=8192, video_fps=2.0, video_max_frames=32,
-                            max_pixels=512 * 512):
+                            max_pixels=512 * 512, use_system_cache=True):
     """Return validated attribute JSON, or None for malformed/invalid model output.
 
     Args:
@@ -130,6 +131,7 @@ def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
         video_fps: Requested official video sampling rate.
         video_max_frames: Official video sampling frame cap.
         max_pixels: Per-frame/image pixel budget.
+        use_system_cache: Reuse the dedicated system prefix; False uses ordinary inference.
 
     A local model is closed in finally, including on failures. File and inference
     failures propagate; only output parsing/validation failures return None.
@@ -148,6 +150,8 @@ def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
     try:
         response = model(extraction_prompt(reference.artifact_id, reference.kind), [reference],
                          system_prompt=extraction_system_prompt(), max_new_tokens=max_new_tokens,
+                         system_cache_path=(scratch_root() / "kvcache/extract_attribute_nodes/system_prompt.kvcache"
+                                            if use_system_cache else None),
                          video_fps=video_fps, video_max_frames=video_max_frames,
                          max_pixels=max_pixels)
         text = response.get('text') if isinstance(response,dict) else None
@@ -167,6 +171,7 @@ def main():
     parser.add_argument('--max-new-tokens', type=int, default=8192)
     parser.add_argument('--video-fps', type=float, default=2.0)
     parser.add_argument('--video-max-frames', type=int, default=32)
+    parser.add_argument('--no-system-cache', dest='use_system_cache', action='store_false')
     args = vars(parser.parse_args())
     artifact = Reference(args.pop('artifact_id'), args.pop('path'), args.pop('kind'))
     print(json.dumps(extract_attribute_nodes(artifact, **args), ensure_ascii=False, indent=2))

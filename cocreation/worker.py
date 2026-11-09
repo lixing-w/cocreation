@@ -84,8 +84,13 @@ def run_qwen(request, directory, state=None):
     inputs = processor(text=[text], images=images, videos=videos,
         video_metadata=video_metadata, do_resize=False, return_tensors="pt", **video_kwargs)
     inputs = inputs.to(rt["device"])
+    cache_info = None
     with torch.inference_mode():
-        generated = model.generate(**inputs, max_new_tokens=opts["max_new_tokens"], do_sample=False)
+        if opts.get('system_cache_path'):
+            from .qwen_prefix_cache import generate_with_prefix
+            generated, cache_info = generate_with_prefix(model, processor, inputs, request, state)
+        else:
+            generated = model.generate(**inputs, max_new_tokens=opts["max_new_tokens"], do_sample=False)
     trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
     answer = processor.batch_decode(trimmed, skip_special_tokens=True,
                                    clean_up_tokenization_spaces=False)[0]
@@ -94,7 +99,8 @@ def run_qwen(request, directory, state=None):
     execution_time = job_end_time - job_start_time
     execution_time_f = f"{execution_time:.2f}s"
     return dict(status="ok", text=answer, model_id=request["model_id"],
-                input_tokens=int(inputs.input_ids.shape[-1]), output_tokens=len(trimmed[0]), time_elapsed=execution_time_f)
+                input_tokens=int(inputs.input_ids.shape[-1]), output_tokens=len(trimmed[0]), time_elapsed=execution_time_f,
+                system_cache=cache_info)
 
 
 def run_flux(request, directory, state=None):

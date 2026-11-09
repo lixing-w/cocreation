@@ -246,3 +246,49 @@ Validation checks schema, cardinality, reference types and image temporal exclus
 it cannot certify observational accuracy. Video extraction uses official sampled
 video input (default 2 fps, cap 32 frames), so brief events can be missed. No CPG
 storage is modified. The future orchestrator belongs in scripts/cpg/.
+
+
+### Qwen system prefix cache
+
+The attribute extraction tool enables a dedicated cache by default:
+`scratch/kvcache/extract_attribute_nodes/system_prompt.kvcache` (under
+`COCREATION_SCRATCH` when set). The file is created on first actual inference,
+not during construction or dry-run. To disable: `use_system_cache=False` or the
+extractor CLI's `--no-system-cache`.
+
+Other Qwen calls opt in explicitly:
+
+```python
+qwen(prompt, references, system_prompt=rules,
+     system_cache_path="scratch/kvcache/my_tool/system_prompt.kvcache")
+```
+
+This uses official Qwen forward/encoder/generation methods, without patching
+Transformers. It verifies the exact system token prefix, clones its KV, calculates
+full-sequence positions with Qwen's get_rope_index, prefills the new user/media
+suffix via forward, then leaves the last text token for generate to continue.
+Multimodal rope_deltas are recomputed per artifact and cleared afterward.
+The ordinary path is unchanged when no system_cache_path is supplied.
+
+A worker retains one immutable CPU prefix payload, copying tensors to the model
+for each request; changing tools replaces that memory entry. A new worker loads
+the file with torch.load(weights_only=True). Fingerprints cover resolved weight
+revision (or local checkpoint file metadata), model config, dtype/device, runtime
+versions, chat template and exact prefix token IDs. If no stable weight identity
+is available, disk reuse is restricted to the same process/model. Mismatched or
+corrupt caches are rebuilt; filesystem write errors propagate. Writes are atomic.
+No artifact visuals, user messages or generated answers are persisted in this cache.
+The result's system_cache reports built/disk/memory, prefix_tokens and path.
+
+Supported scope: one unpadded request, pure-text system, default Qwen3-VL RoPE,
+Transformers 4.x as specified in requirements.txt. The numerical regression tests
+use the actual Transformers 4.57.1 Qwen3-VL implementation with tiny random CPU
+weights, including images, videos and mixed media. Full 8B CUDA validation is still
+required on the target server. Run these tests in the model environment:
+
+```bash
+python -m unittest discover -s tests -p 'test_qwen_prefix_cache.py' -v
+```
+
+Prefix reuse saves repeated system prefill computation; it does not reduce context
+length. The cache file and in-memory tensors still represent every system token.

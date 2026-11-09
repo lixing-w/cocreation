@@ -124,14 +124,20 @@ class Qwen(_System):
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
-                 max_pixels=512 * 512, seed=0, dry_run=False, system_prompt=None):
+                 max_pixels=512 * 512, seed=0, dry_run=False, system_prompt=None,
+                 system_cache_path=None):
         if system_prompt is not None and not isinstance(system_prompt, str):
             raise TypeError("system_prompt must be a string or None")
+        if system_cache_path is not None:
+            if not system_prompt:
+                raise ValueError("system_cache_path requires a nonempty system_prompt")
+            system_cache_path = str(Path(system_cache_path).expanduser().resolve())
         if max_new_tokens < 1 or video_fps <= 0 or video_max_frames < 2 or max_pixels < 1024:
             raise ValueError("Invalid Qwen token/frame/pixel budget")
         return self._invoke(prompt, references, dict(max_new_tokens=max_new_tokens,
             video_fps=video_fps, video_max_frames=video_max_frames,
-            max_pixels=max_pixels, seed=seed, system_prompt=system_prompt), dry_run)
+            max_pixels=max_pixels, seed=seed, system_prompt=system_prompt,
+            system_cache_path=system_cache_path), dry_run)
 
 
 class Flux(_System):

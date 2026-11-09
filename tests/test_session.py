@@ -117,6 +117,25 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(messages[1][0]['content'][-1]['text'],'second')
         self.assertNotIn('first', str(messages[1]))
 
+    def test_worker_routes_opt_in_prefix_cache(self):
+        torch=MagicMock(); transformers=MagicMock(); utils=MagicMock()
+        processor=transformers.AutoProcessor.from_pretrained.return_value
+        inputs=MagicMock(); inputs.input_ids=MagicMock(); inputs.input_ids.shape=[1,2]
+        inputs.input_ids.__iter__.side_effect=lambda: iter([[1,2]])
+        processor.return_value.to.return_value=inputs
+        processor.batch_decode.return_value=['ok']
+        utils.process_vision_info.return_value=(None,None,{})
+        request=Qwen()('user',system_prompt='rules',system_cache_path='/tmp/prefix',dry_run=True)
+        info={'status':'memory','prefix_tokens':1,'path':'/tmp/prefix'}
+        with patch.dict(sys.modules, {'torch':torch,'transformers':transformers,'qwen_vl_utils':utils}), \
+             patch('cocreation.qwen_prefix_cache.generate_with_prefix',return_value=([[1,2,3]],info)) as generate:
+            state={}
+            result=run_qwen(request,Path('/tmp'),state)
+            self.assertIs(generate.call_args.args[-1],state)
+            self.assertEqual(result['system_cache'],info)
+            self.assertEqual(result['output_tokens'],1)
+            transformers.Qwen3VLForConditionalGeneration.from_pretrained.return_value.eval.return_value.generate.assert_not_called()
+
     def test_flux_load_once(self):
         torch=MagicMock(); diffusers=MagicMock(); pil=MagicMock()
         request=Flux()('first', dry_run=True); state={}
