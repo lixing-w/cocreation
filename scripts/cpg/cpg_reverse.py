@@ -14,7 +14,8 @@ from cocreation import Qwen, Flux, VDNH3, VDNRuntime, Reference
 from tools.extract_attribute_nodes import extract_attribute_nodes, validate_attributes
 from tools._attribute_protocol import (
     atomize, assemble, sample_selection, apply_variations, expert_rows,
-    attach_provenance, validate_matches)
+    attach_provenance, validate_matches, canonicalize_shared)
+from tools.extract_attribute_nodes_prompts import CATEGORY_RULES
 from tools.imaginer import imaginer
 from tools.attribute_verifier import attribute_verifier
 from tools.flux_prompter import flux_prompter
@@ -63,7 +64,7 @@ def read_roots(manifest):
 
 
 def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2),
-        max_parents=2, p_video=0.5, seconds=5.0, brief='', vdn_python=None):
+        max_parents=2, p_video=0.5, seconds=5.0, brief='', vdn_python=None, debug=True):
     """Run at most attempts trials, not attempts successful generations.
 
     K is the minimum retained count; K and V use inclusive random ranges.
@@ -84,12 +85,25 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
     roots = read_roots(manifest)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
+    def emit(title, payload):
+        # Console output is stderr; stdout remains the final machine-readable summary.
+        block = '\n=== ' + title + ' ===\n' + json.dumps(payload, ensure_ascii=False, indent=2)
+        with (output / 'debug.log').open('a', encoding='utf-8') as stream:
+            stream.write(block + '\n')
+        if debug:
+            print(block, file=sys.stderr, flush=True)
+
+    def media_rows(references):
+        return [dict(artifact_id=r.artifact_id, kind=r.kind, path=str(r.path)) for r in references]
+
     rng = random.Random(seed)
     graph = {'version': 1, 'seed': seed, 'config': dict(attempts=attempts, keep=list(keep),
         variate=list(variate), max_parents=max_parents, p_video=p_video, seconds=seconds,
         brief=brief), 'artifacts': [], 'attempts': []}
     next_number = max(artifact_number(r['artifact_id']) for r in roots) + 1
     save(output / 'graph.json', graph)
+    emit('Run configuration', graph['config'])
+    emit('Initializing shared Qwen / Flux / VDNH3', {'output_dir': str(output)})
     # These exact three reusable objects serve roots and every trial.
     with ExitStack() as stack:
         qwen = stack.enter_context(Qwen(output_dir=output / 'qwen'))
@@ -99,13 +113,18 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
         for root in roots:
             ref = Reference(root['artifact_id'], root['path'], root['kind'])
             observation = root.get('observation')
+            emit('Root ' + ref.artifact_id + ' / input', media_rows([ref]))
+            emit('Root ' + ref.artifact_id + ' / observation source',
+                 'Calling extractor' if observation is None else 'Using supplied observation')
             if observation is None:
                 observation = extract_attribute_nodes(ref, qwen=qwen, output_dir=output / 'roots')
+            emit('Root ' + ref.artifact_id + ' / extractor or supplied observation result', observation)
             if observation is None:
                 graph.setdefault('root_failures', []).append(ref.artifact_id)
                 save(output / 'graph.json', graph)
                 continue
             records = atomize(observation)
+            emit('Root ' + ref.artifact_id + ' / atoms', records)
             graph['artifacts'].append(dict(artifact_id=ref.artifact_id, kind=ref.kind,
                 path=str(ref.path), observation=observation,
                 provenance=attach_provenance(records, [], []), parents=[]))
@@ -116,6 +135,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
             log = {'attempt': attempt, 'status': 'running'}
             graph['attempts'].append(log)
             stage = 'selection'
+            emit(f'Attempt {attempt} / start', {'attempt': attempt, 'total_attempts': attempts})
             try:
                 available = [n for n in graph['artifacts'] if n['observation']['attributes']]
                 if not available:
@@ -129,8 +149,16 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 artifact_id = f'artifact_{next_number + attempt}'
                 log.update(artifact_id=artifact_id, kind=kind, keep=k, variate=v,
                            sampled_parents=[p['artifact_id'] for p in parents])
+                emit(f'Attempt {attempt} / sampled configuration', log)
                 pool = [r for p in parents for r in atomize(p['observation'], p['provenance'])]
+                emit(f'Attempt {attempt} / parent atom pool', pool)
+                eligible = [r for r in canonicalize_shared(pool)
+                            if kind != 'image' or CATEGORY_RULES[r['category']]['temporal'] != 'Yes']
+                emit(f'Attempt {attempt} / deduplicated modality-compatible candidate pool', eligible)
                 selected = sample_selection(pool, k, kind, rng, parent_count=parent_limit)
+                emit(f'Attempt {attempt} / actual selection',
+                     {'minimum_K': k, 'actual_count': len(selected) if selected is not None else None,
+                      'requested_V': v, 'atoms': selected})
                 if selected is None or v > len(selected):
                     log.update(status='skipped', stage=stage, reason='no feasible K/V selection')
                     continue
@@ -143,22 +171,30 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                         if p['artifact_id'] in used]
                 save(directory / 'selection.json', dict(selected=selected, vary_ids=vary_ids))
                 stage = 'imaginer'
+                emit(f'Attempt {attempt} / imaginer input',
+                     {'vary_ids': vary_ids, 'references': media_rows(refs), 'kind': kind})
                 edits = imaginer(selected, vary_ids, refs, kind=kind, qwen=qwen,
                                  output_dir=directory / stage, seed=rng.randrange(2**31))
+                emit(f'Attempt {attempt} / imaginer result', edits)
                 if edits is None:
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
                 planned = apply_variations(selected, edits, vary_ids)
                 target = assemble(planned, artifact_id, kind)
+                emit(f'Attempt {attempt} / assembled target attributes', target)
                 save(directory / 'plan.json', dict(target=target, variations=edits, records=planned))
                 # Experts get new desired values without falsely claiming source support.
                 rows = expert_rows(planned)
                 expert_used = {a for row in rows for a in row.get('artifact_ids', [])}
                 expert_refs = [r for r in refs if r.artifact_id in expert_used]
                 stage = 'prompt_expert'
+                emit(f'Attempt {attempt} / generation expert input',
+                     {'expert': 'flux_prompter' if kind == 'image' else 'h3_prompter',
+                      'attributes': rows, 'references': media_rows(expert_refs)})
                 options = dict(qwen=qwen, output_dir=directory / stage, user_prompt=brief)
                 prompt = (flux_prompter(rows, expert_refs, **options) if kind == 'image' else
                           h3_prompter(rows, expert_refs, seconds=seconds, **options))
+                emit(f'Attempt {attempt} / generation expert result', prompt)
                 if prompt is None:
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
@@ -170,8 +206,12 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                         if ref.kind == 'video':
                             frame = directory / f'reference_{i}.png'
                             descriptions = [r for r in rows if ref.artifact_id in r.get('artifact_ids', [])]
+                            emit(f'Attempt {attempt} / frame search input',
+                                 {'source': media_rows([ref])[0], 'attributes': descriptions})
                             timestamp = find_video_frame(ref.path, json.dumps(descriptions), qwen=qwen,
                                 output_dir=directory / 'frames', frame_output=frame)
+                            emit(f'Attempt {attempt} / frame search result',
+                                 {'timestamp_seconds': timestamp, 'frame_path': str(frame) if timestamp is not None else None})
                             if timestamp is None:
                                 break
                             generation_refs[i] = Reference(ref.artifact_id, frame, 'image')
@@ -183,8 +223,12 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 stage = 'generation'
                 generation_seed = rng.randrange(2**31)
                 log['generation_seed'] = generation_seed
+                emit(f'Attempt {attempt} / generation start',
+                     {'model': 'Flux' if kind == 'image' else 'VDNH3', 'seed': generation_seed,
+                      'references': media_rows(generation_refs)})
                 result = (flux(prompt, generation_refs, seed=generation_seed) if kind == 'image' else
                           vdn(prompt, generation_refs, seconds=seconds, seed=generation_seed))
+                emit(f'Attempt {attempt} / generation result', result)
                 if (not isinstance(result, dict) or result.get('kind') != kind or
                         not isinstance(result.get('path'), str) or not Path(result['path']).is_file()):
                     log.update(status='skipped', stage=stage, reason='missing generated media')
@@ -192,8 +236,10 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 save(directory / 'generation.json', result)
                 generated = Reference(artifact_id, result['path'], kind)
                 stage = 'revise_observation'
+                emit(f'Attempt {attempt} / verifier pass 1 start', media_rows([generated]))
                 observed = attribute_verifier(mode=stage, generated_media=generated,
                     target_attributes=target, qwen=qwen, output_dir=directory / stage)
+                emit(f'Attempt {attempt} / verifier pass 1 result', observed)
                 if observed is None:
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
@@ -202,15 +248,20 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 sources = [dict(reference=r, attributes=[a for a in selected
                            if a['carrier_artifact_id'] == r.artifact_id]) for r in refs]
                 stage = 'verify_inheritance'
+                emit(f'Attempt {attempt} / verifier pass 2 input',
+                     [{'reference': media_rows([source['reference']])[0],
+                       'selected_original_attributes': source['attributes']} for source in sources])
                 matches = attribute_verifier(mode=stage, generated_media=generated,
                     observed_attributes=observed, selected_sources=sources,
                     qwen=qwen, output_dir=directory / stage)
+                emit(f'Attempt {attempt} / verifier pass 2 result', matches)
                 if matches is None:
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
                 records = atomize(observed)
                 validate_matches(matches, records, selected)
                 provenance = attach_provenance(records, matches, selected)
+                emit(f'Attempt {attempt} / final provenance', provenance)
                 save(directory / 'inheritance.json', {'matches': matches, 'provenance': provenance})
                 graph['artifacts'].append(dict(artifact_id=artifact_id, kind=kind,
                     path=str(generated.path), observation=observed, provenance=provenance,
@@ -222,25 +273,32 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
             finally:
                 save(directory / 'attempt.json', log)
                 save(output / 'graph.json', graph)
-                print(f"Attempt {attempt}: {log['status']} ({log.get('stage', stage)})", file=sys.stderr)
+                emit(f'Attempt {attempt} / outcome', log)
+    emit('Run complete', {'artifacts': len(graph['artifacts']),
+         'accepted': sum(a['status'] == 'accepted' for a in graph['attempts']),
+         'graph_path': str(output / 'graph.json'), 'debug_log': str(output / 'debug.log')})
     return graph
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('manifest', type=Path)
+    parser = argparse.ArgumentParser(description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('manifest', type=Path, help='Root JSON list; media/observation paths are relative to this file')
     parser.add_argument('--output-dir', type=Path, required=True, help='New directory; never overwritten')
-    parser.add_argument('--attempts', type=int, default=10)
-    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--attempts', type=int, default=10, help='Maximum trials; skipped trials count, successful nodes may be fewer')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for parent/attribute sampling and generation seeds')
     parser.add_argument('--keep', type=int, nargs=2, default=(3, 8), metavar=('MIN', 'MAX'),
-                        help='Draw minimum retained atom count K from this inclusive range')
-    parser.add_argument('--variate', type=int, nargs=2, default=(0, 2), metavar=('MIN', 'MAX'))
+                        help='Inclusive range for minimum retained K; dependencies may exceed K (e.g. 3 5)')
+    parser.add_argument('--variate', type=int, nargs=2, default=(0, 2), metavar=('MIN', 'MAX'),
+                        help='Inclusive range for varied atoms V; use 1 1 for one edit, 0 0 to disable')
     parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=2,
-                        help='Maximum distinct source media per selection (default 2); also capped by backend')
-    parser.add_argument('--p-video', type=float, default=0.5)
-    parser.add_argument('--seconds', type=float, default=5.0)
-    parser.add_argument('--brief', default='')
-    parser.add_argument('--vdn-python')
+                        help='Maximum old-media references per trial; also capped at Flux 4 / H3 32')
+    parser.add_argument('--p-video', type=float, default=0.5, help='Output video probability: 1=video only, 0=image only')
+    parser.add_argument('--seconds', type=float, default=5.0, help='Generated video duration, 5–15 seconds; ignored for images')
+    parser.add_argument('--brief', default='', help='Optional creative instruction for the generation expert')
+    parser.add_argument('--vdn-python', help='Optional Python interpreter for VDN runtime bootstrap')
+    parser.add_argument('--quiet', dest='debug', action='store_false',
+                        help='Suppress stage dumps on stderr; still save all details to debug.log')
     args = parser.parse_args()
     graph = run(**vars(args))
     print(json.dumps({'artifacts': len(graph['artifacts']),

@@ -272,3 +272,29 @@ identity_relations/identity_background_relations endpoints must use draft-listed
 objects and UIDs only. No new objects, replacement UIDs or undeclared relation
 participants may appear after the draft. Omit attributes needing undeclared objects.
 This is a prompt instruction; draft removal and Python validation remain unchanged.
+
+## Readable stage debugging / single video smoke test
+
+Stage dumps are printed to stderr by default and always appended to `debug.log` in
+the output directory. Headers precede slow model calls; results include nulls and
+skip/error reasons. Dumps show root observations, raw and deduplicated eligible
+pools, actual selected atoms/K/V, imaginer patches, target JSON, expert input/prompt,
+frame search, generation metadata, both verifier passes and final provenance.
+These are parsed tool returns (after draft removal/repair); raw model responses
+remain in the tools' normal run records. `--quiet` hides console dumps only.
+Stdout remains the final JSON summary. `--help` describes every argument and default.
+
+From the repository root on a configured model host, use the checked-in manifest
+`examples/video_root.json`, which resolves `scratch/data/samples/video.mp4`:
+
+```sh
+python -u scripts/cpg/cpg_reverse.py scripts/cpg/examples/video_root.json \
+  --output-dir "scratch/runs/cpg_reverse_$(date +%Y%m%d_%H%M%S)" \
+  --attempts 3 --seed 42 --keep 3 5 --variate 1 1 \
+  --parent-count 1 --p-video 1 --seconds 5
+```
+
+This attempts three video generations with one varied attribute each and at most
+one parent per trial. Later trials may select accepted new nodes. Video-only
+output avoids video-to-image frame search for this initial smoke test. All three
+model objects are constructed once, but Flux is not invoked in this configuration.

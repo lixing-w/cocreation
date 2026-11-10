@@ -1,4 +1,6 @@
 import copy
+import io
+from contextlib import redirect_stderr
 import json
 from pathlib import Path
 import random
@@ -343,6 +345,27 @@ class LoopTests(unittest.TestCase):
         options=dict(attempts=2,keep=(6,6),variate=(0,0),p_video=0,seed=0)
         options.update(kwargs)
         return cpg.run(self.manifest,self.base/'run',**options)
+
+    def test_stage_debug_console_and_persistent_log(self):
+        stream=io.StringIO()
+        with redirect_stderr(stream):
+            graph=self.run_loop(attempts=1)
+        output=stream.getvalue()
+        for label in ('extractor or supplied observation result','parent atom pool',
+                      'candidate pool','actual selection','imaginer result',
+                      'generation expert result','generation result',
+                      'verifier pass 1 result','verifier pass 2 result','final provenance','outcome'):
+            self.assertIn(label,output)
+        self.assertIn('artifact_0',output)
+        self.assertIn('Red glaze.',output)
+        self.assertEqual((self.base/'run/debug.log').read_text(),output)
+        self.assertEqual(graph['attempts'][0]['status'],'accepted')
+
+    def test_quiet_keeps_debug_file_without_console_dumps(self):
+        stream=io.StringIO()
+        with redirect_stderr(stream): self.run_loop(attempts=1,debug=False)
+        self.assertEqual(stream.getvalue(),'')
+        self.assertIn('verifier pass 2 result',(self.base/'run/debug.log').read_text())
 
     def test_models_once_root_only_extraction_and_new_nodes_reused(self):
         graph=self.run_loop(attempts=6)
