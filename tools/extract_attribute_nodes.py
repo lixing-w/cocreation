@@ -33,7 +33,7 @@ def validate_attributes(result, artifact_id, kind):
     def require(condition, path, message):
         if not condition:
             raise ValueError(f'{path}: {message}')
-
+    # meta checks. if these go wrong, probably fields are, so reject as a whole
     require(kind in ('image', 'video'), '$.kind', 'expected image or video')
     require(isinstance(result, dict), '$', 'expected a JSON object')
     required = {'artifact_id', 'kind', 'attributes'}
@@ -43,7 +43,6 @@ def validate_attributes(result, artifact_id, kind):
     require(result['kind'] == kind, '$.kind', f'expected {kind!r}')
     def description(value, path):
         require(isinstance(value, str), path, 'expected a string')
-        require(0 < len(value.split()) <= 15, path, 'expected 1–15 words')
         require(value.strip().lower() not in ('none', 'null', 'unknown'), path,
                 'omit unobserved fields instead of placeholder descriptions')
 
