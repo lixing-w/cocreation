@@ -589,11 +589,22 @@ Response contract:
 - parent_id: for dotted categories, the ID of its identity/environment/viewpoint;
   omit for undotted categories. Arrays accommodate different parents even when multiple=No.
 - Respect Allow multiple per parent; global No categories have at most one entry.
+- Output identity.appearance_change, identity.expression_change, identity.pose_change,
+  environment_change or viewpoint_change ONLY when an actual transition is clearly
+  observed. If nothing changes, or a change is uncertain, OMIT that entry entirely;
+  if no entries remain, OMIT its category key too. Never output a change entry merely
+  to say "remains unchanged throughout the video". Unchanged clothing/accessories
+  belong in identity.appearance, without an identity.appearance_change entry.
+- Every change entry MUST include links to at least two distinct existing state/object
+  IDs of the required category, evidencing the actual transition. Two simultaneous
+  unchanged properties (e.g. a jacket and a bag) do NOT constitute a change. Do not
+  invent duplicate states or a transition just to satisfy this requirement.
 - links: nonempty array of local IDs; omit when no links apply. identity_relations links exactly two
   distinct identities. identity_background_relations links one identity then one
   environment. Appearance/expression/pose changes link at least two corresponding
   states of the SAME parent, in narrative order; text explains transitions and any
-  unchanged linked state. environment_change/viewpoint_change link at least two
+  unchanged linked state ONLY alongside a real change (never as the sole content).
+  environment_change/viewpoint_change link at least two
   corresponding environment/viewpoint objects in transition order.
 - Other categories omit links; visible_text may optionally link its carrier identities.
 - time_range: [start_seconds, end_seconds] only when grounded in visible video time
