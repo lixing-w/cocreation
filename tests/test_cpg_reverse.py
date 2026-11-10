@@ -223,7 +223,7 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(graph['artifacts'][-1]['kind'],'video')
         self.assertIn((self.root/'run/attempt_0000/plan.txt').read_text(),
                       next(e[1] for e in self.events if e[0].startswith('You are the VDN')))
-        self.assertFalse(any(e[0].startswith('You are attribute_rewriter') for e in self.events))
+        self.assertTrue(any(e[0].startswith('You are attribute_rewriter') for e in self.events))
 
     def test_failures_never_enter_pool(self):
         self.rewrite='A hat. (from <Image 9>)'
@@ -290,9 +290,13 @@ class LoopTests(unittest.TestCase):
             self.assertNotIn('<Image',planned)
             self.assertEqual(self.flux.calls[index][0][1],[])
         for system,user,refs in self.events:
-            if system.startswith('You are the FLUX'):
+            if system.startswith(('You are the FLUX','You are attribute_rewriter')):
                 self.assertEqual(refs,[])
                 self.assertNotIn('(from',user)
+                self.assertNotIn('<Image',user)
+                self.assertNotIn('<Video',user)
+                if system.startswith('You are attribute_rewriter'):
+                    self.assertIn('NEW SOURCE-FREE REQUIREMENT',user)
         keys=[frozenset((row['artifact_id'],row['line_number']) for row in a['sampled_lines'])
               for a in graph['attempts']]
         self.assertEqual(len(set(keys)),3)

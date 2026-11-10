@@ -99,8 +99,9 @@ Duplicates retry within the existing sampling retry budget. `sampled_lines` reco
 these stable one-based positions in each successful draw. Zero draws are not
 reserved: they contain no sampled lines and create independent new identities.
 
-Exactly one sampled line is passed to prompter/generator as source-free text, with
-no reference annotations or media. Multiple lines keep the existing reference flow.
+Exactly one sampled line has its source annotation and media removed before
+rewriter is called. Rewriter, prompter and generator all see a new source-free text
+requirement, with no old media or source labels. Multiple lines keep the existing reference flow.
 All generated results (zero, one or multiple sampled lines) run verifier. Successful
 observations enter the pool with `in_pool: true`; overlapping or identical old
 attributes do not prevent insertion. Every new description belongs exclusively to

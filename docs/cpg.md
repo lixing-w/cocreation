@@ -45,9 +45,9 @@ artifacts remain two separate observations.
      preserving as many attributes as possible. Do not add unrelated elements or
      restyle the scene. Compatible differences are not conflicts. Retained properties
      keep their source markers; changed values must not falsely claim source support.
-5. **Exactly one sampled line:** remove its source annotation after rewriter
-   passthrough and pass it as a fresh text-only requirement. Neither prompter nor
-   generator receives reference media or source labels, and no frame search is
+5. **Exactly one sampled line:** remove its source annotation and media **before rewriter**. Rewriter receives
+   a nonempty new source-free requirement, not a zero-attribute invention request.
+   Rewriter, prompter and generator receive no reference media or source labels, and no frame search is
    needed. The original carrier/line number stays in the attempt audit only.
    For multiple sampled lines, drop media no longer mentioned and simultaneously renumber surviving labels.
    Send this rewritten description and exactly its referenced media to the

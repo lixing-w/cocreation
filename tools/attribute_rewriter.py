@@ -31,6 +31,12 @@ def attribute_rewriter(description, references=None, *, kind, brief='', qwen=Non
                 f'Invent one new {identity} in one or two concise sentences.\n'
                 f'Creative direction: {form}; {character}. Interpret appropriately for the identity.\n'
                 f'Creative brief: {brief or "Open creative direction."}')
+    elif not refs:
+        description = validate_sources(description, [])
+        task = (f'Target: {kind}.\nNEW SOURCE-FREE REQUIREMENT; no reference media.\n'
+                'Treat this as a new visual requirement, not an observation of existing media.\n'
+                'Preserve its stated content without inventing source labels or unrelated elements.\n'
+                f'Creative brief: {brief or "None."}\nDescription:\n{description}')
     else:
         description = validate_sources(description, refs)
         used = set(SOURCE.findall(description))

@@ -70,6 +70,19 @@ class ObservationTests(unittest.TestCase):
         model.return_value={'text':'A hat. (from <Image 1>)'}
         self.assertIsNone(attribute_rewriter('', [], kind='image', qwen=model))
 
+    def test_nonempty_source_free_requirement_is_accepted_without_provenance(self):
+        description='Green foliage is visible on the right.'
+        model=Mock(return_value={'text':description})
+        self.assertEqual(attribute_rewriter(description,[],kind='image',qwen=model),description)
+        user,refs=model.call_args.args
+        self.assertEqual(refs,[])
+        self.assertIn('NEW SOURCE-FREE REQUIREMENT',user)
+        self.assertNotIn('ZERO sampled',user)
+        self.assertNotIn('(from',user)
+        self.assertNotIn('<Video',user)
+        model.return_value={'text':description+' (from <Image 1>)'}
+        self.assertIsNone(attribute_rewriter(description,[],kind='image',qwen=model))
+
     def test_cross_source_repair_and_unknown_sources(self):
         other = Reference('artifact_24', self.ref.path, 'image')
         sampled = 'A blue coat. (from <Image 1>)\nA red chair. (from <Image 2>)'

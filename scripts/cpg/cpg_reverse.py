@@ -220,6 +220,9 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 sampled, refs = selected
                 log['sampled_lines'] = selected_lines
                 log['sampled_parents'] = [r.artifact_id for r in refs]
+                if k == 1:
+                    # Forget source identity before ANY downstream tool sees the input.
+                    sampled, refs = SOURCE.sub('', sampled).strip(), []
                 (directory / 'selection.txt').write_text(sampled, encoding='utf-8')
                 emit(f'Attempt {attempt} / sampled description', sampled)
                 stage = 'attribute_rewriter'
@@ -228,11 +231,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 if planned is None:
                     log.update(status='skipped', stage=stage, reason='invalid or unavailable rewrite')
                     continue
-                if k == 1:
-                    # Treat this one property as a fresh text-only requirement.
-                    planned, expert_refs = SOURCE.sub('', planned).strip(), []
-                else:
-                    planned, expert_refs = prune_references(planned, refs)
+                planned, expert_refs = prune_references(planned, refs)
                 (directory / 'plan.txt').write_text(planned, encoding='utf-8')
                 log['references'] = [dict(artifact_id=r.artifact_id, kind=r.kind,
                     path=str(r.path), label=media_catalog(expert_refs)[r.artifact_id]) for r in expert_refs]

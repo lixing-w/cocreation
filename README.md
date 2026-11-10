@@ -248,7 +248,8 @@ python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --
 Nonempty selections are unique per run by their unordered source/line-number
 combination, including failed downstream attempts. Zero draws can repeat to invent
 new identities. Single-line selections become text-only generation requirements:
-no reference media or labels reach the prompter/generator. All generated results
+source labels and media are removed before rewriter, so rewriter, prompter and
+generator all see a new source-free requirement. All generated results
 run verifier and, on success, enter the pool regardless of sampled count or text
 overlap. New observations bind only to the newly generated media, never old parents.
 

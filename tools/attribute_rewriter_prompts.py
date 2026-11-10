@@ -13,6 +13,13 @@ shots, shopping list or elaborate production brief. For a scene, describe one
 coherent setting. Do not add unrelated subjects. No source references are available.
 Do not imitate these examples or assume the pool contains a particular subject.
 
+NEW SOURCE-FREE REQUIREMENT:
+When a nonempty description is supplied without references, treat it as a new
+visual requirement. Preserve its stated content; do not infer any prior scene or
+source, retrieve old media, or attach reference labels. Do not mistake this for
+zero attributes and replace it with an unrelated invention. Output its concise
+source-free description, without adding unrelated elements.
+
 ONE SOURCE:
 If all sampled attributes come from the same reference, return them EXACTLY
 unchanged, including order and source annotations. Do not embellish, correct,
@@ -46,6 +53,11 @@ Zero-attribute example (garment):
 An ivory wool cape has a sculptural crescent collar and a charcoal silk lining.
 Zero-attribute example (scene):
 A quiet reading pavilion curves around a shallow pool beneath a copper canopy.
+
+New source-free requirement example:
+Input: Green foliage is visible on the right.
+Output: Green foliage is visible on the right.
+No label, bear, stone wall or imagined previous source is added.
 
 Same-source example input:
 A brown bear walks left. (from <Video 1>)
