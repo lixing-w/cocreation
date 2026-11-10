@@ -1,7 +1,6 @@
 """Extract validated visual CPG attributes from one image/video artifact."""
 import argparse
 import json
-import math
 from pathlib import Path
 import re
 import sys
@@ -11,7 +10,8 @@ if __package__ in (None, ''):
 from cocreation import Qwen, Reference
 from cocreation.storage import scratch_root
 from tools.extract_attribute_nodes_prompts import (
-    CATEGORY_RULES, extraction_prompt, extraction_system_prompt)
+    CATEGORY_RULES, OBJECT_FIELDS, TOP_LEVEL_CATEGORIES,
+    extraction_prompt, extraction_system_prompt)
 
 
 def _unique_object(pairs):
@@ -41,91 +41,73 @@ def validate_attributes(result, artifact_id, kind):
             f'expected exactly {sorted(required)}; got {sorted(result)}')
     require(result['artifact_id'] == artifact_id, '$.artifact_id', f'expected {artifact_id!r}')
     require(result['kind'] == kind, '$.kind', f'expected {kind!r}')
+    def description(value, path):
+        require(isinstance(value, str), path, 'expected a string')
+        require(0 < len(value.split()) <= 15, path, 'expected 1–15 words')
+        require(value.strip().lower() not in ('none', 'null', 'unknown'), path,
+                'omit unobserved fields instead of placeholder descriptions')
+
+    def temporal(category, path):
+        require(kind != 'image' or CATEGORY_RULES[category]['temporal'] != 'Yes',
+                path, 'flow-in-time attributes cannot be established by an image')
+
     attrs = result['attributes']
-    require(isinstance(attrs, dict), '$.attributes', 'expected an object of category arrays')
-    unknown = set(attrs) - set(CATEGORY_RULES)
+    require(isinstance(attrs, dict), '$.attributes', 'expected an object')
+    unknown = set(attrs) - set(TOP_LEVEL_CATEGORIES)
     require(not unknown, '$.attributes', f'unknown categories: {sorted(unknown)}')
     nodes = {}
-    for category, entries in attrs.items():
+    relations = []
+    for category, value in attrs.items():
         category_path = f'$.attributes[{category!r}]'
-        rule = CATEGORY_RULES[category]
-        require(isinstance(entries, list) and bool(entries), category_path,
+        temporal(category, category_path)
+        if category not in OBJECT_FIELDS:
+            description(value, category_path)
+            continue
+        require(isinstance(value, list) and bool(value), category_path,
                 'expected a nonempty array; omit unobserved categories')
-        require(kind != 'image' or rule['temporal'] != 'Yes', category_path,
-                'flow-in-time attributes cannot be established by an image')
-        parents = set()
-        for index, entry in enumerate(entries):
+        schema = OBJECT_FIELDS[category]
+        is_relation = category in ('identity_relations', 'identity_background_relations')
+        for index, entry in enumerate(value):
             path = f'{category_path}[{index}]'
-            require(isinstance(entry, dict), path, 'expected an entry object')
-            require({'id','text'} <= set(entry), path, 'missing required id/text')
-            extra = set(entry) - {'id','text','parent_id','links','time_range'}
+            require(isinstance(entry, dict), path, 'expected an object')
+            required = {'uid', 'description', 'links'} if is_relation else {'uid', 'description'}
+            require(required <= set(entry), path, f'missing required fields: {sorted(required - set(entry))}')
+            extra = set(entry) - set(schema)
             require(not extra, path, f'unsupported fields: {sorted(extra)}')
-            for field, value in entry.items():
-                require(value is not None, path+'.'+field, 'omit this field instead of null')
-            key, text, parent = entry['id'], entry['text'], entry.get('parent_id')
-            require(isinstance(key,str) and re.fullmatch(r'[A-Za-z0-9_.-]+',key),
-                    path+'.id', 'expected a nonempty local identifier using letters/digits/_/./-')
-            require(key not in nodes, path+'.id', f'duplicate local ID {key!r}')
-            require(isinstance(text,str), path+'.text', 'expected a string')
-            require(0 < len(text.split()) <= 15, path+'.text',
-                    f'expected 1–15 words; got {len(text.split())}')
-            require(text.strip().lower() not in ('none','null','unknown'), path+'.text',
-                    'omit unobserved entries instead of placeholder descriptions')
-            require(parent is None or (isinstance(parent,str) and bool(parent)),
-                    path+'.parent_id', 'expected a nonempty parent identifier')
-            links = entry.get('links', [])
-            require(isinstance(links,list) and all(isinstance(x,str) and x for x in links),
-                    path+'.links', 'expected an array of nonempty identifiers')
-            require('links' not in entry or bool(links), path+'.links', 'omit empty links')
-            if not rule['multiple']:
-                require(parent not in parents, path,
-                        f'at most one {category} entry for parent {parent!r}')
-            parents.add(parent)
-            span = entry.get('time_range')
-            require(kind != 'image' or span is None, path+'.time_range',
-                    'time ranges must be omitted for images')
-            if span is not None:
-                require(isinstance(span,list) and len(span)==2, path+'.time_range',
-                        'expected [start_seconds, end_seconds]')
-                require(all(type(t) in (int,float) and math.isfinite(t) for t in span),
-                        path+'.time_range', 'timestamps must be finite numbers, not booleans')
-                require(0 <= span[0] <= span[1], path+'.time_range',
-                        'expected 0 <= start <= end')
-            nodes[key] = (category, entry, path)
-    changes = {'identity.appearance_change':'identity.appearance',
-               'identity.expression_change':'identity.expression',
-               'identity.pose_change':'identity.body_pose',
-               'environment_change':'environment', 'viewpoint_change':'viewpoint'}
-    for category, entry, path in nodes.values():
-        parent, links = entry.get('parent_id'), entry.get('links', [])
-        if '.' in category:
-            expected = category.split('.')[0]
-            require(parent in nodes, path+'.parent_id', f'missing/unresolved parent {parent!r}')
-            require(nodes[parent][0] == expected, path+'.parent_id',
-                    f'parent {parent!r} must have category {expected!r}')
-        else:
-            require(parent is None, path+'.parent_id', 'undotted category cannot have parent_id')
+            uid = entry['uid']
+            require(isinstance(uid, str) and re.fullmatch(r'[A-Za-z0-9_.-]+', uid),
+                    path+'.uid', 'expected a nonempty local identifier using letters/digits/_/./-')
+            require(uid not in nodes, path+'.uid', f'duplicate local UID {uid!r}')
+            nodes[uid] = category
+            for field, item in entry.items():
+                field_path = path+'.'+field
+                if field == 'uid':
+                    continue
+                if field == 'links':
+                    require(isinstance(item, list) and len(item) == 2 and
+                            all(isinstance(link, str) and bool(link) for link in item),
+                            field_path, 'expected exactly two nonempty UID strings')
+                    relations.append((category, item, field_path))
+                    continue
+                temporal(category+'.'+field, field_path)
+                if schema[field] == 'list[str]':
+                    require(isinstance(item, list) and bool(item), field_path,
+                            'expected a nonempty array of strings; omit unobserved fields')
+                    for i, text in enumerate(item):
+                        description(text, f'{field_path}[{i}]')
+                else:
+                    description(item, field_path)
+    for category, links, path in relations:
         for index, link in enumerate(links):
-            require(link in nodes, f'{path}.links[{index}]', f'unresolved ID {link!r}')
-            require(link != entry['id'], f'{path}.links[{index}]', 'self-link is not allowed')
-        types = [nodes[link][0] for link in links]
+            require(link in nodes, f'{path}[{index}]', f'unresolved UID {link!r}')
+        types = [nodes[link] for link in links]
         if category == 'identity_relations':
-            require(types == ['identity','identity'] and links[0] != links[1], path+'.links',
+            require(types == ['identity', 'identity'] and links[0] != links[1], path,
                     'expected exactly two distinct identity endpoints')
-        elif category == 'identity_background_relations':
-            require(types == ['identity','environment'], path+'.links',
-                    'expected exactly one identity then one environment')
-        elif category in changes:
-            require(len(set(links)) >= 2 and all(t == changes[category] for t in types),
-                    path+'.links', f'expected at least two distinct {changes[category]} IDs')
-            if parent is not None:
-                require(all(nodes[link][1].get('parent_id') == parent for link in links),
-                        path+'.links', f'all linked states must belong to parent {parent!r}')
-        elif category == 'visible_text':
-            require(all(t == 'identity' for t in types) and len(set(links)) == len(links),
-                    path+'.links', 'optional carrier links must be distinct identities')
         else:
-            require(not links, path+'.links', f'links not supported for category {category!r}')
+            require(types == ['identity', 'environment'], path,
+                    'expected one identity then one environment')
+
     return result
 
 

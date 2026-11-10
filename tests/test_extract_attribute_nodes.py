@@ -21,8 +21,8 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual(validate_attributes(example, example['artifact_id'], example['kind']), example)
         self.assertNotIn('Fictional video example', DEFINITIONS)
         self.assertNotIn('Fictional image example', DEFINITIONS)
-        self.assertIn('&nbsp;&nbsp;identity.description', DEFINITIONS)
-        self.assertEqual(len(CATEGORY_RULES),29)
+        self.assertIn('identity.description', DEFINITIONS)
+        self.assertEqual(len(__import__('tools.extract_attribute_nodes_prompts', fromlist=['TOP_LEVEL_CATEGORIES']).TOP_LEVEL_CATEGORIES), 9)
         prompt=extraction_system_prompt()
         self.assertLess(prompt.index('## Definitions'), prompt.index('Video JSON example:'))
         self.assertLess(prompt.index('Video JSON example:'), prompt.index('Image JSON example:'))
@@ -32,15 +32,27 @@ class ExtractionTests(unittest.TestCase):
             lambda d: d.update(artifact_id='wrong'),
             lambda d: d['attributes'].update(unknown=[]),
             lambda d: d['attributes'].update(style=None),
-            lambda d: d['attributes']['style'][0].update(parent_id=None),
-            lambda d: d['attributes']['style'][0].update(links=[]),
             lambda d: d['attributes'].update(style=[]),
-            lambda d: d['attributes']['style'][0].update(text='word '*16),
-            lambda d: d['attributes']['identity.appearance'][0].update(parent_id='missing'),
-            lambda d: d['attributes']['identity.appearance_change'][0].update(links=['woman0_id_p1_id.pose','woman0_id_p2_id.pose']),
-            lambda d: d['attributes']['identity.pose_change'][0].update(links=['woman0_id_p1_id.pose']),
-            lambda d: d['attributes']['identity'][0].update(time_range=[float('nan'),2]),
-            lambda d: d['attributes']['style'].append(copy.deepcopy(d['attributes']['style'][0])),
+            lambda d: d['attributes'].update(style='word '*16),
+            lambda d: d['attributes'].update(style='unknown'),
+            lambda d: d['attributes'].update(viewpoint_change=''),
+            lambda d: d['attributes'].update({'identity.appearance': ['red']}),
+            lambda d: d['attributes']['identity'][0].update(appearance=[]),
+            lambda d: d['attributes']['identity'][0].update(appearance=[{'description':'red'}]),
+            lambda d: d['attributes']['identity'][0].update(pose_change=None),
+            lambda d: d['attributes']['identity'][0].update(parent_id='missing'),
+            lambda d: d['attributes']['identity'][0].update(time_range=[0,2]),
+            lambda d: d['attributes']['identity'][0].pop('uid'),
+            lambda d: d['attributes']['identity'][0].pop('description'),
+            lambda d: d['attributes']['environment'][0].update(uid='woman0_id'),
+            lambda d: d['attributes']['environment'][0].update(weather=['snow']),
+            lambda d: d['attributes']['environment'][0].update(space_type='indoor'),
+            lambda d: d['attributes']['visible_text'][0].update(links=['woman0_id']),
+            lambda d: d['attributes']['viewpoint'][0].update(viewpoint_motion='Pushes closer.'),
+            lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id']*2),
+            lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id','missing']),
+            lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id']),
+            lambda d: d['attributes']['identity_relations'][0].pop('links'),
             lambda d: d['attributes']['identity_background_relations'][0].update(links=['office0_env','woman0_id']),
         ]
         for mutate in mutations:
@@ -62,10 +74,6 @@ class ExtractionTests(unittest.TestCase):
         for example in (IMAGE_EXAMPLE,VIDEO_EXAMPLE):
             self.assertNotIn(': null',json.dumps(example))
             self.assertNotIn(': []',json.dumps(example))
-            for category, entries in example['attributes'].items():
-                for entry in entries:
-                    if '.' not in category:
-                        self.assertNotIn('parent_id',entry)
         prompt=extraction_system_prompt()
         self.assertNotIn('"time_range":null',prompt)
         self.assertNotIn('contains EVERY',prompt)
@@ -109,8 +117,8 @@ class ExtractionTests(unittest.TestCase):
 
     def test_error_messages_identify_location(self):
         bad=copy.deepcopy(IMAGE_EXAMPLE)
-        bad['attributes']['identity.appearance'][0]['parent_id']='missing'
-        for value,expected in [(json.dumps(bad),"$.attributes['identity.appearance'][0].parent_id"),
+        bad['attributes']['identity'][0]['appearance']=[None]
+        for value,expected in [(json.dumps(bad),"$.attributes['identity'][0].appearance[0]"),
                                ('{\n"x":}', 'line 2, column'),
                                ('{"x":1,"x":2}', "Duplicate JSON key 'x'"),
                                (None, 'response text is missing')]:
@@ -135,30 +143,32 @@ class ExtractionTests(unittest.TestCase):
             extract_attribute_nodes(ref,qwen=model,output_dir=custom)
             self.assertEqual(model.call_args.kwargs['output_dir'],custom)
 
-    def test_examples_use_unique_parent_prefixed_ids_across_scenes(self):
-        for example in (VIDEO_EXAMPLE,IMAGE_EXAMPLE):
-            entries=[entry for group in example['attributes'].values() for entry in group]
-            ids=[entry['id'] for entry in entries]
-            self.assertEqual(len(ids),len(set(ids)))
-            for entry in entries:
-                if 'parent_id' in entry:
-                    self.assertTrue(entry['id'].startswith(entry['parent_id']+'_'))
-        structures=VIDEO_EXAMPLE['attributes']['environment.structure']
-        self.assertGreaterEqual(len(structures),2)
-        self.assertEqual({e['parent_id'] for e in structures},{'office0_env','courtyard0_env'})
-        self.assertIn('across the ENTIRE artifact',extraction_system_prompt())
+    def test_unique_uids_and_definition_snapshot(self):
+        from tools.extract_attribute_nodes_prompts import OBJECT_FIELDS
+        for example in (VIDEO_EXAMPLE, IMAGE_EXAMPLE):
+            entries = [entry for category, group in example['attributes'].items()
+                       if category in OBJECT_FIELDS for entry in group]
+            uids = [entry['uid'] for entry in entries]
+            self.assertEqual(len(uids), len(set(uids)))
+        docs = (Path(__file__).resolve().parents[1]/'docs/cpg.md').read_text()
+        self.assertIn(DEFINITIONS.strip(), docs)
 
-    def test_short_names_match_documentation_and_example_suffixes(self):
-        from tools.extract_attribute_nodes_prompts import CATEGORY_SHORT_NAMES
-        names=CATEGORY_SHORT_NAMES
-        self.assertEqual(set(names),set(CATEGORY_RULES))
-        self.assertEqual(len(names),len(set(names.values())))
-        docs=(Path(__file__).resolve().parents[1]/'docs/cpg.md').read_text()
-        for category,short in names.items():
-            row=f'{category} | {short} |'
-            self.assertIn(row,docs)
-            self.assertIn(row,DEFINITIONS)
-        for example in (VIDEO_EXAMPLE,IMAGE_EXAMPLE):
-            for category,entries in example['attributes'].items():
-                for entry in entries:
-                    self.assertTrue(entry['id'].endswith('_'+names[category]))
+    def test_each_temporal_field_rejected_for_images(self):
+        for key, rule in CATEGORY_RULES.items():
+            if rule['temporal'] != 'Yes':
+                continue
+            d = copy.deepcopy(IMAGE_EXAMPLE)
+            if '.' in key:
+                category, field = key.split('.')
+                d['attributes'][category][0][field] = ['Moves visibly.'] if rule['multiple'] else 'Changes visibly.'
+            else:
+                d['attributes'][key] = 'Changes visibly.'
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validate_attributes(d, 'example_image', 'image')
+
+    def test_minimal_objects_and_forward_relations(self):
+        d = copy.deepcopy(IMAGE_EXAMPLE)
+        for entry in d['attributes']['identity']:
+            entry.pop('appearance')
+        d['attributes'] = dict(reversed(list(d['attributes'].items())))
+        self.assertIs(validate_attributes(d, 'example_image', 'image'), d)
