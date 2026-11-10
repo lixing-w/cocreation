@@ -313,6 +313,47 @@ class ToolTests(unittest.TestCase):
         self.assertIsNone(attribute_verifier(mode='verify_inheritance',generated_media=self.new,
             observed_attributes=self.observed,selected_sources=sources,qwen=model))
 
+    def test_verifier_local_ids_roundtrip_and_input_immutability(self):
+        observed_before=copy.deepcopy(self.observed)
+        old_before=copy.deepcopy(self.rows)
+        output=Path(self.tmp.name)/'verify'
+        model=Mock(return_value={'text':json.dumps({'matches':[
+            {'observed_id':'<Image 1>_a0000','source_id':'<Image 2>_a0000'},
+            {'observed_id':'<Image 1>_a0001','source_id':'<Image 2>_a0001'}]})})
+        result=attribute_verifier(mode='verify_inheritance',generated_media=self.new,
+            observed_attributes=self.observed,selected_sources=[dict(reference=self.old,attributes=self.rows)],
+            qwen=model,output_dir=output)
+        self.assertEqual(result,[{'observed_id':'artifact_1_a0000','source_id':'artifact_0_a0000'},
+                                 {'observed_id':'artifact_1_a0001','source_id':'artifact_0_a0001'}])
+        payload=json.loads(model.call_args.args[0].split('Task data:\n')[1])
+        self.assertEqual(payload['generated_artifact_id'],'<Image 1>')
+        self.assertEqual(payload['selected_sources'][0]['artifact_id'],'<Image 2>')
+        self.assertEqual(payload['observed'][0]['owner_uid'],'<Image 1>_cup')
+        self.assertEqual(payload['selected_sources'][0]['attributes'][0]['owner_uid'],'<Image 2>_cup')
+        relation=next(r for r in payload['observed'] if r['category']=='identity_background_relations')
+        self.assertEqual(relation['links'],['<Image 1>_cup','<Image 1>_table'])
+        self.assertEqual(json.loads((output/'input.json').read_text()),payload)
+        self.assertEqual(self.observed,observed_before)
+        self.assertEqual(self.rows,old_before)
+        model.close.assert_not_called()
+
+    def test_verifier_video_order_prefix_safety_and_mixed_media_labels(self):
+        from tools.attribute_verifier import inheritance_payload, restore_matches
+        old=atomize(observation('artifact_2','video'))
+        new=atomize(observation('artifact_20','video'))
+        image=atomize(observation('artifact_3','image'))
+        refs=[Reference('artifact_20',self.path,'video'),Reference('artifact_2',self.path,'video'),
+              Reference('artifact_3',self.path,'image')]
+        payload,maps=inheritance_payload(refs[0],new,
+            [dict(artifact_id='artifact_2',attributes=old),dict(artifact_id='artifact_3',attributes=image)],refs)
+        self.assertEqual(payload['observed'][0]['id'],'<Video 1>_a0000')
+        self.assertEqual(payload['selected_sources'][0]['attributes'][0]['id'],'<Video 2>_a0000')
+        self.assertEqual(payload['selected_sources'][1]['attributes'][0]['id'],'<Image 1>_a0000')
+        self.assertEqual(restore_matches([{'observed_id':'<Video 1>_a0000','source_id':'<Video 2>_a0000'}],maps),
+                         [{'observed_id':'artifact_20_a0000','source_id':'artifact_2_a0000'}])
+        with self.assertRaises(ValueError):
+            restore_matches([{'observed_id':'<Video 1>_a9999','source_id':'<Video 2>_a0000'}],maps)
+
     def test_owned_model_closes_on_error_and_shared_does_not(self):
         model=Mock(side_effect=RuntimeError('worker failed'))
         with patch('tools._attribute_vlm.Qwen',return_value=model):

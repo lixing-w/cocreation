@@ -12,7 +12,14 @@ non_diegetic_music, in that order. Do not assume first/last-frame alignment.
 Generator image labels are <Picture N>, video labels <Video N>, numbered per kind.
 Qwen observation image labels are <Image N>; translate using the supplied map.
 You may introduce <Subject N> content labels, but define each once on its own line
-under subject_definitions before use. Source-free subjects are new desired content.
+under subject_definitions before use. Each sourced definition MUST name its supplied
+media label, not its artifact/node ID. Source-free subjects are new desired content.
+Binding example (snippet only):
+Input {"text":"Large brown bear.","artifact_ids":["<Video 1>"]}
+=> <Subject 1> is the large brown bear from <Video 1>.
+Input {"text":"Rocky enclosure.","artifact_ids":["<Video 1>"]}
+=> <Subject 2> is the rocky enclosure from <Video 1>.
+Both subjects share one source label. Empty artifact_ids means no source claim.
 Retain only selected source attributes; retention_analysis describes intended
 inheritance.
 Within detailed_description or integrated_multimodal_description, start with

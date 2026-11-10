@@ -13,12 +13,14 @@ if __package__ in (None, ''):
 from cocreation import Qwen, Flux, VDNH3, VDNRuntime, Reference
 from tools.extract_attribute_nodes import extract_attribute_nodes, validate_attributes
 from tools._attribute_protocol import (
-    atomize, assemble, sample_selection, apply_variations, expert_rows,
+    atomize, assemble, sample_selection, apply_variations, expert_rows, compact_rows,
     attach_provenance, validate_matches, canonicalize_shared)
 from tools.extract_attribute_nodes_prompts import CATEGORY_RULES
 from tools.imaginer import imaginer
-from tools.attribute_verifier import attribute_verifier
+from tools.attribute_verifier import attribute_verifier, inheritance_payload
 from tools.flux_prompter import flux_prompter
+from tools._prompter import prepare_inputs
+from tools._prompter_prompts import labeled_payload
 from tools.h3_prompter import h3_prompter
 from tools.find_video_frame import find_video_frame
 
@@ -190,9 +192,10 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 expert_used = {a for row in rows for a in row.get('artifact_ids', [])}
                 expert_refs = [r for r in refs if r.artifact_id in expert_used]
                 stage = 'prompt_expert'
+                _, _, catalog = prepare_inputs(rows, expert_refs, 'flux' if kind == 'image' else 'h3')
                 emit(f'Attempt {attempt} / generation expert input',
                      {'expert': 'flux_prompter' if kind == 'image' else 'h3_prompter',
-                      'attributes': rows, 'references': media_rows(expert_refs)})
+                      **labeled_payload(brief, rows, catalog, seconds=seconds if kind == 'video' else None)})
                 options = dict(qwen=qwen, output_dir=directory / stage, user_prompt=brief)
                 prompt = (flux_prompter(rows, expert_refs, **options) if kind == 'image' else
                           h3_prompter(rows, expert_refs, seconds=seconds, **options))
@@ -255,9 +258,11 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 sources = [dict(reference=r, attributes=[a for a in selected
                            if a['carrier_artifact_id'] == r.artifact_id]) for r in refs]
                 stage = 'verify_inheritance'
-                emit(f'Attempt {attempt} / verifier pass 2 input',
-                     [{'reference': media_rows([source['reference']])[0],
-                       'selected_original_attributes': source['attributes']} for source in sources])
+                verifier_sources = [dict(artifact_id=r.artifact_id,
+                    attributes=compact_rows([a for a in selected if a['carrier_artifact_id'] == r.artifact_id]))
+                    for r in refs]
+                verifier_input, _ = inheritance_payload(generated, atomize(observed), verifier_sources, [generated]+refs)
+                emit(f'Attempt {attempt} / verifier pass 2 input', verifier_input)
                 matches = attribute_verifier(mode=stage, generated_media=generated,
                     observed_attributes=observed, selected_sources=sources,
                     qwen=qwen, output_dir=directory / stage)

@@ -8,6 +8,7 @@ import sys
 from cocreation import Reference
 from cocreation.storage import scratch_root
 from tools.extract_attribute_nodes_prompts import CATEGORY_RULES
+from tools._prompter_prompts import labeled_payload
 
 LABEL = re.compile(r'<(Image|Picture|Video|Audio|Subject)\s+([^<>]+)>', re.I)
 REF_SECTIONS = ('subject_definitions','summary','retention_analysis','detailed_description',
@@ -215,6 +216,12 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     rows, refs, catalog = prepare_inputs(attributes, references, target)
     system = system_builder()
     user = user_builder(brief, rows, catalog, seconds) if target == 'h3' else user_builder(brief, rows, catalog)
+    if output_dir is not None:
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'input.json').write_text(json.dumps(
+            labeled_payload(brief, rows, catalog, seconds=seconds if target == 'h3' else None),
+            ensure_ascii=False, indent=2) + '\n')
     owned = qwen is None
     model = factory(output_dir=output_dir) if owned else qwen
     try:

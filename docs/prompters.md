@@ -148,3 +148,15 @@ stderr. With output_dir, they also append diagnostics.jsonl. Explicit null repli
 may use {"prompt":null,"reason":"brief specific reason"}; successful replies still
 have only prompt. A model-declined request is distinguished from parser/format
 failures. The orchestrator includes these diagnostics in its attempt/debug records.
+
+### Explicit source labels in expert inputs
+
+Before VLM prompt assembly, Python copies attributes and replaces their artifact_ids
+with the reference catalog's generator labels. H3 numbers videos as <Video N> and
+images as <Picture N> separately; Flux numbers all future image slots as <Image N>.
+All numbering follows supplied reference order; no media sorting/reordering occurs.
+Raw IDs, owner/endpoint links and graph provenance are unchanged. Empty source lists
+remain empty. Every sourced property must be bound to its supplied media label in
+the expert output; an artifact/node ID is not a substitute. Short local binding
+examples supplement the generic upstream guides. Debug expert inputs and per-call
+`prompt_expert/input.json` show this same converted payload.

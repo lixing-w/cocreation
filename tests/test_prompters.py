@@ -64,6 +64,8 @@ class Prompters(unittest.TestCase):
         self.assertIn('"generator_label":"<Image 1>"',user)
         self.assertIn('"generator_label":"<Image 2>"',user)
         self.assertIn('"artifact_ids":[]',user)
+        self.assertIn('"artifact_ids":["<Image 1>"]',user)
+        self.assertIn('"artifact_ids":["<Image 2>"]',user)
         self.assertTrue(str(kwargs['system_cache_path']).endswith('/flux_prompter/system_prompt.kvcache'))
         planned=Qwen()(user,refs,system_prompt=kwargs['system_prompt'],dry_run=True)
         content=qwen_messages(planned)[1]['content']
@@ -78,11 +80,42 @@ class Prompters(unittest.TestCase):
         self.assertEqual(h3_prompter(self.attrs,self.refs,qwen=model,seconds=5),REF_PROMPT)
         user,refs=model.call_args.args;kwargs=model.call_args.kwargs
         self.assertIn('"target_seconds":5',user)
+        self.assertIn('"artifact_ids":["<Video 1>"]',user)
+        self.assertIn('"artifact_ids":["<Picture 1>"]',user)
         self.assertIn('"generator_label":"<Picture 1>"',user)
         self.assertTrue(str(kwargs['system_cache_path']).endswith('/h3_prompter/system_prompt.kvcache'))
         self.assertEqual([r['label'] for r in VDNH3()(REF_PROMPT,refs,dry_run=True)['references']],
                          ['<Video 1>','<Picture 1>'])
         model.close.assert_not_called()
+
+    def test_temporary_multisource_labels_keep_order_and_original_bindings(self):
+        from tools._prompter_prompts import labeled_payload, user_prompt
+        refs=[self.refs[1],self.refs[0],Reference('video2',self.root/'video.mp4','video')]
+        attrs=[dict(id='video_style',category='style',text='Watercolor.',
+                    artifact_ids=['video2','garden','video']),
+               dict(id='new_relation',category='identity_relations',text='Facing each other.',
+                    links=['video_bear','garden_bear'])]
+        original=copy.deepcopy(attrs)
+        for target,expected in [('h3',['<Video 2>','<Picture 1>','<Video 1>']),
+                                ('flux',['<Image 3>','<Image 1>','<Image 2>'])]:
+            rows,_,catalog=prepare_inputs(attrs,refs,target)
+            payload=labeled_payload('',rows,catalog)
+            self.assertEqual(payload['attributes'][0]['artifact_ids'],expected)
+            self.assertEqual(payload['attributes'][1]['artifact_ids'],[])
+            self.assertEqual(payload['attributes'][1]['links'],attrs[1]['links'])
+            self.assertEqual([r['artifact_id'] for r in payload['references']],['garden','video','video2'])
+            text=user_prompt('',rows,catalog)
+            self.assertEqual(json.loads(text.split('Task data:\n')[1].split('\nReturn only')[0]),payload)
+        self.assertEqual(attrs,original)
+
+    def test_labeled_input_is_saved_and_local_examples_are_explicit(self):
+        output=self.root/'expert'
+        h3_prompter(self.attrs,self.refs,qwen=Mock(return_value=response(REF_PROMPT)),output_dir=output)
+        saved=json.loads((output/'input.json').read_text())
+        self.assertEqual(saved['attributes'][0]['artifact_ids'],['<Video 1>'])
+        self.assertEqual(saved['attributes'][1]['artifact_ids'],['<Picture 1>'])
+        self.assertIn('bear from <Video 1>',h3_system_prompt())
+        self.assertIn('coat from <Image 1>',flux_system_prompt())
 
     def test_source_free_new_attributes(self):
         attrs=[dict(id='new_circle',category='environment',text='An abstract violet circle.')]

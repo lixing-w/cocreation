@@ -72,7 +72,7 @@ used as a future parent.
 
 Pass 2 sees new media, its revised observations, and **only selected original
 attributes** with their old carrier media. For variated atoms this means the
-pre-imaginer text, not the new requested value. It returns confident property-level
+pre-imaginer text, not the new requested value. It returns human-intuitive conceptual/visual property-level
 inheritance pairs, not a rewritten JSON. Empty matches is success, null is failure.
 The code rejects unknown/unselected IDs, category mismatch, duplicate pairs and
 inconsistent object/endpoint correspondence. Visual truth remains a VLM judgment;
@@ -318,3 +318,33 @@ order H3 headings, subject definitions, shot numbering or invalid timestamps.
 A null may include a short `reason`; no reason is invented if the model omits it.
 Per-attempt `prompt_expert/diagnostics.jsonl` persists errors; the orchestrator also
 copies the latest diagnostic into debug.log and attempt.json. No automatic retries.
+
+### Explicit source labels in expert inputs
+
+Before VLM prompt assembly, Python copies attributes and replaces their artifact_ids
+with the reference catalog's generator labels. H3 numbers videos as <Video N> and
+images as <Picture N> separately; Flux numbers all future image slots as <Image N>.
+All numbering follows supplied reference order; no media sorting/reordering occurs.
+Raw IDs, owner/endpoint links and graph provenance are unchanged. Empty source lists
+remain empty. Every sourced property must be bound to its supplied media label in
+the expert output; an artifact/node ID is not a substitute. Short local binding
+examples supplement the generic upstream guides. Debug expert inputs and per-call
+`prompt_expert/input.json` show this same converted payload.
+
+## Verifier pass 2: local labels and intuitive equivalence
+
+New media is attached first, followed by selected old media in order. Qwen labels
+videos <Video N> and images <Image N>, with separate counters per kind. Python
+substitutes attached artifact IDs in the temporary payload, including atom IDs,
+owner IDs and links. For two videos, new artifact_3 becomes <Video 1> and old
+artifact_2 becomes <Video 2>; artifact_3_a0000 becomes <Video 1>_a0000. Original
+observations/provenance stay untouched. Exact reverse ID lookup restores returned
+pairs before structural validation. Unknown temporary IDs still fail validation.
+`verify_inheritance/input.json` and console debug show the actual labeled payload;
+`id_map.json` stores the reverse mapping outside the model prompt.
+
+Matching now follows human conceptual/visual intuition within the attribute's scope,
+not pixel-perfect or whole-object identity. If both videos show a large brown bear
+with shaggy fur, that description can match despite pose/background/detail changes.
+Unclear or contradictory properties still should not match. Structural checks
+(categories, supplied IDs, object consistency) remain unchanged.

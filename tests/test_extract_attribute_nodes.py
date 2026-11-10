@@ -254,7 +254,7 @@ class RepairTests(unittest.TestCase):
             self.assertIn('hard cut',example['viewpoint_change'])
             for stage in example['viewpoint']:
                 self.assertIn(stage['uid'],example['viewpoint_change'])
-        for prompt in (extraction_system_prompt(),REVISE,INHERIT):
+        for prompt in (extraction_system_prompt(),REVISE):
             self.assertIn('view0_vp',prompt)
             self.assertIn('view2_vp',prompt)
 

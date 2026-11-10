@@ -202,6 +202,16 @@ Keep observations grounded in the media. Video sampling does not justify inventi
 unseen events between frames. Unknowns are omitted, not inferred. This JSON is an
 observation representation, not proof of shared-attribute edges in a CPG.
 
+### Attribute matching across media
+
+Verifier pass 2 uses human-intuitive conceptual and visual equivalence within each
+attribute's described scope. Matching descriptions and supported visible traits
+count as the same attribute; exact pixels, whole-object identity and incidental
+details need not match. For example, large brown bears with shaggy fur can share
+that description despite different poses or backgrounds. Unclear or contradictory
+properties are not matched. Input media and atom IDs are temporarily relabeled
+by media order; Python restores returned IDs before provenance updates.
+
 ### Conservative observation repair
 
 Models should still omit unknown/inapplicable values. Before accepting a fresh

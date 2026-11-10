@@ -10,6 +10,9 @@ Use positive descriptions and a coherent still-image composition. No negative
 prompt field, section headings, markdown, or JSON inside the prompt string.
 Use the EXACT <Image N> generator_labels provided in the task map, preferably
 phrased as "the coat from <Image 1> (image 1)" to make image ordering explicit.
+Binding example: {"text":"Red coat.","artifact_ids":["<Image 1>"]}
+=> "Preserve the red coat from <Image 1>." Never substitute an artifact/node ID.
+Empty artifact_ids means a new desired property, with no source claim.
 Observation labels may differ: Qwen can see videos, but the generation expert
 cannot. Each video source will later be replaced by ONE matching still image in
 its same reference slot. Refer to that future image using generator_label, never
