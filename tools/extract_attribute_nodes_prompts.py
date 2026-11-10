@@ -150,40 +150,40 @@ VIDEO_EXAMPLE = json.loads(r'''
   "attributes": {
     "identity": [
       {
-        "id": "person",
+        "id": "woman0",
         "text": "A short-haired woman wearing a red coat."
       }
     ],
     "identity.description": [
       {
-        "id": "d1",
+        "id": "woman0_d1",
         "text": "An adult woman with short black hair.",
-        "parent_id": "person"
+        "parent_id": "woman0"
       }
     ],
     "identity.appearance": [
       {
-        "id": "a1",
+        "id": "woman0_a1",
         "text": "Her red coat hangs open.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           0,
           1
         ]
       },
       {
-        "id": "a2",
+        "id": "woman0_a2",
         "text": "Her red coat is buttoned closed.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           2,
           4
         ]
       },
       {
-        "id": "a3",
+        "id": "woman0_a3",
         "text": "Her short black hair remains visible.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           0,
           4
@@ -192,18 +192,18 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.body_pose": [
       {
-        "id": "p1",
+        "id": "woman0_p1",
         "text": "She stands facing left.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           0,
           2
         ]
       },
       {
-        "id": "p2",
+        "id": "woman0_p2",
         "text": "She stands facing the camera.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           3,
           4
@@ -212,18 +212,18 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.expression": [
       {
-        "id": "e1",
+        "id": "woman0_e1",
         "text": "Her mouth is neutral.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           0,
           3
         ]
       },
       {
-        "id": "e2",
+        "id": "woman0_e2",
         "text": "She smiles visibly.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           3.5,
           4
@@ -232,13 +232,13 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.appearance_change": [
       {
-        "id": "ac",
-        "text": "As she buttons her coat, a1 becomes a2; a3 remains unchanged.",
-        "parent_id": "person",
+        "id": "woman0_ac",
+        "text": "As she buttons her coat, woman0_a1 becomes woman0_a2; woman0_a3 remains unchanged.",
+        "parent_id": "woman0",
         "links": [
-          "a1",
-          "a2",
-          "a3"
+          "woman0_a1",
+          "woman0_a2",
+          "woman0_a3"
         ],
         "time_range": [
           0,
@@ -248,12 +248,12 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.expression_change": [
       {
-        "id": "ec",
-        "text": "Her neutral expression e1 changes to the smile e2.",
-        "parent_id": "person",
+        "id": "woman0_ec",
+        "text": "Her neutral expression woman0_e1 changes to the smile woman0_e2.",
+        "parent_id": "woman0",
         "links": [
-          "e1",
-          "e2"
+          "woman0_e1",
+          "woman0_e2"
         ],
         "time_range": [
           3,
@@ -263,12 +263,12 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.pose_change": [
       {
-        "id": "pc",
-        "text": "She starts with p1, then turns toward the camera, reaching p2.",
-        "parent_id": "person",
+        "id": "woman0_pc",
+        "text": "She starts with woman0_p1, then turns toward the camera, reaching woman0_p2.",
+        "parent_id": "woman0",
         "links": [
-          "p1",
-          "p2"
+          "woman0_p1",
+          "woman0_p2"
         ],
         "time_range": [
           2,
@@ -278,18 +278,18 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "identity.motion": [
       {
-        "id": "m1",
+        "id": "woman0_m1",
         "text": "She buttons her coat, bringing its front panels together.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           1,
           2
         ]
       },
       {
-        "id": "m2",
+        "id": "woman0_m2",
         "text": "She rotates her torso toward the camera.",
-        "parent_id": "person",
+        "parent_id": "woman0",
         "time_range": [
           2,
           3
@@ -298,63 +298,102 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "environment": [
       {
-        "id": "office",
-        "text": "A small office with a desk and white walls."
+        "id": "office0",
+        "text": "A small office with a desk and white walls.",
+        "time_range": [
+          0,
+          4
+        ]
+      },
+      {
+        "id": "courtyard0",
+        "text": "A stone courtyard enclosed by brick walls.",
+        "time_range": [
+          4,
+          6
+        ]
       }
     ],
     "environment.description": [
       {
-        "id": "ed",
+        "id": "office0_ed",
         "text": "A compact office with a desk against a white wall.",
-        "parent_id": "office"
+        "parent_id": "office0"
+      },
+      {
+        "id": "courtyard0_ed",
+        "text": "An empty courtyard with stone paving and brick walls.",
+        "parent_id": "courtyard0"
       }
     ],
     "environment.space_type": [
       {
-        "id": "es",
+        "id": "office0_es",
         "text": "Indoor.",
-        "parent_id": "office"
+        "parent_id": "office0"
+      },
+      {
+        "id": "courtyard0_es",
+        "text": "Outdoor.",
+        "parent_id": "courtyard0"
       }
     ],
     "environment.lighting": [
       {
-        "id": "el",
+        "id": "office0_el",
         "text": "A desk lamp casts warm light onto the desktop.",
-        "parent_id": "office"
+        "parent_id": "office0"
       }
     ],
     "environment.structure": [
       {
-        "id": "et",
+        "id": "office0_et",
         "text": "A rectangular desk stands against a white wall.",
-        "parent_id": "office"
+        "parent_id": "office0"
+      },
+      {
+        "id": "courtyard0_et",
+        "text": "Brick walls enclose rectangular stone paving around a central fountain.",
+        "parent_id": "courtyard0"
       }
     ],
     "identity_background_relations": [
       {
-        "id": "r",
+        "id": "woman0_office0_relation",
         "text": "The woman stands in the office foreground.",
         "links": [
-          "person",
-          "office"
-        ]
-      }
-    ],
-    "viewpoint": [
-      {
-        "id": "shot",
-        "text": "One continuous eye-level medium shot.",
+          "woman0",
+          "office0"
+        ],
         "time_range": [
           0,
           4
         ]
       }
     ],
+    "viewpoint": [
+      {
+        "id": "shot0",
+        "text": "An eye-level medium shot of the woman in the office.",
+        "time_range": [
+          0,
+          4
+        ]
+      },
+      {
+        "id": "shot1",
+        "text": "A static wide shot of the empty courtyard.",
+        "time_range": [
+          4,
+          6
+        ]
+      }
+    ],
     "viewpoint.viewpoint_motion": [
       {
-        "id": "vm",
+        "id": "shot0_vm",
         "text": "The camera slowly pushes closer while remaining at eye level.",
-        "parent_id": "shot",
+        "parent_id": "shot0",
         "time_range": [
           0,
           4
@@ -363,8 +402,36 @@ VIDEO_EXAMPLE = json.loads(r'''
     ],
     "style": [
       {
-        "id": "style",
+        "id": "live_action_style",
         "text": "Photorealistic live-action imagery."
+      }
+    ],
+    "environment_change": [
+      {
+        "id": "office_to_courtyard",
+        "text": "The scene cuts from office0 to courtyard0.",
+        "links": [
+          "office0",
+          "courtyard0"
+        ],
+        "time_range": [
+          0,
+          6
+        ]
+      }
+    ],
+    "viewpoint_change": [
+      {
+        "id": "office_to_courtyard_cut",
+        "text": "A hard cut connects shot0 to shot1.",
+        "links": [
+          "shot0",
+          "shot1"
+        ],
+        "time_range": [
+          0,
+          6
+        ]
       }
     ]
   }
@@ -378,111 +445,111 @@ IMAGE_EXAMPLE = json.loads(r'''
   "attributes": {
     "identity": [
       {
-        "id": "cup",
+        "id": "cup0",
         "text": "A blue ceramic cup."
       },
       {
-        "id": "book",
+        "id": "book0",
         "text": "A closed yellow book."
       }
     ],
     "identity.description": [
       {
-        "id": "cd",
+        "id": "cup0_cd",
         "text": "A cylindrical ceramic cup with one curved handle.",
-        "parent_id": "cup"
+        "parent_id": "cup0"
       },
       {
-        "id": "bd",
+        "id": "book0_bd",
         "text": "A rectangular closed book.",
-        "parent_id": "book"
+        "parent_id": "book0"
       }
     ],
     "identity.appearance": [
       {
-        "id": "ca",
+        "id": "cup0_ca",
         "text": "Glossy cobalt-blue glaze covers the cup.",
-        "parent_id": "cup"
+        "parent_id": "cup0"
       },
       {
-        "id": "ba",
+        "id": "book0_ba",
         "text": "A plain yellow cover with a black title.",
-        "parent_id": "book"
+        "parent_id": "book0"
       }
     ],
     "environment": [
       {
-        "id": "setting",
+        "id": "tabletop0",
         "text": "A tabletop against a pale wall."
       }
     ],
     "environment.description": [
       {
-        "id": "sd",
+        "id": "tabletop0_sd",
         "text": "A wooden tabletop in front of a pale wall.",
-        "parent_id": "setting"
+        "parent_id": "tabletop0"
       }
     ],
     "environment.lighting": [
       {
-        "id": "sl",
+        "id": "tabletop0_sl",
         "text": "Soft light from the left casts shadows rightward.",
-        "parent_id": "setting"
+        "parent_id": "tabletop0"
       }
     ],
     "environment.structure": [
       {
-        "id": "ss",
+        "id": "tabletop0_ss",
         "text": "Horizontal wood grain and a smooth pale backdrop.",
-        "parent_id": "setting"
+        "parent_id": "tabletop0"
       }
     ],
     "identity_relations": [
       {
-        "id": "ir",
+        "id": "cup0_book0_relation",
         "text": "The cup stands left of the book.",
         "links": [
-          "cup",
-          "book"
+          "cup0",
+          "book0"
         ]
       }
     ],
     "identity_background_relations": [
       {
-        "id": "br",
+        "id": "cup0_tabletop0_relation",
         "text": "The cup rests near the tabletop front edge.",
         "links": [
-          "cup",
-          "setting"
+          "cup0",
+          "tabletop0"
         ]
       },
       {
-        "id": "br2",
+        "id": "book0_tabletop0_relation",
         "text": "The book rests near the tabletop center.",
         "links": [
-          "book",
-          "setting"
+          "book0",
+          "tabletop0"
         ]
       }
     ],
     "viewpoint": [
       {
-        "id": "shot",
+        "id": "shot0",
         "text": "A slightly elevated close view of the tabletop."
       }
     ],
     "style": [
       {
-        "id": "style",
+        "id": "still_life_style",
         "text": "Photorealistic still-life photography."
       }
     ],
     "visible_text": [
       {
-        "id": "title",
+        "id": "book0_title",
         "text": "“NOTES” appears in black uppercase letters on the yellow book.",
         "links": [
-          "book"
+          "book0"
         ]
       }
     ]
@@ -506,7 +573,18 @@ Response contract:
 - attributes contains ONLY observed categories, using exact definition names including
   dotted keys. Each value is a nonempty array. If nothing is clear, use attributes: {}.
 - Every entry requires id and text; include parent_id, links, time_range only as below.
-- id: unique local identifier using letters, digits, underscores or hyphens.
+- id: use letters, digits, underscores or hyphens. EVERY entry ID must be unique
+  across the ENTIRE artifact, across ALL categories and ALL scenes/parents, not
+  merely within one array. Never restart IDs at a scene change or reuse an ID.
+- Name root subjects/settings recognizably: woman0, woman1, bear0, office0,
+  courtyard0; avoid generic person or setting. Each dotted child ID MUST start
+  with its exact parent_id plus "_": woman0_d1, woman0_a1, woman0_ac,
+  office0_et, courtyard0_et. Different children of one parent need distinct suffixes.
+  Never use bare d1, a1, ac, ec or et. Give parentless relations/global entries
+  descriptive IDs, such as woman0_office0_relation or office_to_courtyard.
+- Reuse those exact IDs in parent_id, links and any ID mentions in text. Before
+  returning, check all entry IDs together for duplicates. IDs remain local to this
+  artifact: do not prepend artifact_id; the caller adds that namespace later.
 - text: nonempty, at most 15 words; describe evidence, not confidence speculation.
 - parent_id: for dotted categories, the ID of its identity/environment/viewpoint;
   omit for undotted categories. Arrays accommodate different parents even when multiple=No.

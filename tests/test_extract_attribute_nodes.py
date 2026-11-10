@@ -37,11 +37,11 @@ class ExtractionTests(unittest.TestCase):
             lambda d: d['attributes'].update(style=[]),
             lambda d: d['attributes']['style'][0].update(text='word '*16),
             lambda d: d['attributes']['identity.appearance'][0].update(parent_id='missing'),
-            lambda d: d['attributes']['identity.appearance_change'][0].update(links=['p1','p2']),
-            lambda d: d['attributes']['identity.pose_change'][0].update(links=['p1']),
+            lambda d: d['attributes']['identity.appearance_change'][0].update(links=['woman0_p1','woman0_p2']),
+            lambda d: d['attributes']['identity.pose_change'][0].update(links=['woman0_p1']),
             lambda d: d['attributes']['identity'][0].update(time_range=[float('nan'),2]),
             lambda d: d['attributes']['style'].append(copy.deepcopy(d['attributes']['style'][0])),
-            lambda d: d['attributes']['identity_background_relations'][0].update(links=['office','person']),
+            lambda d: d['attributes']['identity_background_relations'][0].update(links=['office0','woman0']),
         ]
         for mutate in mutations:
             d=copy.deepcopy(VIDEO_EXAMPLE); mutate(d)
@@ -134,3 +134,16 @@ class ExtractionTests(unittest.TestCase):
             custom=Path(tmp).resolve()/'custom'
             extract_attribute_nodes(ref,qwen=model,output_dir=custom)
             self.assertEqual(model.call_args.kwargs['output_dir'],custom)
+
+    def test_examples_use_unique_parent_prefixed_ids_across_scenes(self):
+        for example in (VIDEO_EXAMPLE,IMAGE_EXAMPLE):
+            entries=[entry for group in example['attributes'].values() for entry in group]
+            ids=[entry['id'] for entry in entries]
+            self.assertEqual(len(ids),len(set(ids)))
+            for entry in entries:
+                if 'parent_id' in entry:
+                    self.assertTrue(entry['id'].startswith(entry['parent_id']+'_'))
+        structures=VIDEO_EXAMPLE['attributes']['environment.structure']
+        self.assertGreaterEqual(len(structures),2)
+        self.assertEqual({e['parent_id'] for e in structures},{'office0','courtyard0'})
+        self.assertIn('across the ENTIRE artifact',extraction_system_prompt())
