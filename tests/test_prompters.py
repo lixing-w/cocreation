@@ -1,15 +1,11 @@
-"""Prompt writers: source/target mapping, strict outputs, lifecycle and skill snapshots."""
-import copy
-import io
-from contextlib import redirect_stderr
-import hashlib
+"""Prose inputs, direct expert outputs, media ordering and generator constraints."""
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-
-from cocreation import Qwen, Reference, VDNH3, Flux
+from cocreation import Reference
+from cocreation.references import prepare
 from cocreation.worker import qwen_messages
 from tools._prompter import prepare_inputs, parse_prompt
 from tools.flux_prompter import flux_prompter
@@ -23,12 +19,12 @@ REF_PROMPT = '''subject_definitions:
 summary:
 A five-second portrait in the garden.
 retention_analysis:
-<Subject 1> transfers the coat color; <Subject 2> transfers the garden setting.
+Preserve the coat and garden only.
 detailed_description:
-[Shot 1] A woman wearing <Subject 1> stands in <Subject 2> under morning light.
-[Shot 2] At 00:02.000, a close view shows her gently turning toward the camera.
+[Shot 1] A woman wearing <Subject 1> stands in <Subject 2>.
+[Shot 2] At 00:02.000, a close view shows her turning toward the camera.
 overall_soundscape:
-N/A
+Soft wind.
 non_diegetic_music:
 N/A'''
 BASE_PROMPT = '''integrated_multimodal_description:
@@ -37,206 +33,91 @@ overall_soundscape:
 N/A
 non_diegetic_music:
 N/A'''
-FLUX_PROMPT = 'A seated portrait wearing the red coat from <Image 1> (image 1), in the garden from <Image 2> (image 2), soft morning light.'
-
-
-def response(prompt):
-    return {'text':json.dumps({'prompt':prompt})}
+FLUX_PROMPT = 'A portrait with the red coat from <Image 1> (image 1), in the garden from <Image 2> (image 2), soft light.'
 
 
 class Prompters(unittest.TestCase):
     def setUp(self):
-        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
-        self.root=Path(temporary.name)
-        for name in ('video.mp4','garden.png'):(self.root/name).touch()
+        tmp=tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        self.root=Path(tmp.name)
+        for name in ('video.mp4','garden.png'): (self.root/name).touch()
         self.refs=[Reference('video',self.root/'video.mp4','video'),
                    Reference('garden',self.root/'garden.png','image')]
-        self.attrs=[dict(id='video_coat',category='identity.appearance',text='Red coat.',artifact_ids=['video']),
-                    dict(id='garden_environment',category='environment',text='Rose garden.',artifact_ids=['garden']),
-                    dict(id='new_light',category='environment.lighting',text='Soft morning light.')]
+        self.description='A red coat. (from <Video 1>)\nA rose garden. (from <Image 1>)\nSoft morning light.'
 
-    def test_direct_video_observation_and_flux_target_slots(self):
-        model=Mock(return_value=response(FLUX_PROMPT))
-        original=copy.deepcopy(self.attrs)
-        self.assertEqual(flux_prompter(self.attrs,self.refs,qwen=model),FLUX_PROMPT)
-        user,refs=model.call_args.args;kwargs=model.call_args.kwargs
-        self.assertEqual([r.kind for r in refs],['video','image'])
-        self.assertIn('"generator_label":"<Image 1>"',user)
-        self.assertIn('"generator_label":"<Image 2>"',user)
-        self.assertIn('"artifact_ids":[]',user)
-        self.assertIn('"artifact_ids":["<Image 1>"]',user)
-        self.assertIn('"artifact_ids":["<Image 2>"]',user)
-        self.assertTrue(str(kwargs['system_cache_path']).endswith('/flux_prompter/system_prompt.kvcache'))
-        planned=Qwen()(user,refs,system_prompt=kwargs['system_prompt'],dry_run=True)
-        content=qwen_messages(planned)[1]['content']
-        self.assertEqual([x['type'] for x in content if x['type']!='text'],['video','image'])
-        model.close.assert_not_called();self.assertEqual(self.attrs,original)
-        # Generator accepts final all-image list in those same slots.
-        final=[Reference('video',self.root/'garden.png','image'),self.refs[1]]
-        self.assertEqual(Flux()(FLUX_PROMPT,final,dry_run=True)['references'][1]['label'],'<Image 2>')
-
-    def test_h3_mapping_and_sections_match_generator(self):
-        model=Mock(return_value=response(REF_PROMPT))
-        self.assertEqual(h3_prompter(self.attrs,self.refs,qwen=model,seconds=5),REF_PROMPT)
-        user,refs=model.call_args.args;kwargs=model.call_args.kwargs
-        self.assertIn('"target_seconds":5',user)
-        self.assertIn('"artifact_ids":["<Video 1>"]',user)
-        self.assertIn('"artifact_ids":["<Picture 1>"]',user)
-        self.assertIn('"generator_label":"<Picture 1>"',user)
-        self.assertTrue(str(kwargs['system_cache_path']).endswith('/h3_prompter/system_prompt.kvcache'))
-        self.assertEqual([r['label'] for r in VDNH3()(REF_PROMPT,refs,dry_run=True)['references']],
-                         ['<Video 1>','<Picture 1>'])
-        model.close.assert_not_called()
-
-    def test_temporary_multisource_labels_keep_order_and_original_bindings(self):
-        from tools._prompter_prompts import labeled_payload, user_prompt
-        refs=[self.refs[1],self.refs[0],Reference('video2',self.root/'video.mp4','video')]
-        attrs=[dict(id='video_style',category='style',text='Watercolor.',
-                    artifact_ids=['video2','garden','video']),
-               dict(id='new_relation',category='identity_relations',text='Facing each other.',
-                    links=['video_bear','garden_bear'])]
-        original=copy.deepcopy(attrs)
-        for target,expected in [('h3',['<Video 2>','<Picture 1>','<Video 1>']),
-                                ('flux',['<Image 3>','<Image 1>','<Image 2>'])]:
-            rows,_,catalog=prepare_inputs(attrs,refs,target)
-            payload=labeled_payload('',rows,catalog)
-            self.assertEqual(payload['attributes'][0]['artifact_ids'],expected)
-            self.assertEqual(payload['attributes'][1]['artifact_ids'],[])
-            self.assertEqual(payload['attributes'][1]['links'],attrs[1]['links'])
-            self.assertEqual([r['artifact_id'] for r in payload['references']],['garden','video','video2'])
-            text=user_prompt('',rows,catalog)
-            self.assertEqual(json.loads(text.split('Task data:\n')[1].split('\nReturn only')[0]),payload)
-        self.assertEqual(attrs,original)
-
-    def test_labeled_input_is_saved_and_local_examples_are_explicit(self):
-        output=self.root/'expert'
-        h3_prompter(self.attrs,self.refs,qwen=Mock(return_value=response(REF_PROMPT)),output_dir=output)
-        saved=json.loads((output/'input.json').read_text())
-        self.assertEqual(saved['attributes'][0]['artifact_ids'],['<Video 1>'])
-        self.assertEqual(saved['attributes'][1]['artifact_ids'],['<Picture 1>'])
-        self.assertIn('bear from <Video 1>',h3_system_prompt())
-        self.assertIn('coat from <Image 1>',flux_system_prompt())
-
-    def test_source_free_new_attributes(self):
-        attrs=[dict(id='new_circle',category='environment',text='An abstract violet circle.')]
-        for tool,prompt in [(flux_prompter,'An abstract violet circle.'),(h3_prompter,BASE_PROMPT)]:
-            model=Mock(return_value=response(prompt))
-            self.assertEqual(tool(attrs,qwen=model,use_system_cache=False),prompt)
-            self.assertEqual(model.call_args.args[1],[])
-            self.assertIsNone(model.call_args.kwargs['system_cache_path'])
-
-    def test_bad_associations_fail_before_model(self):
-        model=Mock()
-        cases=[(self.attrs[:1],self.refs),
-               (self.attrs,self.refs[:1]),
-               (self.attrs,self.refs+self.refs[:1]),
-               ([],[]),
-               ([dict(id='x',category='style',text='Oil paint.',artifact_ids=['missing'])],[])]
-        for attrs,refs in cases:
-            with self.assertRaises(ValueError):flux_prompter(attrs,refs,qwen=model)
-        for duration in (0,16,True,float('nan')):
-            with self.assertRaises(ValueError):h3_prompter(self.attrs,self.refs,qwen=model,seconds=duration)
-        with self.assertRaises(ValueError):
-            flux_prompter(self.attrs,[Reference('audio',self.root/'garden.png','audio')],qwen=model)
-        model.assert_not_called()
-
-    def test_owned_lifecycle_success_null_and_failure(self):
-        for target,tool,good in [('flux',flux_prompter,FLUX_PROMPT),('h3',h3_prompter,REF_PROMPT)]:
-            for output in (response(good),response(None),{'text':'truncated'}):
-                model=Mock(return_value=output)
-                with patch('tools.'+target+'_prompter.Qwen',return_value=model) as factory:
-                    result=tool(self.attrs,self.refs)
-                    self.assertEqual(result,good if output==response(good) else None)
-                    factory.assert_called_once();model.close.assert_called_once()
-            model=Mock(side_effect=RuntimeError('inference'))
-            with patch('tools.'+target+'_prompter.Qwen',return_value=model):
-                with self.assertRaises(RuntimeError):tool(self.attrs,self.refs)
-                model.close.assert_called_once()
-
-    def test_output_label_and_timeline_validation(self):
-        _,_,flux=prepare_inputs(self.attrs,self.refs,'flux')
-        _,_,h3=prepare_inputs(self.attrs,self.refs,'h3')
-        for bad in (FLUX_PROMPT.replace('<Image 1>','<Video 1>'),
-                    FLUX_PROMPT.replace('<Image 2>','<Image 9>'),
-                    FLUX_PROMPT.replace('<Image 2>',''), '```'+FLUX_PROMPT+'```'):
-            self.assertIsNone(parse_prompt(response(bad),flux,'flux'))
-        for bad in (REF_PROMPT.replace('<Picture 1>','<Image 1>'),
-                    REF_PROMPT.replace('00:02.000','00:06.000'),
-                    REF_PROMPT.replace('[Shot 2]','[Shot 3]'),
-                    REF_PROMPT.replace('<Subject 1> is','<Subject 3> is'),
-                    REF_PROMPT.replace('summary:','unknown_section:'),
-                    REF_PROMPT+'\n<Audio 1>'):
-            self.assertIsNone(parse_prompt(response(bad),h3,'h3',5))
-        self.assertIsNone(parse_prompt({'text':'{"prompt":"a","prompt":"b"}'},[],'flux'))
-
-    def test_official_files_intact_and_static_system_prefixes(self):
-        root=Path(__file__).resolve().parents[1]/'skills'
-        for name in ('flux-image-best-practices','h3-prompt-writing'):
-            manifest=json.loads((root/name/'SOURCE.json').read_text())
-            for path,row in manifest['files'].items():
-                self.assertEqual(hashlib.sha256((root/name/path).read_bytes()).hexdigest(),row['sha256'])
-        self.assertEqual(flux_system_prompt(),flux_system_prompt())
-        self.assertEqual(h3_system_prompt(),h3_system_prompt())
-        self.assertNotEqual(flux_system_prompt(),h3_system_prompt())
-        self.assertIn('Official guide: flux-image-best-practices/SKILL.md',flux_system_prompt())
-        self.assertIn('Official guide: h3-prompt-writing/references/ref-en.txt',h3_system_prompt())
-
-    def test_global_ids_preserve_origin_and_bindings(self):
-        attrs=[dict(id='video_bear',category='identity',text='Brown bear.',artifact_ids=['video']),
-               dict(id='garden_bear',category='identity',text='White bear.',artifact_ids=['garden']),
-               dict(id='video_pose',category='identity.body_pose',text='Standing.',parent_id='video_bear'),
-               dict(id='new_relation',category='identity_relations',text='Facing each other.',
-                    links=['video_bear','garden_bear'])]
-        rows,_,_=prepare_inputs(attrs,self.refs,'h3')
-        self.assertEqual(rows[2]['parent_id'],'video_bear')
-        self.assertEqual(rows[3]['links'],['video_bear','garden_bear'])
-        for bad in ({'artifact_id':'video','attributes':{}},
-                    [dict(id='bear',category='identity',text='Bear.')],
-                    [dict(id='video_pose',category='identity.body_pose',text='Standing.',parent_id='bear')]):
-            with self.assertRaises(ValueError):prepare_inputs(bad,[],'flux')
-
-    def test_h3_new_sound_policy(self):
-        prompt=h3_system_prompt()
-        self.assertIn('Design plausible NEW sound',prompt)
-        self.assertNotIn('Unless the brief explicitly requests new generated',prompt)
-        self.assertIn('all six Ref2VA sections',prompt)
-        self.assertIn('all three T2VA sections',prompt)
-
-
-class Diagnostics(unittest.TestCase):
-    def test_rejections_explain_specific_reason_and_preserve_raw_text(self):
-        h3=[{'generator_label':'<Video 1>'},{'generator_label':'<Picture 1>'}]
-        cases=[
-            ({'text':'broken'},[],'flux',None,'invalid_json'),
-            ({'text':json.dumps({'prompt':None,'reason':'Selected states contradict.'})},[], 'flux',None,'model_declined'),
-            (response(REF_PROMPT.replace('<Picture 1>','<Image 1>')),h3,'h3',5,'unexpected_label'),
-            (response(REF_PROMPT.replace('summary:','other:')),h3,'h3',5,'h3_sections'),
-            (response(REF_PROMPT.replace('00:02.000','00:06.000')),h3,'h3',5,'shot_timestamp_range'),
-            (response(' '.join(['word']*201)),[],'flux',None,'flux_word_limit'),
-            (response('No reference label.'),h3,'h3',5,'missing_labels'),
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)/'diagnostics.jsonl'
-            for output,catalog,target,seconds,code in cases:
-                stream=io.StringIO()
-                with redirect_stderr(stream):
-                    self.assertIsNone(parse_prompt(output,catalog,target,seconds,diagnostic_path=path))
-                diagnostic=json.loads(path.read_text().splitlines()[-1])
-                self.assertEqual(diagnostic['code'],code)
-                self.assertEqual(diagnostic['raw_text'],output['text'])
-                self.assertIn(code,stream.getvalue())
-                if code=='model_declined':
-                    self.assertEqual(diagnostic['message'],'Selected states contradict.')
-            self.assertEqual(len(path.read_text().splitlines()),len(cases))
-
-    def test_shared_qwen_receives_output_dir_and_both_tools_persist_diagnostics(self):
-        attrs=[dict(id='new_style',category='style',text='Watercolor.')]
-        with tempfile.TemporaryDirectory() as tmp:
-            for name,tool in [('flux',flux_prompter),('h3',h3_prompter)]:
-                output=Path(tmp)/name
-                model=Mock(return_value=response(None))
-                with redirect_stderr(io.StringIO()):
-                    self.assertIsNone(tool(attrs,qwen=model,output_dir=output))
-                self.assertEqual(model.call_args.kwargs['output_dir'],output)
-                self.assertEqual(json.loads((output/'diagnostics.jsonl').read_text())['code'],'model_declined')
+    def test_direct_text_and_mixed_media_maps(self):
+        for target, tool, prompt in [('flux',flux_prompter,FLUX_PROMPT),('h3',h3_prompter,REF_PROMPT)]:
+            with self.subTest(target=target):
+                model=Mock(return_value={'text':prompt})
+                self.assertEqual(tool(self.description,self.refs,qwen=model,output_dir=self.root/target),prompt)
+                user, refs=model.call_args.args
+                self.assertIn(self.description, user)
+                self.assertIn('<Video 1> -> '+ ('<Image 1>' if target=='flux' else '<Video 1>'),user)
+                self.assertIn('<Image 1> -> '+ ('<Image 2>' if target=='flux' else '<Picture 1>'),user)
+                self.assertLess(user.index('{{artifact:video}}'), user.index('Reference mapping'))
+                self.assertNotIn('"attributes"',user)
+                self.assertEqual(refs,self.refs)
+                self.assertTrue((self.root/target/'input.txt').is_file())
                 model.close.assert_not_called()
+
+    def test_media_inserted_once_in_observation_order_before_mapping(self):
+        model=Mock(return_value={'text':FLUX_PROMPT})
+        flux_prompter(self.description,self.refs,qwen=model)
+        user,refs=model.call_args.args
+        request=prepare(user,refs)
+        request['options']=dict(max_pixels=123,video_fps=2,video_max_frames=32)
+        items=qwen_messages(request)[0]['content']
+        self.assertEqual([x['type'] for x in items if x['type']!='text'],['video','image'])
+        self.assertTrue(items[0]['text'].endswith('<Video 1>'))
+
+    def test_source_free_generation_and_owned_lifecycle(self):
+        for name,tool,prompt in [('flux',flux_prompter,'A luminous pearl sphere.'),('h3',h3_prompter,BASE_PROMPT)]:
+            model=Mock(return_value={'text':prompt})
+            with patch(f'tools.{name}_prompter.Qwen',return_value=model):
+                self.assertEqual(tool('A pearl sphere.',use_system_cache=False),prompt)
+            model.close.assert_called_once()
+            self.assertIsNone(model.call_args.kwargs['system_cache_path'])
+        model=Mock(side_effect=RuntimeError('failed'))
+        with patch('tools.flux_prompter.Qwen',return_value=model), self.assertRaises(RuntimeError):
+            flux_prompter('A pearl sphere.')
+        model.close.assert_called_once()
+
+    def test_input_rejects_dangling_and_unused_sources(self):
+        for text,refs in [('A red coat.',self.refs),('A coat. (from <Image 2>)',self.refs),
+                          ([],[]),('A coat from <Video 1>.',self.refs),
+                          ('A coat. (from <Audio 1>)',self.refs)]:
+            with self.subTest(text=text),self.assertRaises(ValueError):
+                prepare_inputs(text,refs,'flux')
+        with self.assertRaises(ValueError):
+            prepare_inputs(self.description,self.refs+self.refs,'h3')
+
+    def test_direct_prompt_validation(self):
+        _,_,catalog=prepare_inputs(self.description,self.refs,'flux')
+        for text in (json.dumps({'prompt':FLUX_PROMPT}), '```'+FLUX_PROMPT+'```',
+                     'CANNOT_FULFILL', FLUX_PROMPT.replace('<Image 2>','<Video 2>'),
+                     'A coat from <Image 1>.', FLUX_PROMPT+' word'*201):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_prompt({'text':text},catalog,'flux'))
+        self.assertEqual(parse_prompt({'text':FLUX_PROMPT},catalog,'flux'),FLUX_PROMPT)
+
+    def test_h3_structure_shots_and_times_remain_validated(self):
+        _,_,catalog=prepare_inputs(self.description,self.refs,'h3')
+        for text in (REF_PROMPT.replace('00:02.000','00:05.000'),
+                     REF_PROMPT.replace('[Shot 2]','[Shot 3]'),
+                     REF_PROMPT.replace('summary:','wrong:'),
+                     REF_PROMPT.replace('[Shot 1]','[Shot 1] At 00:00.000,'),
+                     REF_PROMPT.replace('<Subject 2> is','A garden is')):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_prompt({'text':text},catalog,'h3',5))
+        self.assertEqual(parse_prompt({'text':REF_PROMPT},catalog,'h3',5),REF_PROMPT)
+        self.assertEqual(parse_prompt({'text':BASE_PROMPT},[],'h3',5),BASE_PROMPT)
+
+    def test_role_and_task_examples(self):
+        for system in (flux_system_prompt(),h3_system_prompt()):
+            self.assertTrue(system.startswith('You are '))
+            self.assertIn('example',system.lower())
+            self.assertIn('direct plain text',system)
+            self.assertNotIn('{"prompt":',system)
+
+
+if __name__ == '__main__': unittest.main()

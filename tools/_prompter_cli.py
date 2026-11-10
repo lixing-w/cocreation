@@ -11,7 +11,7 @@ def main(tool, target):
     Local media paths are resolved relative to the task file, not the shell cwd.
     """
     parser=argparse.ArgumentParser(description=tool.__doc__.split('\n')[0])
-    parser.add_argument('task',type=Path,help='JSON with attributes, references, user_prompt')
+    parser.add_argument('task',type=Path,help='Local manifest: attributes is prose; references/user_prompt optional')
     if target == 'h3':
         parser.add_argument('--seconds',type=float,default=5.0)
     parser.add_argument('--output-dir',type=Path)
@@ -24,4 +24,4 @@ def main(tool, target):
         media=Path(ref['path']).expanduser()
         ref['path']=str(media if media.is_absolute() else path.parent/media)
     result=tool(**task,**args)
-    print(result if result is not None else 'null')
+    print(result if result is not None else 'CANNOT_FULFILL')

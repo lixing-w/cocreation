@@ -15,11 +15,9 @@ def h3_prompter(attributes, references=None, user_prompt='', *, seconds=15.0,
     """Return H3 expert prompt str, or None for unfulfillable/invalid model output.
 
     Args:
-        attributes: List of global id/category/text records (e.g. video_0_bear),
-            with optional artifact_ids;
-            properties without source IDs are new generation requirements.
-        references: Ordered image/video References or artifact_id/path/kind mappings.
-            Each supplied source must be linked by at least one selected attribute.
+        attributes: Natural-language description, one element per line; retained
+            source elements use exact (from <Image N>) / (from <Video N>) markers.
+        references: Ordered image/video References. Every source must be used.
         user_prompt: Optional creative brief for the target video.
         seconds: Target VDN-H3 video duration, 5-15 seconds.
         qwen: Optional shared instance; never closed by this tool.

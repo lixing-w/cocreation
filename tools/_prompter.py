@@ -5,10 +5,10 @@ from pathlib import Path
 import re
 import sys
 
-from cocreation import Reference
 from cocreation.storage import scratch_root
-from tools.extract_attribute_nodes_prompts import CATEGORY_RULES
-from tools._prompter_prompts import labeled_payload
+from tools._attribute_protocol import media_catalog, validate_sources, SOURCE
+from tools._attribute_vlm import reference
+
 
 LABEL = re.compile(r'<(Image|Picture|Video|Audio|Subject)\s+([^<>]+)>', re.I)
 REF_SECTIONS = ('subject_definitions','summary','retention_analysis','detailed_description',
@@ -16,84 +16,24 @@ REF_SECTIONS = ('subject_definitions','summary','retention_analysis','detailed_d
 BASE_SECTIONS = ('integrated_multimodal_description','overall_soundscape','non_diegetic_music')
 
 
-def prepare_inputs(attributes, references, target):
-    """Validate selected attribute records and local media; return rows, refs and map.
-
-    attributes: List of flat mappings with GLOBAL id/category/text, optional artifact_ids
-        (source artifact IDs), plus optional parent_id/links/time_range context.
-    references: Ordered iterable of Reference or artifact_id/path/kind mappings.
-    target: flux or h3; determines generator labels (not Qwen observation labels).
-    """
-    if not isinstance(attributes, list):
-        raise ValueError('attributes must be a list of flat attribute JSON objects')
-    refs, catalog, seen = [], [], set()
-    counters = {'image':0, 'video':0}
-    for raw in references or []:
-        ref = Reference(raw['artifact_id'], raw['path'], raw['kind']) if isinstance(raw,dict) else raw
-        if not isinstance(ref,Reference) or ref.kind not in counters:
-            raise ValueError('Prompters observe image/video references only')
-        if ref.artifact_id in seen:
-            raise ValueError('Duplicate artifact reference: ' + ref.artifact_id)
-        path = Path(ref.path).expanduser().resolve(strict=True)
-        if not path.is_file():
-            raise ValueError('Reference must be a local file')
-        refs.append(Reference(ref.artifact_id, path, ref.kind)); seen.add(ref.artifact_id)
-        counters[ref.kind] += 1
-        number = counters[ref.kind]
-        observed = f'<{ref.kind.title()} {number}>'
-        generated = (f'<Image {len(refs)}>' if target == 'flux' else
-                     f'<{"Picture" if ref.kind == "image" else "Video"} {number}>')
+def prepare_inputs(description, references, target):
+    """Validate prose and construct observation-to-generator labels in source order."""
+    if target not in ('flux', 'h3'):
+        raise ValueError('Expected flux or h3')
+    refs = [reference(r) for r in references or []]
+    labels = media_catalog(refs)
+    description = validate_sources(description, refs)
+    if set(SOURCE.findall(description)) != set(labels.values()):
+        raise ValueError('Every supplied reference must appear in the description')
+    if len(refs) > (4 if target == 'flux' else 32):
+        raise ValueError('Too many generation references')
+    catalog = []
+    for index, ref in enumerate(refs, 1):
+        observed = labels[ref.artifact_id]
+        generated = f'<Image {index}>' if target == 'flux' else observed.replace('<Image ', '<Picture ')
         catalog.append(dict(artifact_id=ref.artifact_id, kind=ref.kind,
-                            observation_label=observed, generator_label=generated,
-                            requires_frame=(target == 'flux' and ref.kind == 'video')))
-    if target == 'h3' and len(refs) > 32:
-        raise ValueError('VDNH3 supports at most 32 references')
-    if target == 'flux' and len(refs) > 4:
-        raise ValueError('FLUX.2-klein prompt contract supports at most four image slots')
-    rows, ids, used = [], set(), set()
-    for raw in attributes:
-        if not isinstance(raw,dict) or not {'id','category','text'} <= set(raw):
-            raise ValueError('Each attribute requires id, category, text')
-        if set(raw) - {'id','category','text','artifact_ids','parent_id','links','time_range'}:
-            raise ValueError('Unsupported attribute fields')
-        key, category, text = raw['id'], raw['category'], raw['text']
-        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]+_[A-Za-z0-9_.:-]+',key):
-            raise ValueError('Attribute id must be global: origin_artifact_id_local_id (or new_local_id)')
-        if key in ids:
-            raise ValueError('Duplicate global attribute ID: ' + key)
-        for field in ('parent_id', 'links'):
-            values = [raw[field]] if field == 'parent_id' and field in raw else raw.get(field, [])
-            if not isinstance(values,list) or any(not isinstance(value,str) or not re.fullmatch(
-                    r'[A-Za-z0-9_.:-]+_[A-Za-z0-9_.:-]+', value) for value in values):
-                raise ValueError(field + ' must use global node IDs, not extractor-local IDs')
-        if not isinstance(category,str) or category not in CATEGORY_RULES:
-            raise ValueError('Unknown CPG category')
-        if not isinstance(text,str) or not text.strip():
-            raise ValueError('Attribute text must be nonempty')
-        sources = raw.get('artifact_ids', [])
-        if not isinstance(sources,list) or any(not isinstance(x,str) for x in sources):
-            raise ValueError('artifact_ids must be a list of source IDs')
-        if len(set(sources)) != len(sources) or not set(sources) <= seen:
-            raise ValueError('Duplicate or unattached attribute source')
-        row = dict(raw, artifact_ids=list(sources))
-        # Round-trip ensures serializable, finite task data without mutating callers.
-        row = json.loads(json.dumps(row, ensure_ascii=False, allow_nan=False))
-        rows.append(row); ids.add(key); used.update(sources)
-    if not rows:
-        raise ValueError('At least one selected attribute is required')
-    if used != seen:
-        raise ValueError('Every supplied media file must be linked by an input attribute')
-    return rows, refs, catalog
-
-
-def _object(pairs):
-    """Reject duplicate keys when decoding a model's JSON envelope."""
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError('Duplicate JSON key')
-        result[key] = value
-    return result
+                            observation_label=observed, generator_label=generated))
+    return description, refs, catalog
 
 
 class PromptValidationError(ValueError):
@@ -103,10 +43,9 @@ class PromptValidationError(ValueError):
 
 
 def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=None):
-    """Return text/None; report the precise rejection and raw response on stderr.
+    """Validate direct prompt text; report the rejection and raw response on stderr.
 
-    Optional JSONL diagnostics are for one run/attempt, not model-generated data.
-    A model's explicit null is distinguished from malformed/invalid model output.
+    JSONL diagnostics are local bookkeeping, never model input or model output.
     """
     def require(condition, code, message):
         if not condition:
@@ -115,23 +54,11 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
     raw = response.get('text') if isinstance(response, dict) else None
     try:
         require(isinstance(raw, str), 'missing_text', 'Model response has no string text field')
-        text = raw.strip()
-        if text.startswith('```json') and text.endswith('```'):
-            text = text[7:-3].strip()
-        try:
-            result = json.loads(text, object_pairs_hook=_object)
-        except (ValueError, RecursionError) as error:
-            raise PromptValidationError('invalid_json', str(error)) from error
-        require(isinstance(result, dict), 'invalid_envelope', 'Expected a JSON object with prompt')
-        if result.get('prompt', 'missing') is None and set(result) <= {'prompt', 'reason'}:
-            reason = result.get('reason')
-            detail = reason if isinstance(reason, str) and reason.strip() else 'No reason supplied by model'
-            raise PromptValidationError('model_declined', detail)
-        require(set(result) == {'prompt'}, 'invalid_envelope',
-                f'Expected only prompt; received keys {sorted(result)}')
-        prompt = result['prompt']
-        require(isinstance(prompt, str) and bool(prompt.strip()), 'empty_prompt', 'Expected nonempty prompt string')
-        prompt = prompt.strip()
+        prompt = raw.strip()
+        require(prompt != 'CANNOT_FULFILL', 'model_declined', 'Model could not fulfill the description')
+        require(bool(prompt), 'empty_prompt', 'Expected nonempty prompt text')
+        require(not prompt.startswith(('{', '[{', '"')), 'invalid_envelope',
+                'Expected direct prompt text, not JSON or a quoted string')
         require(not any(token in prompt for token in ('```', '{{artifact:', '<|')),
                 'forbidden_markup', 'Prompt contains code fences, unresolved artifact placeholders or model tokens')
         expected = {row['generator_label'] for row in catalog}
@@ -219,9 +146,7 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     if output_dir is not None:
         directory = Path(output_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / 'input.json').write_text(json.dumps(
-            labeled_payload(brief, rows, catalog, seconds=seconds if target == 'h3' else None),
-            ensure_ascii=False, indent=2) + '\n')
+        (directory / 'input.txt').write_text(user, encoding='utf-8')
     owned = qwen is None
     model = factory(output_dir=output_dir) if owned else qwen
     try:

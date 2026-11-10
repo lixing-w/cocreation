@@ -15,15 +15,14 @@ def flux_prompter(attributes, references=None, user_prompt='', *, qwen=None,
     """Return expert prompt str, or None for unfulfillable/invalid model output.
 
     Args:
-        attributes: List of global id/category/text records (e.g. video_0_bear); artifact_ids lists sources,
-            or is omitted/empty for new desired properties.
-        references: Ordered image/video References or artifact_id/path/kind mappings.
-            Every source must belong to at least one selected attribute.
+        attributes: Natural-language description, one element per line; retained
+            source elements use exact (from <Image N>) / (from <Video N>) markers.
+        references: Ordered image/video References. Every source must be used.
         user_prompt: Optional creative brief; attributes remain explicit constraints.
         qwen: Optional reusable instance; only internally created instances are closed.
         output_dir: Qwen run-log root when this tool owns the instance.
         use_system_cache: Enable this tool's dedicated fixed-system KV cache.
-        max_new_tokens: Qwen response budget (JSON envelope plus expert text).
+        max_new_tokens: Qwen response budget (direct expert text).
         video_fps: Sampling rate for Qwen's original-video observation.
         video_max_frames: Maximum sampled frames per source video.
         max_pixels: Observation image/frame pixel budget.

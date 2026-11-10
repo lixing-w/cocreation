@@ -1,281 +1,116 @@
-# CPG visual attributes and sampling (discussion draft)
+# Natural-language CPG pipeline (version 2)
 
-This specifies the nested visual-attribute protocol; it is not a graph builder.
+The pool is a list of `(description, artifact)` tuples. A description contains
+short natural-language sentences, one intuitive attribute or coherent element per
+line; blank lines may group them. The artifact is the actual image/video node.
+Pool descriptions have no media labels, atom IDs, schema fields or inheritance
+edges. The association is implicit in the tuple. Identical descriptions on two
+artifacts remain two separate observations.
 
-## Definitions
+## Flow
 
-An attribute is grounded in one artifact/version. Its description approximates the
-source media; identical descriptions do not imply shared provenance. Observed
-associations and requested inheritance are distinct. Verify inheritance against
-actual generated media. Audio is outside scope for the observing Qwen3-VL interface.
+1. **extractor** observes each root with the CPG definitions as selective guidance.
+   It mentions essential, clearly visible attributes and omits uncertain,
+   unobserved or nonessential details. It returns direct prose.
+2. Randomly sample nonempty lines across the pool, retaining each line's actual
+   carrier. `--sample MIN MAX` chooses the number of lines; `--parent-count` caps
+   distinct carriers. Insufficient samples skip that attempt. Modality is sampled
+   first using `--p-video`, so rewriter knows whether to design a still or a video.
+3. Assign temporary `<Image N>` / `<Video N>` labels, numbered separately by kind
+   in first-selected-carrier order. Append `(from <Kind N>)` to each sampled line.
+4. **attribute_rewriter** sees sampled prose and its actual media. It resolves
+   ambiguity and logical errors, and freely rewrites, drops, combines or invents
+   elements. Its prompt asks for surprising creative combinations with elegant,
+   beautiful, refined aesthetics, without grotesquerie or shock value. Elements
+   that are not fundamentally changed keep their reference; new/fundamentally
+   transformed elements have none. There is no fixed addition count.
+5. Drop media no longer mentioned and simultaneously renumber surviving labels.
+   Send this rewritten description and exactly its referenced media to the
+   appropriate generation prompter: **flux_prompter** for images or **h3_prompter**
+   for videos. Both consume prose and return the finished expert prompt directly.
+6. Call Flux or VDNH3. For Flux, original videos are observed by the prompter but
+   replaced by matching still frames before generation, without changing slots.
+   Frame search consumes only the prose associated with that source; if no one
+   frame satisfies it, skip the attempt. Never silently use frame zero.
+7. **attribute_verifier** sees only the generated artifact and the exact rewritten
+   description passed to the prompter. In one pass it corrects the description to
+   match actual output, removes unsupported details and all old-source markers,
+   and adds essential observed details. There is no inheritance-matching pass.
+8. Add `(verified description, generated artifact)` to the pool. Subsequent sampling
+   attributes every line to this new artifact, regardless of how it was created.
 
-### JSON contract
+All VLM task payloads and responses are plain text, including frame selection
+(decimal seconds / zero-based index, or `NOT_FOUND`). Every prompt begins with a
+role and purpose, includes task-specific examples and requests only its output.
+`NO_OBSERVATION` and `CANNOT_FULFILL` are explicit text failure sentinels. Malformed
+or unavailable descriptions skip attempts; inference/operational errors checkpoint
+and propagate. There is no attempt to prove semantic fidelity with a text parser.
 
-The response has exactly `artifact_id`, `kind` (`image` or `video`), and `attributes`.
-Persisted `attributes` is a dictionary with only the nine keys listed below.
-Extractor and verifier pass 1 first emit a temporary first key inside `attributes`:
-`"all identities and all environments draft"`, containing `identity` and
-`environment` lists of `{uid, description}` for all clearly observed major objects
-used in the response. Normal attributes follow, reusing these UIDs. The draft is
-a closed inventory: subsequent identity/environment entries must come from their
-respective draft lists, with no new objects or replacement UIDs. identity_relations
-can reference only draft identities; identity_background_relations can reference
-only a draft identity and draft environment. Relation descriptions cannot introduce
-undeclared objects either. Omit an attribute/relation needing an undeclared object.
-This is a prompt constraint, not a new Python rejection rule. The draft is an
-object inventory, not reasoning. Python unconditionally removes this draft before
-repair/validation and before assigning atom IDs; it never counts toward K or
-provenance. A missing draft is tolerated. Verifier pass 2 returns matches only. This is a nested
-protocol: dotted paths in the table describe nesting, never literal JSON keys.
-Unknown, absent, unclear or inapplicable fields/categories are omitted. Never emit
-null, empty strings, empty arrays or placeholder strings such as "unknown"/"None".
-An artifact without clear observations has `attributes: {}`.
+Python manifests, checkpoints, generator metadata and diagnostic logs may still
+use JSON on disk. These are application bookkeeping, never serialized attribute
+messages presented to a VLM. `graph.json` version 2 persists each pool pair as an
+artifact record with `description`, `artifact_id`, `kind`, `path`, and optional
+attempt/parent metadata. `parents` records generation inputs, not proven inheritance.
+Per-attempt `selection.txt`, `plan.txt`, `prompt.txt`, and `observation.txt` preserve
+the natural-language stages. Each text tool logs `input.txt`; observation tools
+also save `response.txt`. All tools share one Qwen instance in the pipeline; the
+Flux and VDNH3 adapters are also reused. Model sampling itself is not deterministic.
 
-Every object in a top-level list requires `uid` and `description`; relation objects
-also require `links`. Other fields are optional and included only when observed.
-Every uid is unique across the entire artifact, using letters, digits, underscores,
-dots or hyphens. Use meaningful local identifiers (for example `woman0_id`,
-`office0_env`, `shot0_vp`); no category suffix format is required. Do not prefix the
-artifact_id. All relation links resolve to existing objects in this artifact.
-Nested string properties have no individual uid or parent_id; nesting binds them
-to their identity/environment. Only relation objects have links. No time_range or
-other metadata fields belong in this JSON; express grounded timing/spatial scope
-in descriptions when useful. Never invent precise timestamps.
+## Usage and migration
 
-All strings except uid/link identifiers are concise natural-language descriptions
-(< 10 words each, prompt guidance only; no length enforcement). Change descriptions name states
-in natural language because states no longer have IDs. Global changes can mention
-existing environment/viewpoint UIDs in their descriptions; they have no links array.
+Root manifest paths resolve relative to the manifest. Each root has `artifact_id`
+(`artifact_0`, etc.), `kind` (`image` or `video`) and `path`. An optional plain-text
+`description` or `description_file` bypasses extraction. Do not provide both.
+Legacy `observation` JSON is rejected with migration instructions; remove it to
+re-extract the actual media. Old run checkpoints are not silently converted.
 
-**Need flow in time?** means temporal change is necessary to express the attribute.
-Optional means a relation may be static or evolve. A timestamp on a static state
-does not make it flow-dependent. Images cannot establish motion or changes.
-**Allow multiple?** follows the JSON type: lists allow multiple entries; strings
-allow one value per parent (or per artifact for top-level strings). Multiple visual
-qualities of a scalar field must be summarized together in its one description.
-
-### Structure
-
-```text
-attributes: {
-  identity: [{
-    uid: str,
-    description: str,
-    appearance: list[str],
-    body_pose: list[str],
-    expression: list[str],
-    appearance_change: str,
-    expression_change: str,
-    pose_change: str,
-    motion: list[str],
-  }],
-  identity_relations: [{
-    uid: str,
-    description: str,
-    links: list[str],
-  }],
-  environment: [{
-    uid: str,
-    description: str,
-    location: str,
-    season: str,
-    weather: str,
-    time_of_day: str,
-    lighting: str,
-    atmosphere: str,
-    motion: list[str],
-  }],
-  environment_change: str,
-  identity_background_relations: [{
-    uid: str,
-    description: str,
-    links: list[str],
-  }],
-  viewpoint: [{
-    uid: str,
-    description: str,
-  }],
-  viewpoint_change: str,
-  style: str,
-  visible_text: [{
-    uid: str,
-    description: str,
-  }],
-}
+```bash
+python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 \
+  --attempts 10 --sample 3 8 --parent-count 2 --p-video 0.5 --seed 0
 ```
 
-### Temporal and multiplicity rules
+`--keep` remains an alias for `--sample`, but now counts sampled lines, not retained
+atoms or dependency closure. `--add` / `--variate` are removed: the rewriter controls
+creative additions. `extract_attribute_nodes` remains an import/CLI alias for the
+new `extractor`, returning `str | None`. `imaginer`, nested schema validation,
+atomization, provenance matching and the two-pass verifier API have been replaced.
+The new verifier takes `generated_media` and `description` only.
 
-| Field path | Need flow in time? | Allow multiple? |
-|---|---|---|
-| identity | No | Yes |
-| identity.description | No | No |
-| identity.appearance | No | Yes |
-| identity.body_pose | No | Yes |
-| identity.expression | No | Yes |
-| identity.appearance_change | Yes | No |
-| identity.expression_change | Yes | No |
-| identity.pose_change | Yes | No |
-| identity.motion | Yes | Yes |
-| identity_relations | Optional | Yes |
-| identity_relations.description | Optional | No |
-| environment | No | Yes |
-| environment.description | No | No |
-| environment.location | No | No |
-| environment.season | No | No |
-| environment.weather | No | No |
-| environment.time_of_day | No | No |
-| environment.lighting | No | No |
-| environment.atmosphere | No | No |
-| environment.motion | Yes | Yes |
-| environment_change | Yes | No |
-| identity_background_relations | Optional | Yes |
-| identity_background_relations.description | Optional | No |
-| viewpoint | No | Yes |
-| viewpoint.description | No | No |
-| viewpoint_change | Yes | No |
-| style | No | No |
-| visible_text | No | Yes |
-| visible_text.description | No | No |
+## CPG attribute definitions
 
-### Scope and interpretation
+These concepts guide attention; they are not required fields or category headings.
+Use intuitive sentence grouping instead of forcing every concept into a response.
 
-- An identity is a perceptually coherent subject or meaningful object group.
-  Do not split every texture or part into an identity. Description gives the overall
-  identity/design; appearance covers clothing, color, material, shape and texture.
-  Body_pose describes configuration/orientation; expression describes a visible
-  facial/expressive state. Their lists may describe states at different times.
-- Appearance_change, expression_change and pose_change describe observed transitions
-  between the same identity's states, in order. Motion describes meaningful activity
-  (action) together with its visible trajectory, speed, rhythm, phases or deformation.
-  Interpret an action when the observed interaction supports it: for example,
-  "She hands a package through the service window, extending both arms." This is
-  more useful than only "Her arms move forward." Describe the action, its object/
-  target and relevant movement together; no separate action field is needed.
-  Do not infer hidden motives, an unseen recipient or events between sampled frames.
-  A still image supports a pose/contact state, not a completed handover. Emit change
-  fields only for actual observed changes, never merely "unchanged throughout".
-- An environment is a coherent physical, imagined or abstract setting, independent
-  of shot boundaries. Description summarizes it; location describes visible place
-  and layout. Season must be visibly supported; late afternoon is time_of_day.
-  Weather describes atmospheric phenomena; lighting describes illumination and
-  sources; atmosphere describes visible haze, openness or density. Do not infer
-  hidden places, seasons or weather. Abstract settings need not have these fields.
-  The old space_type, structure and mood fields are removed.
-- Environment motion describes changes within one setting (falling snow, drifting
-  mist, lights switching on). Environment_change is a single global account of
-  transitions between distinct environments. Multiple shots may share a setting.
-- Identity_relations connect exactly two distinct identities; describe spatial,
-  contact or interaction relations and preserve directional roles in description.
-  Identity_background_relations connect one identity then one environment (background
-  is an environment, not another object type). They describe placement, relative
-  scale, occlusion or negative space. Multiple relations may share endpoints.
-  Both kinds of relation can be static or temporal.
-- Viewpoint segmentation follows human perception of meaningful framing/viewing
-  stages, not a strict one-object-per-editing-shot rule. A continuous move from a
-  wide view to a close-up has two viewpoints when those stages are perceptually
-  distinct. Minor camera drift or every intermediate frame does not need a new
-  object. Each description includes framing scale and viewing direction relative
-  to the subject, plus relevant camera height/angle and composition. For example,
-  "A wide shot of the woman from behind." Distinguish front, rear, side/profile,
-  three-quarter and over-the-shoulder views when supported. Viewing direction is
-  not the subject's body_pose: a woman facing left may still be viewed from behind.
-  Do not invent an uncertain direction; retain the framing information that is clear.
+- **Identity:** a perceptually coherent subject or meaningful object group, not
+  every texture or part. **Appearance:** clothing, color, material, shape, texture.
+  **Body pose:** configuration and orientation. **Expression:** visible facial or
+  expressive state. Changes describe actual ordered transitions of the same subject.
+- **Motion:** meaningful activity with its target and visible trajectory, speed,
+  rhythm, phases or deformation. A supported handover is more useful than vague
+  limb movement. Do not infer hidden motives, unseen recipients or missing events.
+- **Identity relations:** spatial, contact or interaction relationships between
+  subjects, preserving participants and directional roles in the sentence.
+- **Environment:** a coherent physical, imagined or abstract setting, independent
+  of shot boundaries. Location means visible place/layout; season and time of day
+  require evidence. Weather is atmospheric phenomena; lighting is illumination and
+  its sources; atmosphere is visible haze, openness or density. Abstract settings
+  need not have weather or season. Do not infer hidden places or mood categories.
+- **Environment motion:** changes within a setting, such as drifting mist or lights
+  switching on. **Environment change:** transitions between distinct settings;
+  multiple shots can share one environment.
+- **Identity-background relations:** placement, relative scale, occlusion and
+  negative space between a subject and its setting.
+- **Viewpoint:** meaningful framing/viewing stages, including framing scale and
+  direction relative to the subject (front, rear, profile, three-quarter,
+  over-the-shoulder), plus relevant camera height, angle and composition. Viewing
+  direction differs from body pose. Retain clear framing when direction is unclear.
+- **Viewpoint change:** distinguish continuous push-in, pan or orbit from editing
+  cuts or dissolves. A continuous wide-to-close move has distinct framing stages
+  but remains one shot. Minor drift does not need a new stage. A return after a cut
+  is a new occurrence; preserve order without inventing unseen transitions.
+- **Style:** overall rendering medium and visual treatment. **Visible text:** only
+  legible words, with their presentation and placement, in the original language.
 
-  A cut creates a new occurrence even when returning to the same framing; keep
-  viewpoints in temporal order. Do not merge distinct occurrences by similarity.
-- Viewpoint_change connects the viewpoint UIDs in order and explicitly distinguishes
-  continuous transitions (push-in, pan, orbit, etc., without a cut) from editing
-  transitions (hard cut, dissolve, etc.). One continuous shot may contain multiple
-  viewpoints. There is no separate viewpoint_motion field. A continuous move that
-  does not create distinct stages can stay in one viewpoint description. Do not
-  invent cuts, frame-by-frame segmentation or unseen transitions in sampled video.
-  Viewpoint itself does not require time flow; image descriptions remain static.
-- Style is one artifact-wide rendering-medium/visual-treatment description.
-  Visible_text entries describe actually legible words plus presentation/placement;
-  they have only uid and description, without carrier links.
-
-Write only clearly observed, unambiguous information; omit anything uncertain.
-Keep observations grounded in the media. Video sampling does not justify inventing
-unseen events between frames. Unknowns are omitted, not inferred. This JSON is an
-observation representation, not proof of shared-attribute edges in a CPG.
-
-### Attribute matching across media
-
-Verifier pass 2 uses human-intuitive conceptual and visual equivalence within each
-attribute's described scope. Matching descriptions and supported visible traits
-count as the same attribute; exact pixels, whole-object identity and incidental
-details need not match. For example, large brown bears with shaggy fur can share
-that description despite different poses or backgrounds. Unclear or contradictory
-properties are not matched. Input media and atom IDs are temporarily relabeled
-by media order; Python restores returned IDs before provenance updates.
-
-### Conservative observation repair
-
-Models should still omit unknown/inapplicable values. Before accepting a fresh
-extractor or verifier-pass-1 observation, Python repairs harmless output issues
-in place: remove null/None and whole-string "none", "null", "unknown" (case
-insensitive), blank strings, empty containers and placeholder description-list
-items; trim description whitespace; wrap a scalar string in an expected string
-list or unwrap a single string in an expected scalar field. Never join multiple
-scalar alternatives, truncate descriptions or invent missing values.
-Objects missing required uid/description (or relation links) are omitted. Remove
-relations referencing explicitly removed objects, and omit a global environment/
-viewpoint timeline if its participating object category was pruned, rather than
-rewrite it speculatively. Identifiers/endpoints are not coerced or guessed.
-Unknown nonempty fields, wrong metadata, meaningful wrong types, duplicate UIDs,
-unexplained dangling links, wrong endpoint types and image temporal fields still
-fail validation. Invalid JSON syntax still fails; no speculative text repair.
-The strict validator stays non-mutating; only fresh model responses use the repair
-step before atom IDs/provenance are assigned. Verifier-pass-2 matches stay strict.
-Description length is prompt guidance, not a reason to truncate or discard evidence.
-
-### Viewpoint example: continuous movement followed by a cut
-
-A rear wide office view continuously pushes into a close-up of a woman's hands. A hard
-cut then reveals a courtyard. The first two viewpoints belong to the same uncut
-shot; the third starts after an edit. A useful representation is:
-
-```json
-{
-  "viewpoint": [
-    {"uid": "view0_vp", "description": "Wide shot of the woman from behind."},
-    {"uid": "view1_vp", "description": "Close-up of her hands from behind."},
-    {"uid": "view2_vp", "description": "Static high-angle wide view looking down into the courtyard."}
-  ],
-  "viewpoint_change": "Continuous push-in view0_vp→view1_vp; hard cut view1_vp→view2_vp."
-}
-```
-
-The scale change justifies two stages without implying a cut. A slow, slight drift
-that stays a medium view can remain one viewpoint with no viewpoint_change.
-Do not copy this example unless supported by the observed media.
-
-## Image/video selection
-
-Proposed `p_video = 0.5` for balanced experiments, `0.25` for cheap initial smoke
-runs. The image probability is `1 - p_video`. This is an experimental sampling
-choice, not an estimated optimal value. Record the RNG seed and actual generated
-counts. Small graphs need not exhibit the configured ratio exactly.
-
-Sample target modality BEFORE selecting its compatible attributes. For image
-outputs, sample frame-compatible properties from image and video artifacts. For
-video outputs, both static and temporal properties are eligible. Sampling arbitrary
-temporal attributes first and then forcing video would bias the requested ratio.
-Changing a temporal attribute into a snapshot is a deliberate projection that needs
-a new pose/state attribute; it is not preservation of the original motion.
-
-For image output, group compatible properties from the same video and ask
-`find_video_frame(video_path, description, qwen=shared_qwen)` for a frame satisfying
-all of them. On None, retry with another candidate attribute combination or skip
-the proposal; never silently use frame zero. Properties that occur at incompatible
-times need separate frames/reference roles, not an invented common frame.
-
-Export the selected PNG, retain the original artifact ID, frame index and timestamp
-in source metadata, and pass it with the other image references to Flux. These
-transport frames need not become standalone creative artifact nodes. For video
-output, pass source videos directly to VDNH3. Generated audio is not observed or
-asserted as a graph attribute in this phase.
-
-Prompts and frame-search execution records remain in runs, outside the formal CPG.
-No user dialogue, reasoning trace or global-constraint language is generated here.
+Images establish static states, not completed actions or motion. Video sampling
+cannot establish unseen events between frames. Audio is outside Qwen's observing
+scope. New H3 sound design is a generation choice, not a source observation.

@@ -11,16 +11,16 @@ from tools.find_video_frame import find_video_frame, frame_timestamps, parse_sel
 class FrameTests(unittest.TestCase):
     def test_invalid_model_answers_are_errors(self):
         for text in ('{"frame_id":true}', '{"frame_id":-1}', '{"frame_id":3}',
-                     '{"timestamp":1.2}', 'not found', '{"frame_id":1.0}'):
+                     '{"timestamp":1.2}', 'not found', '{"frame_id":1.0}', '1.0', '-1', '3', 'true'):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_selection(text, 3)
-        self.assertIsNone(parse_selection('{"frame_id":null}', 3))
+        self.assertIsNone(parse_selection('NOT_FOUND', 3))
 
     def test_invalid_video_locations(self):
-        for value in (True, -1, 100, float('nan'), float('inf'), '1.5'):
+        for value in (True, -1, 100, float('nan'), float('inf'), '1.5 seconds'):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                parse_location(json.dumps({'timestamp_seconds': value}), 2.0)
-        self.assertIsNone(parse_location('{"timestamp_seconds": null}', 2.0))
+                parse_location(str(value), 2.0)
+        self.assertIsNone(parse_location('NOT_FOUND', 2.0))
 
     def test_sampling_uses_real_vfr_timestamps(self):
         times=[0., .01, .04, .9, 1., 1.5, 3.]
@@ -44,13 +44,13 @@ class FrameTests(unittest.TestCase):
                     self.assertEqual(len(references), 1)
                     self.assertEqual(options['video_fps'], 2.0)
                     self.assertEqual(options['video_max_frames'], 4)
-                    return {'text': '{"timestamp_seconds":0.6}'}
+                    return {'text': '0.6'}
                 self.assertNotIn('source_frame_index', prompt)
                 self.assertNotIn('timestamp_seconds', prompt)
                 wanted=next(i for i, ref in enumerate(references)
                             if Path(ref.path).read_bytes() == expected.read_bytes())
                 self.assertTrue(all(Path(r.path).is_file() for r in references))
-                return {'text':json.dumps({'frame_id':wanted})}
+                return {'text':str(wanted)}
             qwen=Mock(side_effect=choose)
             export=root/'selected.png'
             result=find_video_frame(video,'A clear test pattern',qwen=qwen,
@@ -59,7 +59,7 @@ class FrameTests(unittest.TestCase):
             self.assertEqual(qwen.call_count,2)
             qwen.close.assert_not_called()
             self.assertEqual(export.read_bytes(),expected.read_bytes())
-            qwen.reset_mock(); qwen.side_effect=None; qwen.return_value={'text':'{"timestamp_seconds":null}'}
+            qwen.reset_mock(); qwen.side_effect=None; qwen.return_value={'text':'NOT_FOUND'}
             result=find_video_frame(video,'missing subject',qwen=qwen,
                 output_dir=root/'runs',frame_output=root/'missing.png')
             self.assertIsNone(result)

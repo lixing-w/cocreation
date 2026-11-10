@@ -1,10 +1,9 @@
-"""Small shared JSON transport for imaginer/verifier; inference errors propagate."""
-import json
+"""Plain-text transport for VLM tools; JSON is never an instruction/output contract."""
 from pathlib import Path
 import sys
-
 from cocreation import Qwen, Reference
-from tools.extract_attribute_nodes import _unique_object
+from cocreation.storage import scratch_root
+from tools._attribute_protocol import description_text
 
 
 def reference(value):
@@ -16,37 +15,45 @@ def reference(value):
     return ref
 
 
-def ask_json(system, payload, references, *, qwen=None, output_dir=None,
+def ask_text(system, task, references, *, qwen=None, output_dir=None,
              max_new_tokens=4096, seed=0, video_fps=2.0, video_max_frames=32,
-             max_pixels=512*512):
+             max_pixels=512*512, cache_name=None, use_system_cache=True):
+    if not isinstance(task, str) or '{{artifact:' in task:
+        raise ValueError('Task must be prose without artifact placeholders')
     refs = [reference(r) for r in references]
     if len({r.artifact_id for r in refs}) != len(refs):
         raise ValueError('Duplicate reference artifact IDs')
-    media = '\n'.join('{{artifact:'+r.artifact_id+'}}' for r in refs)
-    # Literal placeholder syntax in captions is data, not a new media binding.
-    data = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).replace('{{artifact:', '\\u007b\\u007bartifact:')
-    prompt = 'Media in order:\n'+(media or 'None')+'\nTask data:\n'+data
+    media = '\n'.join('{{artifact:' + r.artifact_id + '}}' for r in refs)
+    prompt = 'Observation media in order:\n' + (media or 'No reference media.') + '\nTask:\n' + task
+    if output_dir is not None:
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'input.txt').write_text(prompt, encoding='utf-8')
     owned = qwen is None
     model = Qwen(output_dir=output_dir) if owned else qwen
     try:
         response = model(prompt, refs, system_prompt=system, output_dir=output_dir,
-                         max_new_tokens=max_new_tokens, seed=seed, video_fps=video_fps,
-                         video_max_frames=video_max_frames, max_pixels=max_pixels)
+            system_cache_path=(scratch_root()/f'kvcache/{cache_name}/system_prompt.kvcache'
+                               if cache_name and use_system_cache else None),
+            max_new_tokens=max_new_tokens, seed=seed, video_fps=video_fps,
+            video_max_frames=video_max_frames, max_pixels=max_pixels)
     finally:
         if owned:
             model.close()
+    text = response.get('text') if isinstance(response, dict) else None
+    if output_dir is not None and isinstance(text, str):
+        (Path(output_dir) / 'response.txt').write_text(text, encoding='utf-8')
+    if not isinstance(text, str) or not text.strip():
+        print('VLM tool: missing response text', file=sys.stderr)
+        return None
+    return text.strip()
+
+
+def observation_result(text):
+    if text is None:
+        return None
     try:
-        text = response.get('text') if isinstance(response, dict) else None
-        if not isinstance(text, str):
-            raise ValueError('Missing response text')
-        text = text.strip()
-        if text.startswith('```json') and text.endswith('```'):
-            text = text[7:-3].strip()
-        elif text.startswith('```') and text.endswith('```'):
-            text = text[3:-3].strip()
-        def reject_constant(value):
-            raise ValueError('Non-finite JSON constant: '+value)
-        return json.loads(text, object_pairs_hook=_unique_object, parse_constant=reject_constant)
-    except (ValueError, TypeError, RecursionError) as error:
-        print(f'attribute tool: invalid JSON: {error}', file=sys.stderr)
+        return description_text(text)
+    except ValueError as error:
+        print(f'Observation rejected: {error}', file=sys.stderr)
         return None

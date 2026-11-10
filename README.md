@@ -207,51 +207,52 @@ python tools/find_video_frame.py scratch/data/samples/video.mp4 \
 
 stdout 仅输出一个秒数或 `null`。时间以视频第一个显示帧为零点；最终帧选择使用 ffprobe 的实际帧时间戳；官方粗定位使用帧索引/FPS 的时间编码，对可变帧率视频可能有近似误差。第一轮直接将视频传给官方 `qwen-vl-utils==0.0.14` 与 `Qwen3VLProcessor`，默认请求 2 fps、最多 24 帧（由官方按时间 patch 约束调整），让 Qwen 返回粗定位时间或 null。第二轮在粗定位附近按真实 PTS 抽出最多 17 张图，Qwen 选择候选 ID，程序映射为确定的原视频帧与时间戳。最终返回值不是第一轮模型估计的时间。`--video-fps`、`--coarse-frames`、`--refine-frames` 可配置预算。搜索范围有限，`null` 表示在检查的候选帧中未找到，不证明全片不存在。
 
-工具的 Python 返回值为 `float | None`；可选 `frame_output` 导出选中 PNG，默认不覆盖已有文件。详细来源、原视频帧序号、两轮候选及选中 PNG 保存在 `scratch/runs/find_video_frame/<id>/`；未找到时不导出图。推理失败、无效 JSON、非法候选编号会报错，不伪装成未找到。支持本地视频路径，不自动下载远程 URL。
+工具的 Python 返回值为 `float | None`；可选 `frame_output` 导出选中 PNG，默认不覆盖已有文件。详细来源、原视频帧序号、两轮候选及选中 PNG 保存在 `scratch/runs/find_video_frame/<id>/`；未找到时不导出图。推理失败、无效文本输出、非法候选编号会报错，不伪装成未找到。支持本地视频路径，不自动下载远程 URL。
 
-工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。CPG 属性与模态抽样的讨论稿见 [docs/cpg.md](docs/cpg.md)。
+工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。CPG 自然语言流程与属性定义见 [docs/cpg.md](docs/cpg.md)。
 
 
-### Extract visual attribute nodes
+### Natural-language CPG pipeline
 
-`Qwen(...)(prompt, references, system_prompt=None)` accepts a per-call system
-message. None preserves the user-only input; system messages are not retained
-between calls and do not affect model-weight reuse.
+CPG now uses a pool of `(description, artifact)` pairs. Descriptions are short
+natural-language sentences, one intuitive attribute per line. The pipeline is:
+`extractor → sample lines → attribute_rewriter → Flux/H3 prompter → generator → attribute_verifier → pool`.
+
+Extractor and verifier omit uncertain or nonessential observations. Rewriter
+corrects sampled descriptions and invents elegant, unexpected combinations, keeping
+`(from <Image N>)` / `(from <Video N>)` only for elements that remain fundamentally
+unchanged. Unused sources are removed and surviving labels renumbered together.
+Verifier inspects the actual generated result in one pass; no atom IDs, dependency
+closure or strict inheritance matching remain.
 
 ```python
 from cocreation import Qwen, Reference
-from tools.extract_attribute_nodes import extract_attribute_nodes
+from tools.extractor import extractor
 
 with Qwen() as qwen:
-    result = extract_attribute_nodes(
+    description = extractor(
         Reference("root_video", "scratch/data/samples/video.mp4", "video"), qwen=qwen)
 ```
 
-The tool accepts a Reference or `{artifact_id, path, kind}` mapping. A supplied
-Qwen remains open; an internally created Qwen is closed on every exit. It returns
-a Python dictionary (JSON object), or None for invalid model output. Missing files
-and inference errors raise. The CLI prints JSON/null:
+The result is `str | None`. All VLM task messages and replies are plain text,
+including both generation prompters and frame search. JSON remains only for local
+configuration, checkpoints, logs and low-level application transport.
+`extract_attribute_nodes` remains an alias returning the new text result.
 
 ```bash
 python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifact-id root_image --kind image
+python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 3 8 --attempts 10
 ```
 
-The prompt file contains a copied Definitions snapshot without the document's
-narrative examples, followed by two complete JSON examples. Only observed categories are emitted; unobserved categories are omitted.
-Observed entries require local IDs and text (at most 15 English whitespace-separated
-words). parent_id is required for dotted categories; links and time_range appear
-only when applicable. Null fields and empty arrays are rejected. An empty attributes
-object is valid when nothing is clear. Examples sent to Qwen use compact JSON. Arrays encode multiple parents even for per-parent single values.
-Validation checks schema, cardinality, reference types and image temporal exclusions;
-it cannot certify observational accuracy. Video extraction uses official sampled
-video input (default 2 fps, cap 32 frames), so brief events can be missed. No CPG
-storage is modified. The future orchestrator belongs in scripts/cpg/.
+See [pipeline, attribute definitions and migration](docs/cpg.md), and
+[prompter inputs and media mapping](docs/prompters.md). Old JSON observations must
+be re-extracted or replaced by supplied prose; `--add` / `--variate` are removed.
 
 
 ### Qwen system prefix cache
 
 The attribute extraction tool enables a dedicated cache by default:
-`scratch/kvcache/extract_attribute_nodes/system_prompt.kvcache` (under
+`scratch/kvcache/extractor/system_prompt.kvcache` (under
 `COCREATION_SCRATCH` when set). The file is created on first actual inference,
 not during construction or dry-run. To disable: `use_system_cache=False` or the
 extractor CLI's `--no-system-cache`.
@@ -296,17 +297,12 @@ length. The cache file and in-memory tensors still represent every system token.
 
 ### Generation prompt writers
 
-`tools/flux_prompter.py` and `tools/h3_prompter.py` use Qwen to write expert prompts
-from selected CPG attributes and original image/video references. New attributes may
-have no media source; every supplied reference must belong to an input attribute.
-Each tool embeds pinned official guides from `skills/` and has its own system KV
-cache. Both accept an optional shared Qwen instance and return `str | None`.
-See [input schema, usage, label mapping and generator input formats](docs/prompters.md).
+`tools/flux_prompter.py` and `tools/h3_prompter.py` accept rewritten prose and exactly
+its referenced media, returning direct expert text. Both retain their pinned guide
+material, source-label mapping, generator-format validation and optional shared
+Qwen lifecycle. See [usage and formats](docs/prompters.md).
 
-
-Attribute extraction logs default to `scratch/runs/extract_attribute_nodes/`, with
-one job subdirectory per call, including when a shared Qwen instance is supplied.
-`extract_attribute_nodes(..., output_dir=...)` overrides that root for the call.
-Qwen also accepts per-call `output_dir` without changing its instance default or
-reloading its model. Invalid extraction responses return `None` and print a diagnostic
-to stderr: JSON syntax locations, or schema field paths and failure reasons.
+Extractor logs default to `scratch/runs/extractor/`. Per-call `output_dir` overrides
+the log root without reloading the model. Observation tools save `input.txt` and
+`response.txt`; the pipeline saves each prose stage separately. Invalid model text
+returns `None` with diagnostics; missing files and inference failures raise.

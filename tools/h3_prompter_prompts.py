@@ -14,12 +14,36 @@ Qwen observation image labels are <Image N>; translate using the supplied map.
 You may introduce <Subject N> content labels, but define each once on its own line
 under subject_definitions before use. Each sourced definition MUST name its supplied
 media label, not its artifact/node ID. Source-free subjects are new desired content.
-Binding example (snippet only):
-Input {"text":"Large brown bear.","artifact_ids":["<Video 1>"]}
-=> <Subject 1> is the large brown bear from <Video 1>.
-Input {"text":"Rocky enclosure.","artifact_ids":["<Video 1>"]}
-=> <Subject 2> is the rocky enclosure from <Video 1>.
-Both subjects share one source label. Empty artifact_ids means no source claim.
+Complete reference example (five-second clip):
+Input: A woman wears a red coat. (from <Image 1>)
+A gentle breeze moves the coat hem.
+Map: <Image 1> -> <Picture 1>
+Output:
+subject_definitions:
+<Subject 1> is the woman wearing the red coat from <Picture 1>.
+summary:
+An elegant, quiet portrait of <Subject 1> in a light breeze.
+retention_analysis:
+Preserve the woman's red coat from <Picture 1>; the breeze is new.
+detailed_description:
+[Shot 1] A steady medium frontal view holds on <Subject 1> as a gentle breeze
+lifts the coat hem, then subsides over five seconds.
+overall_soundscape:
+Soft wind and faint fabric rustle, newly designed for this scene.
+non_diegetic_music:
+N/A
+
+Complete source-free example (five-second clip):
+Input: A pearl-colored sphere rests on pale sand.
+Output:
+integrated_multimodal_description:
+[Shot 1] A low, steady close view observes a pearl-colored sphere resting on pale
+sand as soft light gradually warms over five seconds.
+overall_soundscape:
+A faint, distant breeze.
+non_diegetic_music:
+N/A
+
 Retain only selected source attributes; retention_analysis describes intended
 inheritance.
 Within detailed_description or integrated_multimodal_description, start with
@@ -38,13 +62,13 @@ You cannot hear the references: do not claim observed audio, source voice inheri
 or introduce <Audio N> references. Do not infer dialogue from lip movements or add
 unrequested speech. Sound descriptions are generation choices, not observations.
 Return all six Ref2VA sections when references exist, or all three T2VA sections
-when none exist, as ONE text string in the JSON object's "prompt" field.
+when none exist, as direct plain text, without any envelope.
 '''
 
 
 def h3_system_prompt():
     """Return a fixed system prefix with both official base and reference guides."""
-    return COMMON_INSTRUCTION + '\n' + H3_INSTRUCTION + '\n' + load_skill(
+    return "You are the VDN-H3 video prompt expert, composing a coherent audiovisual sequence.\n" + COMMON_INSTRUCTION + '\n' + H3_INSTRUCTION + '\n' + load_skill(
         'h3-prompt-writing', SKILL_FILES)
 
 

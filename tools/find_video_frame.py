@@ -3,6 +3,7 @@ import argparse
 import bisect
 import json
 import math
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -62,32 +63,25 @@ def extract_frames(path, indices, directory):
     return files
 
 
-def parse_object(text, field):
-    text = text.strip()
-    if text.startswith('```json') and text.endswith('```'):
-        text = text[7:-3].strip()
-    elif text.startswith('```') and text.endswith('```'):
-        text = text[3:-3].strip()
-    result = json.loads(text)
-    if not isinstance(result, dict) or set(result) != {field}:
-        raise ValueError(f'Expected JSON with exactly {field}')
-    return result[field]
-
-
 def parse_selection(text, count):
-    value = parse_object(text, 'frame_id')
-    if value is not None and (type(value) is not int or not 0 <= value < count):
-        raise ValueError('Model returned an invalid candidate frame ID')
-    return value
+    text = text.strip()
+    if text == 'NOT_FOUND':
+        return None
+    if not re.fullmatch(r'0|[1-9]\d*', text) or not 0 <= int(text) < count:
+        raise ValueError('Expected a valid zero-based frame number or NOT_FOUND')
+    return int(text)
 
 
 def parse_location(text, last_timestamp):
-    value = parse_object(text, 'timestamp_seconds')
-    if value is not None and (type(value) not in (float, int) or not math.isfinite(value)
-                              or not 0 <= value <= last_timestamp + 0.1):
+    text = text.strip()
+    if text == 'NOT_FOUND':
+        return None
+    if not re.fullmatch(r'\d+(?:\.\d+)?', text):
+        raise ValueError('Expected seconds as a decimal number or NOT_FOUND')
+    value = float(text)
+    if not math.isfinite(value) or not 0 <= value <= last_timestamp + 0.1:
         raise ValueError('Model returned an invalid video timestamp')
-    # Official temporal labels are rounded to tenths; allow only that endpoint rounding.
-    return None if value is None else min(float(value), last_timestamp)
+    return min(value, last_timestamp)
 
 
 def find_video_frame(video_path, description, *, qwen=None, coarse_frames=24,
@@ -187,7 +181,8 @@ def main():
     parser.add_argument('--video-fps', type=float, default=2.0, help='Video FPS for coarse localization')
     parser.add_argument('--refine-frames', type=int, default=16, help='Number of frames to refine the search')
     args = parser.parse_args()
-    print(json.dumps(find_video_frame(**vars(args))))
+    result = find_video_frame(**vars(args))
+    print(result if result is not None else 'NOT_FOUND')
 
 
 if __name__ == '__main__':

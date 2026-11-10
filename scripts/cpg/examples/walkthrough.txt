@@ -1,0 +1,22 @@
+Fictional walkthrough: descriptions below are demonstrations, not model observations.
+
+Sampled description:
+White flowers fill a walled courtyard. (from <Image 1>)
+A ceramic cup has a red glaze. (from <Image 2>)
+The cup rests on a wooden table. (from <Image 2>)
+Soft morning light fills the courtyard. (from <Image 1>)
+
+Rewritten description sent to the prompter:
+A ceramic cup has a red glaze. (from <Image 1>)
+A single white flower rises from the cup like a delicate sail.
+The cup stands on pale stone in soft morning light.
+
+Attached sources: artifact_0
+
+Verifier description for artifact_2:
+A ceramic cup has a dark red glaze.
+A white flower rises from the cup.
+The cup stands on pale stone in soft morning light.
+
+Later sample, now referencing artifact_2 itself:
+A ceramic cup has a dark red glaze. (from <Image 1>)
