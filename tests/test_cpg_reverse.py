@@ -111,7 +111,7 @@ class LoopTests(unittest.TestCase):
             if system.startswith('You are the FLUX'):
                 from tools._attribute_protocol import SOURCE
                 labels=[]
-                for i,ref in enumerate(refs,1): labels.append(f'<Image {i}>')
+                labels=list(media_catalog(refs).values())
                 return {'text':'An elegant portrait '+('with a hat from '+' and '.join(labels) if labels else 'of a satin arch')+'.'}
             if system.startswith('You are the VDN'):
                 return {'text': 'subject_definitions:\nA hat from <Picture 1>.\nsummary:\nA hat floats.\n'
@@ -228,6 +228,12 @@ class LoopTests(unittest.TestCase):
         with patch.object(cpg,'find_video_frame',side_effect=frame): graph=self.run_loop()
         ref=self.flux.calls[0][0][1][0]
         self.assertEqual(ref.kind,'image')
+        raw=(self.root/'run/attempt_0000/prompt.txt').read_text()
+        final=(self.root/'run/attempt_0000/generation_prompt.txt').read_text()
+        self.assertIn('<Video 1>',raw)
+        self.assertNotIn('<Video 1>',final)
+        self.assertIn('<Image 1>',final)
+        self.assertEqual(self.flux.calls[0][0][0],final)
         self.assertEqual(ref.artifact_id,'artifact_0')
         self.assertEqual(graph['attempts'][0]['frames'][0]['timestamp_seconds'],0.4)
         self.assertEqual(graph['artifacts'][-1]['parents'],['artifact_0'])

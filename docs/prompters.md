@@ -27,19 +27,26 @@ renumbered by `prune_references` before these tools run. This can yield no refer
 
 ## Media mapping
 
-| Source order | Qwen observation / description | Flux output | H3 output |
+| Source order | Qwen observation / Flux prompter output | Python-prepared Flux input | H3 output |
 |---|---|---|---|
 | video coat | `<Video 1>` | `<Image 1>` | `<Video 1>` |
 | image garden | `<Image 1>` | `<Image 2>` | `<Picture 1>` |
 
-The plain-text user prompt places observation media first, then explains the map
-and includes the unchanged rewritten description. This prevents accidental first
-insertion of media at a generator-label mention. Flux uses at most four references;
+The plain-text Flux user prompt places observation media first and includes the
+unchanged rewritten description. It does not expose a generator-label map. The
+VLM must copy `<Video N>` / `<Image N>` source labels exactly, without renumbering
+or adding ordinal aliases. The H3 prompt continues to explain its own label map. Flux uses at most four references;
 H3 uses at most 32. Unsupported, unused or invented references are rejected.
 
-Flux receives one compact still-image prompt, up to 200 words, with explicit
-`<Image N>` source bindings. The prompter observes original videos, but the caller
-must replace each video slot with a matching still image before calling Flux.
+Flux prompter returns one compact still-image prompt, up to 200 words, with
+original `<Video N>` / `<Image N>` bindings. It observes original videos. The
+caller replaces each video slot with a matching still, then calls
+`flux_generation_prompt(prompt, original_references, generation_references)` from
+`tools.flux_prompter` immediately before Flux generation. This Python helper
+checks artifact order and all-image inputs, then simultaneously maps the original
+labels to `<Image N>` slots across both source kinds. It never calls a VLM.
+For `[video, image]`, `<Video 1>` becomes `<Image 1>` and original `<Image 1>`
+becomes `<Image 2>` in one pass, avoiding cascading replacement collisions.
 If no single frame matches the referenced properties, skip the proposal. Flux
 receives its prompt and ordered reference images separately, as before.
 
@@ -75,4 +82,8 @@ python tools/h3_prompter.py task.json --seconds 5
 The local task manifest has `attributes` (a prose string), optional `references`
 (artifact_id/path/kind records), and optional `user_prompt`. Paths resolve relative
 to the manifest. This configuration file is parsed by Python; it is never sent as
-JSON to the VLM. CLI output is direct expert text or `CANNOT_FULFILL`.
+JSON to the VLM. CLI output is direct prompter text or `CANNOT_FULFILL`. Flux CLI output still uses
+original observation labels; callers must run the Python helper before generation.
+In pipeline logs, `prompt.txt` is the original prompter output and
+`generation_prompt.txt` is the final generator input. Both are also logged in
+`debug.log`; the individual files survive normal completion with `--no-cleanup`.

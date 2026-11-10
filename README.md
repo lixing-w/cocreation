@@ -316,3 +316,8 @@ the log root without reloading the model. Observation tools save `input.txt` and
 are retained after successful completion only with `--no-cleanup`; root logs and
 `debug.log` are always retained. Invalid model text
 returns `None` with diagnostics; missing files and inference failures raise.
+
+Flux prompter preserves original `<Video N>` / `<Image N>` labels. Python converts
+them to final Flux image slots only after frame selection and immediately before
+generation. See `flux_generation_prompt` in `tools/flux_prompter.py`; prompter CLI
+output also needs this conversion before use with the generator.

@@ -8,7 +8,7 @@ from cocreation import Reference
 from cocreation.references import prepare
 from cocreation.worker import qwen_messages
 from tools._prompter import prepare_inputs, parse_prompt
-from tools.flux_prompter import flux_prompter
+from tools.flux_prompter import flux_prompter, flux_generation_prompt
 from tools.h3_prompter import h3_prompter
 from tools.flux_prompter_prompts import flux_system_prompt
 from tools.h3_prompter_prompts import h3_system_prompt
@@ -33,7 +33,7 @@ overall_soundscape:
 N/A
 non_diegetic_music:
 N/A'''
-FLUX_PROMPT = 'A portrait with the red coat from <Image 1> (image 1), in the garden from <Image 2> (image 2), soft light.'
+FLUX_PROMPT = 'A portrait with the red coat from <Video 1>, in the garden from <Image 1>, soft light.'
 
 
 class Prompters(unittest.TestCase):
@@ -52,9 +52,14 @@ class Prompters(unittest.TestCase):
                 self.assertEqual(tool(self.description,self.refs,qwen=model,output_dir=self.root/target),prompt)
                 user, refs=model.call_args.args
                 self.assertIn(self.description, user)
-                self.assertIn('<Video 1> -> '+ ('<Image 1>' if target=='flux' else '<Video 1>'),user)
-                self.assertIn('<Image 1> -> '+ ('<Image 2>' if target=='flux' else '<Picture 1>'),user)
-                self.assertLess(user.index('{{artifact:video}}'), user.index('Reference mapping'))
+                if target == 'flux':
+                    self.assertNotIn(' -> ',user)
+                    self.assertNotIn('Reference mapping',user)
+                    self.assertNotIn('<Image 2>',user)
+                    self.assertIn('do not rename or renumber',user)
+                else:
+                    self.assertIn('<Video 1> -> <Video 1>',user)
+                    self.assertIn('<Image 1> -> <Picture 1>',user)
                 self.assertNotIn('"attributes"',user)
                 self.assertEqual(refs,self.refs)
                 self.assertTrue((self.root/target/'input.txt').is_file())
@@ -94,11 +99,28 @@ class Prompters(unittest.TestCase):
     def test_direct_prompt_validation(self):
         _,_,catalog=prepare_inputs(self.description,self.refs,'flux')
         for text in (json.dumps({'prompt':FLUX_PROMPT}), '```'+FLUX_PROMPT+'```',
-                     'CANNOT_FULFILL', FLUX_PROMPT.replace('<Image 2>','<Video 2>'),
+                     'CANNOT_FULFILL', FLUX_PROMPT.replace('<Video 1>','<Video 2>'),
                      'A coat from <Image 1>.', FLUX_PROMPT+' word'*201):
             with self.subTest(text=text):
                 self.assertIsNone(parse_prompt({'text':text},catalog,'flux'))
         self.assertEqual(parse_prompt({'text':FLUX_PROMPT},catalog,'flux'),FLUX_PROMPT)
+
+    def test_flux_label_conversion_is_simultaneous_and_checks_slots(self):
+        frame=self.root/'frame.png'; frame.touch()
+        images=[Reference('video',frame,'image'),self.refs[1]]
+        raw=FLUX_PROMPT+' Keep the coat from <Video 1>.'
+        self.assertEqual(flux_generation_prompt(raw,self.refs,images),
+            'A portrait with the red coat from <Image 1>, in the garden from <Image 2>, soft light. Keep the coat from <Image 1>.')
+        self.assertEqual(flux_generation_prompt('A pearl sphere.',[],[]),'A pearl sphere.')
+        with self.assertRaises(ValueError): flux_generation_prompt(raw,self.refs,list(reversed(images)))
+        with self.assertRaises(ValueError): flux_generation_prompt(raw,self.refs,self.refs)
+        with self.assertRaises(ValueError): flux_generation_prompt(raw+' <Video 9>',self.refs,images)
+        # Image-first order, two video slots and repeated mentions also stay distinct.
+        other=Reference('second_video',self.root/'video.mp4','video')
+        originals=[self.refs[1],self.refs[0],other]
+        images=[self.refs[1],Reference('video',frame,'image'),Reference('second_video',frame,'image')]
+        self.assertEqual(flux_generation_prompt('<Video 2> beside <Image 1> and <Video 1>.',originals,images),
+                         '<Image 3> beside <Image 1> and <Image 2>.')
 
     def test_h3_structure_shots_and_times_remain_validated(self):
         _,_,catalog=prepare_inputs(self.description,self.refs,'h3')
@@ -113,6 +135,8 @@ class Prompters(unittest.TestCase):
         self.assertEqual(parse_prompt({'text':BASE_PROMPT},[],'h3',5),BASE_PROMPT)
 
     def test_role_and_task_examples(self):
+        self.assertIn('<Video N> stays <Video N>',flux_system_prompt())
+        self.assertNotIn('never\n<Video N>',flux_system_prompt())
         for system in (flux_system_prompt(),h3_system_prompt()):
             self.assertTrue(system.startswith('You are '))
             self.assertIn('example',system.lower())

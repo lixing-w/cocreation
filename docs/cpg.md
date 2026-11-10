@@ -42,7 +42,10 @@ artifacts remain two separate observations.
 5. Drop media no longer mentioned and simultaneously renumber surviving labels.
    Send this rewritten description and exactly its referenced media to the
    appropriate generation prompter: **flux_prompter** for images or **h3_prompter**
-   for videos. Both consume prose and return the finished expert prompt directly.
+   for videos. Both consume prose and return prompt text directly. Flux prompter preserves
+   all original `<Video N>` / `<Image N>` labels. After frame selection, Python
+   converts those labels simultaneously to final `<Image N>` slots immediately
+   before generation; no label conversion is delegated to the Flux VLM.
 6. Call Flux or VDNH3. Move each returned media file immediately to
    `generated/artifact_N.<extension>` and use that permanent path thereafter.
    Even outputs later rejected by verifier remain here, with a `generated_media`
@@ -70,7 +73,9 @@ messages presented to a VLM. `graph.json` version 2 persists each pool pair as a
 artifact record with `description`, `artifact_id`, `kind`, `path`, and optional
 attempt/parent metadata. `parents` records generation inputs, not proven inheritance.
 With `--no-cleanup`, per-attempt `selection.txt`, `plan.txt`, `prompt.txt`, and
-`observation.txt` preserve the natural-language stages. By default, after all
+`observation.txt` preserve the natural-language stages. `generation_prompt.txt`
+records the final Python-prepared generator input; `prompt.txt` keeps the original
+VLM output. Both are also recorded in `debug.log`. By default, after all
 attempts finish and models close, intermediate `attempt_*`, `flux`, `vdn_h3` and
 `qwen` directories are removed. Always retain `debug.log`, `roots/`, `graph.json`
 and `generated/`. Root media are never moved or deleted. Interrupted/failed runs

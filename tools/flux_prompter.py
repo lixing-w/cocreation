@@ -6,6 +6,8 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cocreation import Qwen
 from tools._prompter import run_prompter
+from tools._attribute_protocol import media_catalog, MEDIA_LABEL
+from tools._attribute_vlm import reference
 from tools.flux_prompter_prompts import flux_system_prompt, flux_user_prompt
 
 
@@ -29,14 +31,38 @@ def flux_prompter(attributes, references=None, user_prompt='', *, qwen=None,
 
     Rejected model outputs print a precise diagnostic and raw text to stderr;
     output_dir also receives diagnostics.jsonl. Input/operational errors raise. No generation or frame extraction happens here.
-    Output <Image N> addresses reference slot N across BOTH source kinds: replace
-    each video with one matching image before calling Flux, preserving all slots.
+    Output preserves original <Video N> and <Image N> observation labels.
+    After replacing each video with a matching still, call flux_generation_prompt
+    to map those labels to Flux's image slots in Python, immediately before Flux.
     """
     return run_prompter('flux', attributes, references, user_prompt, qwen=qwen,
         factory=Qwen, system_builder=flux_system_prompt, user_builder=flux_user_prompt,
         output_dir=output_dir, use_system_cache=use_system_cache,
         max_new_tokens=max_new_tokens, video_fps=video_fps,
         video_max_frames=video_max_frames, max_pixels=max_pixels)
+
+
+def flux_generation_prompt(prompt, references, generation_references):
+    """Translate original labels simultaneously, after frame selection, without a VLM.
+
+    references is the original prompter input; generation_references is the same
+    ordered artifact list with video paths replaced by selected images. Never
+    derive source labels from that all-image list: mixed-kind numbering differs.
+    """
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError('Expected nonempty Flux prompter text')
+    refs = [reference(r) for r in references or []]
+    images = [reference(r) for r in generation_references or []]
+    if ([r.artifact_id for r in refs] != [r.artifact_id for r in images]
+            or any(r.kind != 'image' for r in images)):
+        raise ValueError('Flux images must preserve source order and contain no videos')
+    labels = media_catalog(refs)
+    mapping = {labels[r.artifact_id]: f'<Image {i}>' for i, r in enumerate(refs, 1)}
+    found = set(MEDIA_LABEL.findall(prompt))
+    if found != set(mapping):
+        raise ValueError('Prompt must use exactly the original source labels')
+    # One pass prevents <Video 1> -> <Image 1> -> <Image 2> cascading replacements.
+    return MEDIA_LABEL.sub(lambda match: mapping[match.group()], prompt)
 
 
 if __name__ == '__main__':

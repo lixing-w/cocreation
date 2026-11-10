@@ -84,3 +84,9 @@ with `--p-video 1`; nonzero samples use the configured video probability.
 One-source rewriter calls are deterministic passthroughs, with no VLM inference.
 Multiple sources only authorize minimal repair of strict contradictions; they do
 not authorize new elements or broad creative rewriting.
+
+Flux prompter copies source labels verbatim (`<Video N>` stays `<Video N>`).
+After video frame selection, Python's `flux_generation_prompt` simultaneously maps
+labels to the actual ordered Flux image slots. `prompt.txt` records original VLM
+output; `generation_prompt.txt` records the converted generator input, and both
+are logged in the permanently retained `debug.log`.

@@ -61,7 +61,7 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
                 'Expected direct prompt text, not JSON or a quoted string')
         require(not any(token in prompt for token in ('```', '{{artifact:', '<|')),
                 'forbidden_markup', 'Prompt contains code fences, unresolved artifact placeholders or model tokens')
-        expected = {row['generator_label'] for row in catalog}
+        expected = {row['observation_label' if target == 'flux' else 'generator_label'] for row in catalog}
         subjects, found = set(), set()
         for match in LABEL.finditer(prompt):
             label = match.group()
@@ -112,7 +112,7 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
         return prompt
     except (PromptValidationError, ValueError, TypeError, KeyError, RecursionError) as error:
         diagnostic = dict(tool=target+'_prompter', code=getattr(error, 'code', 'invalid_response'),
-            message=str(error), expected_labels=[r['generator_label'] for r in catalog],
+            message=str(error), expected_labels=[r['observation_label' if target == 'flux' else 'generator_label'] for r in catalog],
             seconds=seconds, raw_text=raw)
         if isinstance(response, dict):
             for key in ('job_dir', 'request_path'):

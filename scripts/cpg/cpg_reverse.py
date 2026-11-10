@@ -17,7 +17,7 @@ from tools._attribute_protocol import (
     description_text, sample_count, sample_selection, prune_references, media_catalog, source_description)
 from tools.attribute_rewriter import attribute_rewriter
 from tools.attribute_verifier import attribute_verifier
-from tools.flux_prompter import flux_prompter
+from tools.flux_prompter import flux_prompter, flux_generation_prompt
 from tools.h3_prompter import h3_prompter
 from tools.find_video_frame import find_video_frame
 
@@ -251,10 +251,14 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                         log.update(status='skipped', stage=stage, reason='no jointly matching frame')
                         continue
                 stage = 'generation'
+                generation_prompt = (flux_generation_prompt(prompt, expert_refs, generation_refs)
+                                     if kind == 'image' else prompt)
+                (directory / 'generation_prompt.txt').write_text(generation_prompt, encoding='utf-8')
+                emit(f'Attempt {attempt} / generator prompt', generation_prompt)
                 generation_seed = rng.randrange(2**31)
                 log['generation_seed'] = generation_seed
-                result = (flux(prompt, generation_refs, seed=generation_seed) if kind == 'image' else
-                          vdn(prompt, generation_refs, seconds=seconds, seed=generation_seed))
+                result = (flux(generation_prompt, generation_refs, seed=generation_seed) if kind == 'image' else
+                          vdn(generation_prompt, generation_refs, seconds=seconds, seed=generation_seed))
                 if (not isinstance(result, dict) or not isinstance(result.get('path'), str)
                         or not Path(result['path']).is_file()):
                     log.update(status='skipped', stage=stage, reason='missing generated media')
