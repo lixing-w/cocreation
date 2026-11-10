@@ -19,7 +19,10 @@ Within detailed_description or integrated_multimodal_description, start with
 [Shot 1] without a timestamp. Subsequent cuts use [Shot N] At MM:SS.mmm,
 with consecutive shot numbers and strictly increasing cut times below duration.
 Plan a feasible visual timeline filling target_seconds. Use one shot unless more
-are needed by the requested attributes/brief. Describe within-shot viewpoint stages.
+are needed by the requested attributes/brief. Viewpoint objects are perceptually
+meaningful framing stages, not necessarily editing shots. A continuous wide-to-close
+viewpoint_change stays within one [Shot N]; add a new [Shot N] only for an actual
+requested edit/shot transition. Preserve continuous versus cut transition types.
 Design plausible NEW sound for the target scene: restrained ambience and physical
 sounds matching visible materials, actions and timing. Add subtle background music
 only when it suits the scene and brief; otherwise use N/A for music. Respect explicit

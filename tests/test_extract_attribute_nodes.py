@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from cocreation import Qwen, Reference
 from cocreation.worker import qwen_messages
-from tools.extract_attribute_nodes import extract_attribute_nodes, parse_attributes, validate_attributes
+from tools.extract_attribute_nodes import extract_attribute_nodes, parse_attributes, validate_attributes, repair_attributes
 from tools.extract_attribute_nodes_prompts import (
     VIDEO_EXAMPLE, IMAGE_EXAMPLE, DEFINITIONS, CATEGORY_RULES, extraction_system_prompt)
 
@@ -30,29 +30,18 @@ class ExtractionTests(unittest.TestCase):
     def test_invalid_contracts_return_none(self):
         mutations = [
             lambda d: d.update(artifact_id='wrong'),
-            lambda d: d['attributes'].update(unknown=[]),
-            lambda d: d['attributes'].update(style=None),
-            lambda d: d['attributes'].update(style=[]),
-            lambda d: d['attributes'].update(style='word '*16),
-            lambda d: d['attributes'].update(style='unknown'),
-            lambda d: d['attributes'].update(viewpoint_change=''),
             lambda d: d['attributes'].update({'identity.appearance': ['red']}),
-            lambda d: d['attributes']['identity'][0].update(appearance=[]),
             lambda d: d['attributes']['identity'][0].update(appearance=[{'description':'red'}]),
-            lambda d: d['attributes']['identity'][0].update(pose_change=None),
             lambda d: d['attributes']['identity'][0].update(parent_id='missing'),
             lambda d: d['attributes']['identity'][0].update(time_range=[0,2]),
             lambda d: d['attributes']['identity'][0].pop('uid'),
-            lambda d: d['attributes']['identity'][0].pop('description'),
             lambda d: d['attributes']['environment'][0].update(uid='woman0_id'),
-            lambda d: d['attributes']['environment'][0].update(weather=['snow']),
             lambda d: d['attributes']['environment'][0].update(space_type='indoor'),
             lambda d: d['attributes']['visible_text'][0].update(links=['woman0_id']),
             lambda d: d['attributes']['viewpoint'][0].update(viewpoint_motion='Pushes closer.'),
             lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id']*2),
             lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id','missing']),
             lambda d: d['attributes']['identity_relations'][0].update(links=['woman0_id']),
-            lambda d: d['attributes']['identity_relations'][0].pop('links'),
             lambda d: d['attributes']['identity_background_relations'][0].update(links=['office0_env','woman0_id']),
         ]
         for mutate in mutations:
@@ -117,7 +106,7 @@ class ExtractionTests(unittest.TestCase):
 
     def test_error_messages_identify_location(self):
         bad=copy.deepcopy(IMAGE_EXAMPLE)
-        bad['attributes']['identity'][0]['appearance']=[None]
+        bad['attributes']['identity'][0]['appearance']=[42]
         for value,expected in [(json.dumps(bad),"$.attributes['identity'][0].appearance[0]"),
                                ('{\n"x":}', 'line 2, column'),
                                ('{"x":1,"x":2}', "Duplicate JSON key 'x'"),
@@ -172,3 +161,99 @@ class ExtractionTests(unittest.TestCase):
             entry.pop('appearance')
         d['attributes'] = dict(reversed(list(d['attributes'].items())))
         self.assertIs(validate_attributes(d, 'example_image', 'image'), d)
+
+
+class RepairTests(unittest.TestCase):
+    def test_optional_placeholders_and_empty_items_repaired_in_place(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        attrs=value['attributes']
+        attrs.update(style=' UNKNOWN ', environment_change=None, unused=[], viewpoint_change='null')
+        subject=attrs['identity'][0]
+        subject.update(expression=['none',None,'  ',[],{}], appearance=[' Blue glaze. ',None,'NULL'])
+        subject['body_pose']='Upright.'
+        self.assertIs(repair_attributes(value),value)
+        self.assertEqual(subject['appearance'],['Blue glaze.'])
+        self.assertEqual(subject['body_pose'],['Upright.'])
+        self.assertNotIn('expression',subject)
+        for key in ('style','environment_change','unused','viewpoint_change'):
+            self.assertNotIn(key,attrs)
+        self.assertIs(validate_attributes(value,'example_image','image'),value)
+        snapshot=copy.deepcopy(value)
+        self.assertEqual(repair_attributes(value),snapshot)
+
+    def test_scalar_wrapping_and_long_descriptions_not_truncated(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        value['attributes']['environment'][0]['lighting']=[None,' Soft window light. ','unknown']
+        value['attributes']['style']=['  Watercolor. ']
+        value['attributes']['identity'][0]['description']='word '*30
+        result=parse_attributes(json.dumps(value),'example_image','image')
+        self.assertEqual(result['attributes']['style'],'Watercolor.')
+        self.assertEqual(result['attributes']['environment'][0]['lighting'],'Soft window light.')
+        self.assertEqual(len(result['attributes']['identity'][0]['description'].split()),30)
+
+    def test_missing_description_prunes_object_and_dependent_relations(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        removed=value['attributes']['identity'][0]['uid']
+        value['attributes']['identity'][0]['description']=None
+        result=parse_attributes(json.dumps(value),'example_image','image')
+        self.assertIsNotNone(result)
+        self.assertNotIn(removed,[e['uid'] for e in result['attributes']['identity']])
+        for category in ('identity_relations','identity_background_relations'):
+            self.assertTrue(all(removed not in e['links'] for e in result['attributes'].get(category,[])))
+
+    def test_placeholder_relation_endpoint_drops_whole_relation(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        value['attributes']['identity_relations'][0]['links'][1]='unknown'
+        result=parse_attributes(json.dumps(value),'example_image','image')
+        self.assertIsNotNone(result)
+        self.assertNotIn('identity_relations',result['attributes'])
+
+    def test_missing_links_removes_only_that_relation(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        value['attributes']['identity_relations'][0].pop('links')
+        result=parse_attributes(json.dumps(value),'example_image','image')
+        self.assertNotIn('identity_relations',result['attributes'])
+        self.assertEqual(result['attributes']['identity'],IMAGE_EXAMPLE['attributes']['identity'])
+        self.assertEqual(result['attributes']['identity_background_relations'],
+                         IMAGE_EXAMPLE['attributes']['identity_background_relations'])
+
+    def test_pruned_viewpoint_removes_timeline_without_inventing_transition(self):
+        value=copy.deepcopy(VIDEO_EXAMPLE)
+        value['attributes']['viewpoint'][1]['description']='None'
+        result=parse_attributes(json.dumps(value),'example_video','video')
+        self.assertEqual(len(result['attributes']['viewpoint']),2)
+        self.assertNotIn('viewpoint_change',result['attributes'])
+        value['attributes']['viewpoint']=[]
+        result=parse_attributes(json.dumps(value),'example_video','video')
+        self.assertNotIn('viewpoint_change',result['attributes'])
+
+    def test_no_guessing_metadata_unknown_fields_or_multiple_scalar_alternatives(self):
+        for mutate in (
+            lambda d:d.update(kind=None),
+            lambda d:d['attributes'].update(mystery='Visible feature.'),
+            lambda d:d['attributes']['environment'][0].update(lighting=['Warm.','Cold.']),
+            lambda d:d['attributes']['identity_relations'][0].update(links=['cup0_id','missing']),
+        ):
+            value=copy.deepcopy(IMAGE_EXAMPLE);mutate(value)
+            self.assertIsNone(parse_attributes(json.dumps(value),'example_image','image'))
+        self.assertEqual(parse_attributes('{"artifact_id":"empty","kind":"image","attributes":null}',
+                                         'empty','image')['attributes'],{})
+
+    def test_strict_validator_does_not_repair_existing_observations(self):
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        value['attributes']['style']=None
+        before=copy.deepcopy(value)
+        with self.assertRaises(ValueError): validate_attributes(value,'example_image','image')
+        self.assertEqual(value,before)
+
+    def test_viewpoint_examples_include_continuous_and_cut_transitions(self):
+        from tools.attribute_verifier_prompts import REVISE, INHERIT, VIEWPOINT_EXAMPLE
+        for example in (VIDEO_EXAMPLE['attributes'],VIEWPOINT_EXAMPLE):
+            self.assertEqual(len(example['viewpoint']),3)
+            self.assertIn('without cutting',example['viewpoint_change'])
+            self.assertIn('hard cut',example['viewpoint_change'])
+            for stage in example['viewpoint']:
+                self.assertIn(stage['uid'],example['viewpoint_change'])
+        for prompt in (extraction_system_prompt(),REVISE,INHERIT):
+            self.assertIn('view0_vp',prompt)
+            self.assertIn('view2_vp',prompt)

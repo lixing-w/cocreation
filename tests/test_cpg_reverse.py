@@ -251,6 +251,17 @@ class ToolTests(unittest.TestCase):
         self.assertIsNone(attribute_verifier(mode='revise_observation',generated_media=self.new,
                                              target_attributes=self.observed,qwen=model))
 
+    def test_verifier_revision_uses_same_conservative_repairs(self):
+        value=copy.deepcopy(self.observed)
+        value['attributes']['style']='unknown'
+        value['attributes']['identity'][0]['appearance']=['Violet glaze.',None]
+        model=Mock(return_value={'text':json.dumps(value)})
+        result=attribute_verifier(mode='revise_observation',generated_media=self.new,
+                                 target_attributes=self.observed,qwen=model)
+        self.assertNotIn('style',result['attributes'])
+        self.assertEqual(result['attributes']['identity'][0]['appearance'],['Violet glaze.'])
+        self.assertIn('style',self.observed['attributes'])
+
     def test_second_pass_only_selected_originals_and_empty_vs_null(self):
         selected=self.rows[:2]
         sources=[dict(reference=self.old,attributes=selected)]

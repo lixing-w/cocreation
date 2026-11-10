@@ -113,3 +113,11 @@ string contains six Ref2VA sections: `subject_definitions`, `summary`,
 `non_diegetic_music`. Without references, it contains three T2VA sections:
 `integrated_multimodal_description`, `overall_soundscape`, `non_diegetic_music`.
 The tool validates this envelope and returns the string itself.
+
+## Viewpoint stages versus editing shots
+
+A viewpoint is a perceptually meaningful framing stage. Continuous movement from a
+wide view into a close-up may yield two viewpoint objects, linked by a continuous
+viewpoint_change without a cut. Small drift need not split the stage. H3 must keep
+these stages within one [Shot N]; new shot headings represent actual editing/shot
+transitions. Preserve the transition type supplied by viewpoint_change.

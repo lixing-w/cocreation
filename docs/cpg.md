@@ -152,12 +152,20 @@ attributes: {
   is an environment, not another object type). They describe placement, relative
   scale, occlusion or negative space. Multiple relations may share endpoints.
   Both kinds of relation can be static or temporal.
-- Each shot has one viewpoint, even when its camera moves. Description includes
-  framing, viewing direction and all relevant stages of continuous camera movement.
-  There is no separate viewpoint_motion field. A cut creates a new viewpoint even
-  in the same environment. Viewpoint_change describes transitions between shots,
-  not camera movement within a shot. Viewpoint itself does not require time flow;
-  for images its description must remain static.
+- Viewpoint segmentation follows human perception of meaningful framing/viewing
+  stages, not a strict one-object-per-editing-shot rule. A continuous move from a
+  wide view to a close-up has two viewpoints when those stages are perceptually
+  distinct. Minor camera drift or every intermediate frame does not need a new
+  object. Each description summarizes that stage's scale, angle and composition.
+  A cut creates a new occurrence even when returning to the same framing; keep
+  viewpoints in temporal order. Do not merge distinct occurrences by similarity.
+- Viewpoint_change connects the viewpoint UIDs in order and explicitly distinguishes
+  continuous transitions (push-in, pan, orbit, etc., without a cut) from editing
+  transitions (hard cut, dissolve, etc.). One continuous shot may contain multiple
+  viewpoints. There is no separate viewpoint_motion field. A continuous move that
+  does not create distinct stages can stay in one viewpoint description. Do not
+  invent cuts, frame-by-frame segmentation or unseen transitions in sampled video.
+  Viewpoint itself does not require time flow; image descriptions remain static.
 - Style is one artifact-wide rendering-medium/visual-treatment description.
   Visible_text entries describe actually legible words plus presentation/placement;
   they have only uid and description, without carrier links.
@@ -165,6 +173,47 @@ attributes: {
 Keep observations grounded in the media. Video sampling does not justify inventing
 unseen events between frames. Unknowns are omitted, not inferred. This JSON is an
 observation representation, not proof of shared-attribute edges in a CPG.
+
+### Conservative observation repair
+
+Models should still omit unknown/inapplicable values. Before accepting a fresh
+extractor or verifier-pass-1 observation, Python repairs harmless output issues
+in place: remove null/None and whole-string "none", "null", "unknown" (case
+insensitive), blank strings, empty containers and placeholder description-list
+items; trim description whitespace; wrap a scalar string in an expected string
+list or unwrap a single string in an expected scalar field. Never join multiple
+scalar alternatives, truncate descriptions or invent missing values.
+Objects missing required uid/description (or relation links) are omitted. Remove
+relations referencing explicitly removed objects, and omit a global environment/
+viewpoint timeline if its participating object category was pruned, rather than
+rewrite it speculatively. Identifiers/endpoints are not coerced or guessed.
+Unknown nonempty fields, wrong metadata, meaningful wrong types, duplicate UIDs,
+unexplained dangling links, wrong endpoint types and image temporal fields still
+fail validation. Invalid JSON syntax still fails; no speculative text repair.
+The strict validator stays non-mutating; only fresh model responses use the repair
+step before atom IDs/provenance are assigned. Verifier-pass-2 matches stay strict.
+Description length is prompt guidance, not a reason to truncate or discard evidence.
+
+### Viewpoint example: continuous movement followed by a cut
+
+A wide office view continuously pushes into a close-up of a woman's face. A hard
+cut then reveals a courtyard. The first two viewpoints belong to the same uncut
+shot; the third starts after an edit. A useful representation is:
+
+```json
+{
+  "viewpoint": [
+    {"uid": "view0_vp", "description": "Wide office view with the woman beside a desk."},
+    {"uid": "view1_vp", "description": "Close-up of the woman's face after the continuous push-in."},
+    {"uid": "view2_vp", "description": "Static wide view of the courtyard."}
+  ],
+  "viewpoint_change": "Continuous push-in: view0_vp to view1_vp, without cutting; then hard cut to view2_vp."
+}
+```
+
+The scale change justifies two stages without implying a cut. A slow, slight drift
+that stays a medium view can remain one viewpoint with no viewpoint_change.
+Do not copy this example unless supported by the observed media.
 
 ## Image/video selection
 

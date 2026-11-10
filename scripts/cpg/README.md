@@ -49,7 +49,10 @@ attribute_verifier(mode="verify_inheritance", generated_media=new_ref,
 
 All tools accept optional observation/token budgets. They close only Qwen instances
 that they create. Invalid model JSON, unknown/duplicate IDs, unexpected edits,
-unsupported fields and invalid bindings return None. Operational/input errors
+unrecoverable unsupported fields and invalid bindings return None. Extractor and
+verifier pass 1 first repair harmless empty placeholders and scalar/list wrapping;
+missing required objects and their dependent relations are omitted. Strict validators
+and verifier pass 2 do not mutate existing observations or guess bindings. Operational/input errors
 raise: missing files, inference failures and programming bugs are not disguised
 as a creative failure. There are no internal retries.
 
@@ -63,8 +66,8 @@ contradictory combinations. V=0 makes no imaginer inference call.
 
 Pass 1 sees only new media and target JSON. It preserves supported wording/UIDs,
 corrects inaccurate observations, omits uncertain/absent fields, and adds salient
-observations. It does not write provenance. Its complete output is validated with
-the existing observation protocol. An empty observation is valid but will not be
+observations. It does not write provenance. Its complete output is conservatively cleaned in place, then validated with
+the existing observation protocol. No VLM retry is needed for harmless repairs. An empty observation is valid but will not be
 used as a future parent.
 
 Pass 2 sees new media, its revised observations, and **only selected original
@@ -106,6 +109,11 @@ previously unselected properties is implemented.
 9. Generate once, run verifier pass 1, then pass 2. Commit only after both succeed.
 10. Give each actual observed atom provenance and add the accepted media node to
     the candidate population for subsequent attempts.
+
+Viewpoints follow meaningful human-perceived framing stages: a continuous wide-to-close
+move may have two viewpoints connected by a continuous viewpoint_change. A cut is
+also a transition, but must be labeled distinctly. Minor drift does not force a split.
+H3 experts must not translate every viewpoint into a separate editing shot.
 
 Image selection excludes flow-required categories. Static descriptions from video
 can still describe incompatible times or include camera movement; the expert/frame

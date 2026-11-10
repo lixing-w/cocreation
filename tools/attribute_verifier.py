@@ -4,7 +4,7 @@ import sys
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.extract_attribute_nodes import validate_attributes
+from tools.extract_attribute_nodes import validate_attributes, repair_attributes
 from tools._attribute_protocol import atomize, compact_rows, validate_matches
 from tools._attribute_vlm import ask_json, reference
 
@@ -21,7 +21,8 @@ def attribute_verifier(*, mode, generated_media, target_attributes=None,
     verify_inheritance: generated_media + observed_attributes + selected_sources;
       each source is {reference: Reference, attributes: selected ORIGINAL atom records}.
     The second pass never edits observations or provenance. Input/operational errors
-    raise; malformed/unsupported VLM output returns None. No automatic retry.
+    raise; pass 1 repairs harmless omissions/wrapping before strict validation.
+    Unrecoverable output returns None; pass 2 matches stay strict. No automatic retry.
     """
     generated = reference(generated_media)
     options = dict(qwen=qwen, output_dir=output_dir, max_new_tokens=max_new_tokens,
@@ -34,7 +35,7 @@ def attribute_verifier(*, mode, generated_media, target_attributes=None,
         if result is None:
             return None
         try:
-            return validate_attributes(result, generated.artifact_id, generated.kind)
+            return validate_attributes(repair_attributes(result), generated.artifact_id, generated.kind)
         except (ValueError, TypeError, KeyError, RecursionError) as error:
             print(f'attribute_verifier revision: {error}', file=sys.stderr)
             return None

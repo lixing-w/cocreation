@@ -24,6 +24,115 @@ def _unique_object(pairs):
     return result
 
 
+
+def repair_attributes(result):
+    """Repair only unambiguous output-shape/omission issues, in place.
+
+    This is for fresh VLM observations, before validation/atom IDs/provenance.
+    Do not use it to silently mutate already indexed graph observations. Metadata,
+    meaningful unknown fields, duplicate UIDs and unexplained bad links remain for
+    strict validation. No observations, IDs, endpoint roles or timelines are invented.
+    """
+    def empty(value):
+        return (value is None or value == [] or value == {} or
+                isinstance(value, str) and value.strip().lower() in ('', 'none', 'null', 'unknown'))
+
+    if not isinstance(result, dict):
+        return result
+    for key in list(result):
+        if key not in ('artifact_id', 'kind', 'attributes') and empty(result[key]):
+            del result[key]
+    if 'attributes' in result and empty(result['attributes']):
+        result['attributes'] = {}
+    attrs = result.get('attributes')
+    if not isinstance(attrs, dict):
+        return result
+    removed_uids, removed_categories = set(), set()
+    for category in list(attrs):
+        value = attrs[category]
+        if empty(value):
+            removed_categories.add(category)
+            del attrs[category]
+            continue
+        if category not in TOP_LEVEL_CATEGORIES:
+            continue
+        if category not in OBJECT_FIELDS:
+            if isinstance(value, list):
+                value[:] = [item for item in value if not empty(item)]
+                if not value:
+                    del attrs[category]
+                    continue
+                if len(value) == 1 and isinstance(value[0], str):
+                    value = attrs[category] = value[0]
+            if isinstance(value, str):
+                attrs[category] = value.strip()
+            continue
+        if not isinstance(value, list):
+            continue
+        kept = []
+        for entry in value:
+            if empty(entry):
+                continue
+            if not isinstance(entry, dict):
+                kept.append(entry)  # Nontrivial wrong type: validator rejects.
+                continue
+            original_uid = entry.get('uid')
+            for field in list(entry):
+                item = entry[field]
+                if empty(item):
+                    del entry[field]
+                    continue
+                expected = OBJECT_FIELDS[category].get(field)
+                if field in ('uid', 'links') or expected is None:
+                    continue  # Never rewrite identifiers or repair endpoint cardinality.
+                if isinstance(item, list):
+                    item[:] = [part for part in item if not empty(part)]
+                    if not item:
+                        del entry[field]
+                        continue
+                    if expected == 'str' and len(item) == 1 and isinstance(item[0], str):
+                        item = entry[field] = item[0]
+                if expected == 'list[str]' and isinstance(item, str):
+                    item = entry[field] = [item]
+                if isinstance(item, str):
+                    entry[field] = item.strip()
+                elif isinstance(item, list):
+                    item[:] = [part.strip() if isinstance(part, str) else part for part in item]
+            required = {'uid', 'description'}
+            if category in ('identity_relations', 'identity_background_relations'):
+                required.add('links')
+                # A placeholder endpoint makes the whole relation ungrounded.
+                if isinstance(entry.get('links'), list) and any(empty(link) for link in entry['links']):
+                    del entry['links']
+            if not required <= set(entry):
+                if isinstance(original_uid, str):
+                    removed_uids.add(original_uid)
+                removed_categories.add(category)
+                continue
+            kept.append(entry)
+        value[:] = kept
+        if not value:
+            removed_categories.add(category)
+            del attrs[category]
+    # Only cascade from nodes explicitly removed above. Never hide unexplained IDs.
+    retained_uids = {entry['uid'] for category, entries in attrs.items()
+                     if category in OBJECT_FIELDS and isinstance(entries, list)
+                     for entry in entries if isinstance(entry, dict) and isinstance(entry.get('uid'), str)}
+    removed_uids -= retained_uids
+    for category in ('identity_relations', 'identity_background_relations'):
+        entries = attrs.get(category)
+        if isinstance(entries, list):
+            entries[:] = [entry for entry in entries if not (isinstance(entry, dict)
+                and isinstance(entry.get('links'), list)
+                and any(isinstance(link, str) and link in removed_uids for link in entry['links']))]
+            if not entries:
+                del attrs[category]
+    for category, change in (('environment', 'environment_change'), ('viewpoint', 'viewpoint_change')):
+        if category in removed_categories:
+            attrs.pop(change, None)  # Cannot safely rewrite a partially deleted timeline.
+    return result
+
+
 def validate_attributes(result, artifact_id, kind):
     """Validate decoded result for source artifact_id/kind; raise path-specific errors.
 
@@ -42,7 +151,7 @@ def validate_attributes(result, artifact_id, kind):
     require(result['artifact_id'] == artifact_id, '$.artifact_id', f'expected {artifact_id!r}')
     require(result['kind'] == kind, '$.kind', f'expected {kind!r}')
     def description(value, path):
-        require(isinstance(value, str), path, 'expected a string')
+        require(isinstance(value, str) and bool(value.strip()), path, 'expected a nonempty string')
         require(value.strip().lower() not in ('none', 'null', 'unknown'), path,
                 'omit unobserved fields instead of placeholder descriptions')
 
@@ -113,7 +222,8 @@ def validate_attributes(result, artifact_id, kind):
 def parse_attributes(text, artifact_id, kind):
     """Parse text for artifact_id/kind; report failures to stderr and return None.
 
-    Syntax errors include line/column; contract errors include a JSON field path.
+    Harmless omissions/wrapping errors are repaired in place before validation.
+    Syntax errors include line/column; remaining contract errors include a JSON field path.
     CLI stdout remains reserved for the resulting JSON/null.
     """
     try:
@@ -128,7 +238,7 @@ def parse_attributes(text, artifact_id, kind):
             raise ValueError(f'JSON contains non-finite number {value!r}')
         result = json.loads(text, object_pairs_hook=_unique_object,
                             parse_constant=invalid_constant)
-        return validate_attributes(result, artifact_id, kind)
+        return validate_attributes(repair_attributes(result), artifact_id, kind)
     except json.JSONDecodeError as error:
         print(f'extract_attribute_nodes [{artifact_id}] JSON syntax error at '
               f'line {error.lineno}, column {error.colno} (offset {error.pos}): {error.msg}',
@@ -142,7 +252,7 @@ def parse_attributes(text, artifact_id, kind):
 def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
                             max_new_tokens=8192, video_fps=2.0, video_max_frames=32,
                             max_pixels=512 * 512, use_system_cache=True):
-    """Return validated attribute JSON, or None for malformed/invalid model output.
+    """Return conservatively repaired, validated JSON; None for unrecoverable output.
 
     Args:
         artifact: Reference or mapping with artifact_id, path and kind (image/video).
