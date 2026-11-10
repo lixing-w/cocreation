@@ -32,7 +32,8 @@ def h3_prompter(attributes, references=None, user_prompt='', *, seconds=15.0,
 
     Pass the resulting text and SAME ordered references directly to VDNH3, using
     the same seconds. This tool observes visual content only, not video audio.
-    Input/inference failures raise; an owned instance is closed on every exit.
+    Rejected model outputs print diagnostics/raw text to stderr and, when output_dir
+    is set, diagnostics.jsonl. Input/inference failures raise; an owned instance is closed on every exit.
     """
     return run_prompter('h3', attributes, references, user_prompt, qwen=qwen,
         factory=Qwen, system_builder=h3_system_prompt, user_builder=h3_user_prompt,

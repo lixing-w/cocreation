@@ -54,17 +54,34 @@ class ProtocolTests(unittest.TestCase):
     def test_dependency_overshoot_returns_immediately(self):
         pool=atomize(observation())
         relation=next(r for r in pool if r['category']=='identity_background_relations')
-        class RelationFirst:
-            def __init__(self): self.calls=0
-            def sample(self, candidates, count):
-                self.calls+=1
-                return sorted(candidates, key=lambda r: r['id'] != relation['id'])
-        rng=RelationFirst()
-        selected=sample_selection(pool,2,'image',rng)
+        def relation_first(candidates, rng):
+            yield next(r for r in candidates if r['id']==relation['id'])
+            self.fail('Sampler should stop after the first dependency closure exceeds K')
+        with patch('tools._attribute_protocol.stratified_order', side_effect=relation_first) as order:
+            selected=sample_selection(pool,2,'image',random.Random(1))
         self.assertEqual(len(selected),3)  # relation + both endpoint descriptions
-        self.assertEqual(rng.calls,1)
+        order.assert_called_once()
         self.assertEqual({r['category'] for r in selected},
                          {'identity_background_relations','identity.description','environment.description'})
+
+    def test_category_balance_despite_large_identity_list_and_trace(self):
+        from collections import Counter
+        value=observation()
+        value['attributes'].pop('identity_background_relations')
+        value['attributes']['identity'][0]['appearance']=[f'Visible detail {i}.' for i in range(100)]
+        value['attributes']['viewpoint']=[{'uid':'view','description':'Wide frontal view.'}]
+        pool=atomize(value)
+        counts=Counter()
+        for seed in range(240):
+            trace=[]
+            selected=sample_selection(pool,1,'image',random.Random(seed),trace=trace)
+            self.assertEqual(len(trace),1)
+            counts[trace[0]['category'].split('.')[0]]+=1
+            self.assertEqual(set(trace[0]['added_ids']),{r['id'] for r in selected})
+            self.assertEqual(set(trace[0]['dependency_ids']),
+                             set(trace[0]['added_ids'])-{trace[0]['seed_atom_id']})
+        self.assertEqual(set(counts),{'identity','environment','style','viewpoint'})
+        self.assertTrue(all(30 <= count <= 90 for count in counts.values()),counts)
 
     def test_changes_and_image_eligibility(self):
         value = observation(kind='video')
@@ -360,6 +377,16 @@ class LoopTests(unittest.TestCase):
         self.assertIn('Red glaze.',output)
         self.assertEqual((self.base/'run/debug.log').read_text(),output)
         self.assertEqual(graph['attempts'][0]['status'],'accepted')
+
+    def test_prompter_diagnostic_copied_to_attempt_and_debug_log(self):
+        def decline(*args,**kwargs):
+            path=Path(kwargs['output_dir']);path.mkdir(parents=True)
+            (path/'diagnostics.jsonl').write_text(json.dumps({'code':'h3_sections','message':'Missing heading'})+'\n')
+            return None
+        self.flux_expert.side_effect=decline
+        graph=self.run_loop(attempts=1,debug=False)
+        self.assertEqual(graph['attempts'][0]['prompter_error']['code'],'h3_sections')
+        self.assertIn('Missing heading',(self.base/'run/debug.log').read_text())
 
     def test_quiet_keeps_debug_file_without_console_dumps(self):
         stream=io.StringIO()

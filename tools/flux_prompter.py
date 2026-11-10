@@ -28,7 +28,8 @@ def flux_prompter(attributes, references=None, user_prompt='', *, qwen=None,
         video_max_frames: Maximum sampled frames per source video.
         max_pixels: Observation image/frame pixel budget.
 
-    Input/operational errors raise. No generation or frame extraction happens here.
+    Rejected model outputs print a precise diagnostic and raw text to stderr;
+    output_dir also receives diagnostics.jsonl. Input/operational errors raise. No generation or frame extraction happens here.
     Output <Image N> addresses reference slot N across BOTH source kinds: replace
     each video with one matching image before calling Flux, preserving all slots.
     """

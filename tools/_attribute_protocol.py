@@ -159,14 +159,40 @@ def canonicalize_shared(pool):
     return result
 
 
-def sample_selection(pool, k, kind, rng, max_tries=128, *, parent_count=None):
-    """Bounded dependency-aware random sampling, not uniform over legal subsets.
+
+def stratified_order(candidates, rng):
+    """Random category rounds, then random owner, field and atom within each turn.
+
+    Large identity/appearance lists get no extra category turns. Preserve the
+    original observation order separately when assembling the selected subset.
+    """
+    groups = {}
+    for record in candidates:
+        groups.setdefault(record['category'].split('.')[0], []).append(record)
+    while groups:
+        for category in rng.sample(list(groups), len(groups)):
+            members = groups[category]
+            owners = list(dict.fromkeys(r.get('owner_uid', r['id']) for r in members))
+            owner = rng.choice(owners)
+            owned = [r for r in members if r.get('owner_uid', r['id']) == owner]
+            field = rng.choice(list(dict.fromkeys(r['category'] for r in owned)))
+            record = rng.choice([r for r in owned if r['category'] == field])
+            members.remove(record)
+            if not members:
+                del groups[category]
+            yield record
+
+
+def sample_selection(pool, k, kind, rng, max_tries=128, *, parent_count=None, trace=None):
+    """Category-balanced random sampling with dependencies; not uniform over subsets.
 
     At least K or None. Stop at the first legal closure reaching K; dependency
     atoms may take the total above K. Global scalar
     conflicts from different sources are rejected by assemble. Image sampling
     excludes flow-required fields, but semantic frame compatibility needs the VLM.
     """
+    if trace is not None:
+        trace.clear()
     if parent_count is not None and (type(parent_count) is not int or parent_count < 1):
         raise ValueError('parent_count must be a positive integer')
     limit = min(parent_count if parent_count is not None else 32, 4 if kind == 'image' else 32)
@@ -186,8 +212,10 @@ def sample_selection(pool, k, kind, rng, max_tries=128, *, parent_count=None):
         return all(closure(dep, found) for dep in sorted(deps[uid]))
     for _ in range(max_tries):
         chosen = set()
-        shuffled = rng.sample(candidates, len(candidates))
-        for record in shuffled:
+        trial_trace = []
+        for record in stratified_order(candidates, rng):
+            if record['id'] in chosen:
+                continue
             proposal = set(chosen)
             if not closure(record['id'], proposal):
                 continue
@@ -198,8 +226,15 @@ def sample_selection(pool, k, kind, rng, max_tries=128, *, parent_count=None):
                 assemble(rows, 'selection', kind)
             except ValueError:
                 continue
+            added = proposal - chosen
+            trial_trace.append(dict(seed_atom_id=record['id'], category=record['category'],
+                added_ids=[r['id'] for r in rows if r['id'] in added],
+                dependency_ids=[r['id'] for r in rows if r['id'] in added and r['id'] != record['id']],
+                total_after=len(proposal)))
             chosen = proposal
             if len(chosen) >= k:
+                if trace is not None:
+                    trace.extend(trial_trace)
                 return [{key: copy.deepcopy(value) for key, value in row.items()
                          if key != 'dependency_ids'} for row in rows]
     return None

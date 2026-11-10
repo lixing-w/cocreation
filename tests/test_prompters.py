@@ -1,5 +1,7 @@
 """Prompt writers: source/target mapping, strict outputs, lifecycle and skill snapshots."""
 import copy
+import io
+from contextlib import redirect_stderr
 import hashlib
 import json
 from pathlib import Path
@@ -166,3 +168,42 @@ class Prompters(unittest.TestCase):
         self.assertNotIn('Unless the brief explicitly requests new generated',prompt)
         self.assertIn('all six Ref2VA sections',prompt)
         self.assertIn('all three T2VA sections',prompt)
+
+
+class Diagnostics(unittest.TestCase):
+    def test_rejections_explain_specific_reason_and_preserve_raw_text(self):
+        h3=[{'generator_label':'<Video 1>'},{'generator_label':'<Picture 1>'}]
+        cases=[
+            ({'text':'broken'},[],'flux',None,'invalid_json'),
+            ({'text':json.dumps({'prompt':None,'reason':'Selected states contradict.'})},[], 'flux',None,'model_declined'),
+            (response(REF_PROMPT.replace('<Picture 1>','<Image 1>')),h3,'h3',5,'unexpected_label'),
+            (response(REF_PROMPT.replace('summary:','other:')),h3,'h3',5,'h3_sections'),
+            (response(REF_PROMPT.replace('00:02.000','00:06.000')),h3,'h3',5,'shot_timestamp_range'),
+            (response(' '.join(['word']*201)),[],'flux',None,'flux_word_limit'),
+            (response('No reference label.'),h3,'h3',5,'missing_labels'),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'diagnostics.jsonl'
+            for output,catalog,target,seconds,code in cases:
+                stream=io.StringIO()
+                with redirect_stderr(stream):
+                    self.assertIsNone(parse_prompt(output,catalog,target,seconds,diagnostic_path=path))
+                diagnostic=json.loads(path.read_text().splitlines()[-1])
+                self.assertEqual(diagnostic['code'],code)
+                self.assertEqual(diagnostic['raw_text'],output['text'])
+                self.assertIn(code,stream.getvalue())
+                if code=='model_declined':
+                    self.assertEqual(diagnostic['message'],'Selected states contradict.')
+            self.assertEqual(len(path.read_text().splitlines()),len(cases))
+
+    def test_shared_qwen_receives_output_dir_and_both_tools_persist_diagnostics(self):
+        attrs=[dict(id='new_style',category='style',text='Watercolor.')]
+        with tempfile.TemporaryDirectory() as tmp:
+            for name,tool in [('flux',flux_prompter),('h3',h3_prompter)]:
+                output=Path(tmp)/name
+                model=Mock(return_value=response(None))
+                with redirect_stderr(io.StringIO()):
+                    self.assertIsNone(tool(attrs,qwen=model,output_dir=output))
+                self.assertEqual(model.call_args.kwargs['output_dir'],output)
+                self.assertEqual(json.loads((output/'diagnostics.jsonl').read_text())['code'],'model_declined')
+                model.close.assert_not_called()

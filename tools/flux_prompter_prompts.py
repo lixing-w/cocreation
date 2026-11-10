@@ -15,7 +15,7 @@ cannot. Each video source will later be replaced by ONE matching still image in
 its same reference slot. Refer to that future image using generator_label, never
 <Video N> or <Picture N>. Describe only a state that one frame can show. Do not
 claim a frame has already been selected. If required video states are incompatible
-within one frame, or temporal change itself is required, return {"prompt":null}.
+within one frame, or temporal change itself is required, return {"prompt":null,"reason":"brief specific reason"}.
 For source-free new attributes, describe the desired property without claiming
 reference support. Do not select a different model or apply the guides' API advice.
 '''

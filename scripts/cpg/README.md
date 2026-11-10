@@ -92,7 +92,10 @@ previously unselected properties is implemented.
    description; relations require endpoint descriptions. Change fields conservatively
    require all corresponding source states and at least two states/environments/
    viewpoints. Single-valued global fields cannot be duplicated across parents.
-   The bounded randomized search is dependency-biased, **not uniform** over subsets.
+   Each sampling pass randomly rotates top-level categories; within each category,
+   randomly choose an owner, field and atom. This gives smaller categories turns
+   instead of letting long identity lists dominate. Dependencies still come along,
+   so selection is diversity/dependency-biased, **not uniform** over subsets.
    It may skip a feasible but hard-to-find combination after 128 cheap attempts.
 5. Pick V distinct selected atom IDs. If V exceeds the actual selected count, or
    no valid selection reaches K, skip. The log records requested `keep` and
@@ -298,3 +301,20 @@ This attempts three video generations with one varied attribute each and at most
 one parent per trial. Later trials may select accepted new nodes. Video-only
 output avoids video-to-image frame search for this initial smoke test. All three
 model objects are constructed once, but Flux is not invoked in this configuration.
+
+## Sampling trace and generation-expert diagnostics
+
+`selection.json` and console/debug logs include `sampling_trace`: the independently
+chosen seed atom, newly added atoms, dependency-only additions and running total.
+Returned atom lists stay in source/schema order for valid timelines; adjacent
+entries in that list do not imply adjacent random draws. A large required state
+bundle can still fill K in one draw. Sampling stops immediately at >=K and retains
+all parent-budget/schema constraints; the seeded sequence changes with this sampler.
+
+Both prompters now print rejection code, precise validation failure, expected media
+labels, raw model text and available request/job paths. Explicit model null is
+`model_declined`, distinct from malformed JSON, missing/wrong labels, missing/out-of-
+order H3 headings, subject definitions, shot numbering or invalid timestamps.
+A null may include a short `reason`; no reason is invented if the model omits it.
+Per-attempt `prompt_expert/diagnostics.jsonl` persists errors; the orchestrator also
+copies the latest diagnostic into debug.log and attempt.json. No automatic retries.

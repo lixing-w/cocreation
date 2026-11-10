@@ -155,7 +155,9 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 eligible = [r for r in canonicalize_shared(pool)
                             if kind != 'image' or CATEGORY_RULES[r['category']]['temporal'] != 'Yes']
                 emit(f'Attempt {attempt} / deduplicated modality-compatible candidate pool', eligible)
-                selected = sample_selection(pool, k, kind, rng, parent_count=parent_limit)
+                sampling_trace = []
+                selected = sample_selection(pool, k, kind, rng, parent_count=parent_limit, trace=sampling_trace)
+                emit(f'Attempt {attempt} / sampling trace (choices versus dependencies)', sampling_trace)
                 emit(f'Attempt {attempt} / actual selection',
                      {'minimum_K': k, 'actual_count': len(selected) if selected is not None else None,
                       'requested_V': v, 'atoms': selected})
@@ -169,7 +171,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 log.update(parent_limit=parent_limit, parent_count=len(used))
                 refs = [Reference(p['artifact_id'], p['path'], p['kind']) for p in parents
                         if p['artifact_id'] in used]
-                save(directory / 'selection.json', dict(selected=selected, vary_ids=vary_ids))
+                save(directory / 'selection.json', dict(selected=selected, vary_ids=vary_ids, sampling_trace=sampling_trace))
                 stage = 'imaginer'
                 emit(f'Attempt {attempt} / imaginer input',
                      {'vary_ids': vary_ids, 'references': media_rows(refs), 'kind': kind})
@@ -196,6 +198,11 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                           h3_prompter(rows, expert_refs, seconds=seconds, **options))
                 emit(f'Attempt {attempt} / generation expert result', prompt)
                 if prompt is None:
+                    diagnostics = directory / stage / 'diagnostics.jsonl'
+                    if diagnostics.is_file():
+                        detail = json.loads(diagnostics.read_text().splitlines()[-1])
+                        emit(f'Attempt {attempt} / generation expert rejection detail', detail)
+                        log['prompter_error'] = detail
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
                 save(directory / 'prompt.json', {'prompt': prompt})

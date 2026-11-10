@@ -3,6 +3,7 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 
 from cocreation import Reference
 from cocreation.storage import scratch_root
@@ -94,72 +95,108 @@ def _object(pairs):
     return result
 
 
-def parse_prompt(response, catalog, target, seconds=None):
-    """Return valid expert text or None; validate source labels and H3 structure."""
+class PromptValidationError(ValueError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=None):
+    """Return text/None; report the precise rejection and raw response on stderr.
+
+    Optional JSONL diagnostics are for one run/attempt, not model-generated data.
+    A model's explicit null is distinguished from malformed/invalid model output.
+    """
+    def require(condition, code, message):
+        if not condition:
+            raise PromptValidationError(code, message)
+
+    raw = response.get('text') if isinstance(response, dict) else None
     try:
-        text = response.get('text') if isinstance(response,dict) else None
-        if not isinstance(text,str):
-            return None
-        text = text.strip()
+        require(isinstance(raw, str), 'missing_text', 'Model response has no string text field')
+        text = raw.strip()
         if text.startswith('```json') and text.endswith('```'):
             text = text[7:-3].strip()
-        result = json.loads(text, object_pairs_hook=_object)
-        if not isinstance(result,dict) or set(result) != {'prompt'}:
-            return None
+        try:
+            result = json.loads(text, object_pairs_hook=_object)
+        except (ValueError, RecursionError) as error:
+            raise PromptValidationError('invalid_json', str(error)) from error
+        require(isinstance(result, dict), 'invalid_envelope', 'Expected a JSON object with prompt')
+        if result.get('prompt', 'missing') is None and set(result) <= {'prompt', 'reason'}:
+            reason = result.get('reason')
+            detail = reason if isinstance(reason, str) and reason.strip() else 'No reason supplied by model'
+            raise PromptValidationError('model_declined', detail)
+        require(set(result) == {'prompt'}, 'invalid_envelope',
+                f'Expected only prompt; received keys {sorted(result)}')
         prompt = result['prompt']
-        if not isinstance(prompt,str) or not prompt.strip():
-            return None
+        require(isinstance(prompt, str) and bool(prompt.strip()), 'empty_prompt', 'Expected nonempty prompt string')
         prompt = prompt.strip()
-        if '```' in prompt or '{{artifact:' in prompt or '<|' in prompt:
-            return None
+        require(not any(token in prompt for token in ('```', '{{artifact:', '<|')),
+                'forbidden_markup', 'Prompt contains code fences, unresolved artifact placeholders or model tokens')
         expected = {row['generator_label'] for row in catalog}
-        matches = list(LABEL.finditer(prompt))
-        subjects = set()
-        found = set()
-        for match in matches:
+        subjects, found = set(), set()
+        for match in LABEL.finditer(prompt):
             label = match.group()
             if re.fullmatch(r'<Subject [1-9]\d*>', label) and target == 'h3' and catalog:
                 subjects.add(label)
             elif label in expected:
                 found.add(label)
             else:
-                return None
-        if found != expected:
-            return None
+                raise PromptValidationError('unexpected_label',
+                    f'Unexpected label {label!r}; expected media labels {sorted(expected)}')
+        require(found == expected, 'missing_labels', f'Missing media labels: {sorted(expected - found)}')
         if target == 'flux':
-            return prompt if len(prompt.split()) <= 200 else None
+            require(len(prompt.split()) <= 200, 'flux_word_limit',
+                    f'Flux prompt has {len(prompt.split())} words; maximum is 200')
+            return prompt
         sections = REF_SECTIONS if catalog else BASE_SECTIONS
         headings = list(re.finditer(r'(?m)^('+'|'.join(REF_SECTIONS+BASE_SECTIONS)+r'):\s*', prompt))
-        if tuple(m[1] for m in headings) != sections or headings[0].start() != 0:
-            return None
+        actual = tuple(m[1] for m in headings)
+        require(actual == sections and bool(headings) and headings[0].start() == 0,
+                'h3_sections', f'Expected headings in order {sections}, starting at character 0; found {actual}')
         bodies = {m[1]:prompt[m.end():headings[i+1].start() if i+1<len(headings) else len(prompt)].strip()
                   for i,m in enumerate(headings)}
-        if not all(bodies.values()):
-            return None
+        require(all(bodies.values()), 'empty_sections',
+                f'Empty H3 sections: {[key for key, body in bodies.items() if not body]}')
         if subjects:
             defined = re.findall(r'(?m)^(<Subject [1-9]\d*>)\s+', bodies['subject_definitions'])
-            if set(defined) != subjects or len(defined) != len(subjects):
-                return None
+            require(set(defined) == subjects and len(defined) == len(subjects), 'subject_definitions',
+                    f'Each subject needs one own-line definition; used {sorted(subjects)}, defined {defined}')
         body = bodies['detailed_description' if catalog else 'integrated_multimodal_description']
         shots = list(re.finditer(r'\[Shot (\d+)\]',body))
-        if not shots or [int(m[1]) for m in shots] != list(range(1,len(shots)+1)):
-            return None
+        numbers = [int(m[1]) for m in shots]
+        require(bool(shots) and numbers == list(range(1,len(shots)+1)), 'shot_numbers',
+                f'Shots must start at 1 and be consecutive; found {numbers}')
         previous = 0.0
         for i,shot in enumerate(shots):
             suffix = body[shot.end():]
             if i == 0:
-                if re.match(r'\s+At\s+\d',suffix):
-                    return None
+                require(not re.match(r'\s+At\s+\d',suffix), 'first_shot_timestamp',
+                        '[Shot 1] must not have an At timestamp')
                 continue
             stamp = re.match(r' At (\d{2}):(\d{2})\.(\d{3}),',suffix)
-            if stamp is None or int(stamp[2]) >= 60:
-                return None
+            require(stamp is not None and int(stamp[2]) < 60, 'shot_timestamp_format',
+                    f'[Shot {i+1}] must be followed by At MM:SS.mmm,; got {suffix[:70]!r}')
             time = 60*int(stamp[1])+int(stamp[2])+int(stamp[3])/1000
-            if not previous < time < seconds:
-                return None
+            require(seconds is not None and previous < time < seconds, 'shot_timestamp_range',
+                    f'[Shot {i+1}] timestamp {time}s must be after {previous}s and before {seconds}s')
             previous = time
         return prompt
-    except (ValueError,TypeError,KeyError,RecursionError):
+    except (PromptValidationError, ValueError, TypeError, KeyError, RecursionError) as error:
+        diagnostic = dict(tool=target+'_prompter', code=getattr(error, 'code', 'invalid_response'),
+            message=str(error), expected_labels=[r['generator_label'] for r in catalog],
+            seconds=seconds, raw_text=raw)
+        if isinstance(response, dict):
+            for key in ('job_dir', 'request_path'):
+                if isinstance(response.get(key), str):
+                    diagnostic[key] = response[key]
+        print('['+target+'_prompter] rejected response:\n'+json.dumps(diagnostic, ensure_ascii=False, indent=2),
+              file=sys.stderr, flush=True)
+        if diagnostic_path is not None:
+            path = Path(diagnostic_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(diagnostic, ensure_ascii=False)+'\n')
         return None
 
 
@@ -185,8 +222,9 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
                          system_cache_path=(scratch_root()/f'kvcache/{target}_prompter/system_prompt.kvcache'
                                             if use_system_cache else None),
                          max_new_tokens=max_new_tokens, video_fps=video_fps,
-                         video_max_frames=video_max_frames, max_pixels=max_pixels)
-        return parse_prompt(response, catalog, target, seconds)
+                         video_max_frames=video_max_frames, max_pixels=max_pixels, output_dir=output_dir)
+        return parse_prompt(response, catalog, target, seconds,
+                            diagnostic_path=Path(output_dir)/'diagnostics.jsonl' if output_dir is not None else None)
     finally:
         if owned:
             model.close()

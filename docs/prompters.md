@@ -142,3 +142,9 @@ identity_relations/identity_background_relations endpoints must use draft-listed
 objects and UIDs only. No new objects, replacement UIDs or undeclared relation
 participants may appear after the draft. Omit attributes needing undeclared objects.
 This is a prompt instruction; draft removal and Python validation remain unchanged.
+
+On rejection, both tools print the exact validation failure and raw response to
+stderr. With output_dir, they also append diagnostics.jsonl. Explicit null replies
+may use {"prompt":null,"reason":"brief specific reason"}; successful replies still
+have only prompt. A model-declined request is distinguished from parser/format
+failures. The orchestrator includes these diagnostics in its attempt/debug records.
