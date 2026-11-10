@@ -73,30 +73,44 @@ def sample_count(bounds, rng):
     return rng.choices(counts, weights=range(len(counts), 0, -1), k=1)[0]
 
 
-def sample_selection(pool, k, rng, *, max_parents=2):
+def sample_selection(pool, k, rng, *, max_parents=2, seen_combinations=None, selected_lines=None):
     """Draw one proposal without replacement; reject invalid carrier counts.
 
     At most two lines may come from each actual artifact, regardless of its
     temporary media label. The orchestrator retries rejected draws within the
-    same attempt, including resampling K from its configured distribution.
+    same attempt, including resampling K from its configured distribution. Optional
+    seen_combinations reserves unordered (artifact_id, one-based line number) sets;
+    selected_lines records the successful draw for audit. Blank lines retain their
+    positions but are never candidates.
     """
     if type(k) is not int or k < 0 or type(max_parents) is not int or max_parents < 1:
         raise ValueError('k must be nonnegative and max_parents positive')
+    if selected_lines is not None:
+        selected_lines.clear()
+    # Empty selection creates a fresh identity; it is not a reused pool combination.
     if k == 0:
         return '', []
-    candidates = [(line, ref) for description, ref in pool
-                  for line in description_text(description).splitlines() if line]
+    candidates = [(line, ref, number) for description, ref in pool
+                  for number, line in enumerate(description_text(description).splitlines(), 1) if line]
     if k > len(candidates):
         return None
     chosen = rng.sample(candidates, k)
     refs, counts = [], {}
-    for _, ref in chosen:
+    for _, ref, _ in chosen:
         if ref.artifact_id not in counts:
             refs.append(ref)
             counts[ref.artifact_id] = 0
         counts[ref.artifact_id] += 1
         if counts[ref.artifact_id] > 2 or len(refs) > max_parents:
             return None
+    key = frozenset((ref.artifact_id, number) for _, ref, number in chosen)
+    if seen_combinations is not None:
+        if key in seen_combinations:
+            return None
+        seen_combinations.add(key)  # Reserve even if subsequent generation fails.
+    if selected_lines is not None:
+        selected_lines.extend(dict(artifact_id=ref.artifact_id, line_number=number)
+                              for _, ref, number in chosen)
     labels = media_catalog(refs)
     return '\n'.join(line + ' (from ' + labels[ref.artifact_id] + ')'
-                     for line, ref in chosen), refs
+                     for line, ref, _ in chosen), refs

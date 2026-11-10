@@ -20,6 +20,12 @@ artifacts remain two separate observations.
    both K and attributes; `--max-sampling-retries` defaults to 128 extra draws after
    the initial draw. Only exhausted retries skip the attempt. The probabilities above
    describe proposals; accepted counts are conditioned on feasible selections.
+   Every successful nonempty draw is reserved in a Python set using an unordered
+   combination of `(artifact_id, one-based description line number)`. Reordering
+   lines or changing temporary reference labels cannot bypass deduplication; identical
+   text at different line positions is still distinct. Previously used combinations
+   retry inside the same attempt, even when their earlier generation failed. Zero
+   draws are exempt because they sample no pool lines and invent fresh identities.
    Zero sampling succeeds even
    with an empty pool. Zero-attribute exploration always generates an **image first**;
    `--p-video` applies only to nonzero samples.
@@ -39,7 +45,11 @@ artifacts remain two separate observations.
      preserving as many attributes as possible. Do not add unrelated elements or
      restyle the scene. Compatible differences are not conflicts. Retained properties
      keep their source markers; changed values must not falsely claim source support.
-5. Drop media no longer mentioned and simultaneously renumber surviving labels.
+5. **Exactly one sampled line:** remove its source annotation after rewriter
+   passthrough and pass it as a fresh text-only requirement. Neither prompter nor
+   generator receives reference media or source labels, and no frame search is
+   needed. The original carrier/line number stays in the attempt audit only.
+   For multiple sampled lines, drop media no longer mentioned and simultaneously renumber surviving labels.
    Send this rewritten description and exactly its referenced media to the
    appropriate generation prompter: **flux_prompter** for images or **h3_prompter**
    for videos. Both consume prose and return prompt text directly. Flux prompter preserves
@@ -53,12 +63,15 @@ artifacts remain two separate observations.
    replaced by matching still frames before generation, without changing slots.
    Frame search consumes only the prose associated with that source; if no one
    frame satisfies it, skip the attempt. Never silently use frame zero.
-7. **attribute_verifier** sees only the generated artifact and the exact rewritten
-   description passed to the prompter. In one pass it corrects the description to
-   match actual output, removes unsupported details and all old-source markers,
-   and adds essential observed details. There is no inheritance-matching pass.
-8. Add `(verified description, generated artifact)` to the pool. Subsequent sampling
-   attributes every line to this new artifact, regardless of how it was created.
+7. **For every generated result**, run **attribute_verifier**, regardless of the
+   sampled count (zero, one or multiple lines). It sees only the new media and the
+   description sent to the prompter. Correct the description to match the result,
+   remove all old-source labels, and retain essential observed details.
+8. Add `(verified description, generated artifact)` to the pool, marked
+   `in_pool: true`. Do not compare or deduplicate new observations against old
+   attributes: identical wording on different artifacts remains separate evidence.
+   Every line in this new description belongs to the newly generated artifact only;
+   later samples bind it to that artifact, never to an earlier reference.
 
 All VLM task payloads and responses are plain text, including frame selection
 (decimal seconds / zero-based index, or `NOT_FOUND`). Every prompt begins with a
@@ -69,9 +82,11 @@ and propagate. There is no attempt to prove semantic fidelity with a text parser
 
 Python manifests, checkpoints, generator metadata and diagnostic logs may still
 use JSON on disk. These are application bookkeeping, never serialized attribute
-messages presented to a VLM. `graph.json` version 2 persists each pool pair as an
-artifact record with `description`, `artifact_id`, `kind`, `path`, and optional
-attempt/parent metadata. `parents` records generation inputs, not proven inheritance.
+messages presented to a VLM. `graph.json` version 2 records artifacts with `artifact_id`, `kind`, `path`,
+`in_pool` and optional attempt/parent metadata. Every successfully verified result has an observed `description` and joins the
+pool. Unverified outputs remain recorded in the attempt’s `generated_media` only.
+Attempts include `sampled_lines` (artifact ID and stable line number),
+`added_to_pool`, and whether verifier was requested/completed. `parents` records generation inputs, not proven inheritance.
 With `--no-cleanup`, per-attempt `selection.txt`, `plan.txt`, `prompt.txt`, and
 `observation.txt` preserve the natural-language stages. `generation_prompt.txt`
 records the final Python-prepared generator input; `prompt.txt` keeps the original

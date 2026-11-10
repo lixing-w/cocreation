@@ -4,8 +4,8 @@ This is the version 2 natural-language implementation. The pool contains
 `(description, artifact)` tuples. Extractor observes roots; sampled sentences are
 annotated with temporary media labels; attribute_rewriter preserves one-source attributes and minimally repairs only
 strict cross-source conflicts; zero samples create one new identity; the target Flux/H3 prompter writes direct expert text;
-the generator produces media; attribute_verifier revises the description against
-the actual result and adds the new pair to the pool.
+the generator produces media. All generated results run attribute_verifier
+and add a verified pair to the pool, regardless of sampled count.
 
 See [pipeline, preserved attribute definitions and migration](../../docs/cpg.md)
 and [prompter API and source mapping](../../docs/prompters.md).
@@ -90,3 +90,19 @@ After video frame selection, Python's `flux_generation_prompt` simultaneously ma
 labels to the actual ordered Flux image slots. `prompt.txt` records original VLM
 output; `generation_prompt.txt` records the converted generator input, and both
 are logged in the permanently retained `debug.log`.
+
+## Pool growth and unique sampling
+
+A run-local Python set reserves every nonempty `(artifact_id, line_number)`
+combination regardless of order, temporary labels or eventual generation success.
+Duplicates retry within the existing sampling retry budget. `sampled_lines` records
+these stable one-based positions in each successful draw. Zero draws are not
+reserved: they contain no sampled lines and create independent new identities.
+
+Exactly one sampled line is passed to prompter/generator as source-free text, with
+no reference annotations or media. Multiple lines keep the existing reference flow.
+All generated results (zero, one or multiple sampled lines) run verifier. Successful
+observations enter the pool with `in_pool: true`; overlapping or identical old
+attributes do not prevent insertion. Every new description belongs exclusively to
+the just-generated media. Later sampling references that new artifact, not its
+parents. Attempts record `added_to_pool` and verifier status.

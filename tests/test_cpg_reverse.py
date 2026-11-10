@@ -59,6 +59,32 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(len(used),2)
         self.assertGreater(accepted,0)
 
+    def test_line_combination_dedup_ignores_order_and_temporary_labels(self):
+        refs=[Reference('a','/a','image'),Reference('b','/b','image')]
+        pool=[('A hat.',refs[0]),('A chair.',refs[1])]
+        seen=set(); rows=[]
+        rng=Mock()
+        rng.sample.side_effect=lambda candidates,k:list(candidates)
+        self.assertIsNotNone(sample_selection(pool,2,rng,seen_combinations=seen,selected_lines=rows))
+        self.assertEqual(rows,[dict(artifact_id='a',line_number=1),dict(artifact_id='b',line_number=1)])
+        rng.sample.side_effect=lambda candidates,k:list(reversed(candidates))
+        self.assertIsNone(sample_selection(pool,2,rng,seen_combinations=seen,selected_lines=rows))
+        self.assertEqual(rows,[])
+        self.assertEqual(len(seen),1)
+
+    def test_same_text_on_different_lines_is_distinct_and_zero_is_repeatable(self):
+        ref=Reference('a','/a','image'); seen=set(); rows=[]
+        pool=[('A hat.\n\nA hat.',ref)]
+        rng=Mock(); rng.sample.side_effect=lambda candidates,k:candidates[:1]
+        self.assertIsNotNone(sample_selection(pool,1,rng,seen_combinations=seen,selected_lines=rows))
+        self.assertEqual(rows[0]['line_number'],1)
+        rng.sample.side_effect=lambda candidates,k:candidates[-1:]
+        self.assertIsNotNone(sample_selection(pool,1,rng,seen_combinations=seen,selected_lines=rows))
+        self.assertEqual(rows[0]['line_number'],3)
+        for _ in range(2):
+            self.assertEqual(sample_selection(pool,0,rng,seen_combinations=seen),('',[]))
+        self.assertEqual(len(seen),2)
+
     def test_pruning_renumbers_simultaneously_without_changing_carrier(self):
         refs=[Reference('a','/a','image'),Reference('v','/v','video'),
               Reference('b','/b','image'),Reference('c','/c','image')]
@@ -96,7 +122,7 @@ class LoopTests(unittest.TestCase):
         self.manifest=self.root/'roots.json'
         self.roots=[dict(artifact_id='artifact_0',kind='image',path='source.png')]
         self.manifest.write_text(json.dumps(self.roots))
-        self.rewrite='A sculptural hat. (from <Image 1>)\nA satin arch floats above pale sand.'
+        self.rewrite='A satin arch floats above pale sand.'
         self.verified='A black sculptural hat rests on pale sand.\nA satin arch floats overhead.'
         self.events=[]
         def respond(prompt,refs,**options):
@@ -114,6 +140,8 @@ class LoopTests(unittest.TestCase):
                 labels=list(media_catalog(refs).values())
                 return {'text':'An elegant portrait '+('with a hat '+' and '.join('like in '+label for label in labels) if labels else 'of a satin arch')+'.'}
             if system.startswith('You are the VDN'):
+                if not refs:
+                    return {'text':'integrated_multimodal_description:\n[Shot 1] A satin arch remains visible.\noverall_soundscape:\nN/A\nnon_diegetic_music:\nN/A'}
                 return {'text': 'subject_definitions:\nA hat like in <Picture 1>.\nsummary:\nA hat floats.\n'
                     'retention_analysis:\nPreserve the hat like in <Picture 1>.\ndetailed_description:\n'
                     '[Shot 1] A hat floats over sand.\noverall_soundscape:\nSoft wind.\nnon_diegetic_music:\nN/A'}
@@ -136,7 +164,7 @@ class LoopTests(unittest.TestCase):
             dict(attempts=1,keep=(1,1),p_video=0,seed=0,debug=False,cleanup=False),**kwargs))
 
     def test_real_tools_complete_loop_and_recycle_verified_artifact(self):
-        graph=self.run_loop(attempts=2)
+        graph=self.run_loop(attempts=2,keep=(0,0))
         self.assertEqual(graph['version'],2)
         self.assertEqual([a['status'] for a in graph['attempts']],['accepted','accepted'])
         self.assertEqual(len(graph['artifacts']),3)
@@ -168,6 +196,8 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(attempt['status'],'accepted')
         retained=attempt['sampled_parents'][1]
         self.assertEqual(graph['artifacts'][-1]['parents'],[retained])
+        self.assertTrue(graph['artifacts'][-1]['in_pool'])
+        self.assertTrue(any(e[0].startswith('You are attribute_verifier') for e in self.events))
         self.assertEqual(self.flux.calls[0][0][1][0].artifact_id,retained)
         for system,user,refs in self.events:
             if system.startswith(('You are the FLUX','You are attribute_verifier')):
@@ -204,7 +234,7 @@ class LoopTests(unittest.TestCase):
 
     def test_verification_failure_never_enters_pool(self):
         self.verified='A hat. (from <Image 1>)'
-        graph=self.run_loop()
+        graph=self.run_loop(keep=(1,1))
         self.assertEqual(len(graph['artifacts']),1)
         self.assertEqual(graph['attempts'][0]['stage'],'attribute_verifier')
 
@@ -222,10 +252,10 @@ class LoopTests(unittest.TestCase):
         self.manifest.write_text(json.dumps(self.roots))
         self.rewrite='A sculptural hat. (from <Video 1>)'
         def frame(path,description,**options):
-            self.assertIn(description,('A woman wears a sculptural hat.','The studio is white.'))
+            self.assertEqual(set(description.splitlines()),{'A woman wears a sculptural hat.','The studio is white.'})
             options['frame_output'].touch()
             return 0.4
-        with patch.object(cpg,'find_video_frame',side_effect=frame): graph=self.run_loop()
+        with patch.object(cpg,'find_video_frame',side_effect=frame): graph=self.run_loop(keep=(2,2))
         ref=self.flux.calls[0][0][1][0]
         self.assertEqual(ref.kind,'image')
         raw=(self.root/'run/attempt_0000/prompt.txt').read_text()
@@ -242,9 +272,86 @@ class LoopTests(unittest.TestCase):
         self.roots[0].update(kind='video',path='source.mp4')
         self.manifest.write_text(json.dumps(self.roots))
         self.rewrite='A sculptural hat. (from <Video 1>)'
-        with patch.object(cpg,'find_video_frame',return_value=None): graph=self.run_loop()
+        with patch.object(cpg,'find_video_frame',return_value=None): graph=self.run_loop(keep=(2,2))
         self.assertEqual(graph['attempts'][0]['stage'],'frame_search')
         self.assertEqual(len(self.flux.calls),0)
+
+    def test_single_attribute_is_text_only_then_verified_and_added_to_pool(self):
+        graph=self.run_loop(attempts=3,keep=(1,1),max_sampling_retries=8)
+        self.assertEqual([a['status'] for a in graph['attempts']],['accepted']*3)
+        self.assertEqual(len(graph['artifacts']),4)
+        self.assertEqual(sum(e[0].startswith('You are attribute_verifier') for e in self.events),3)
+        for index,attempt in enumerate(graph['attempts']):
+            self.assertEqual(attempt['references'],[])
+            self.assertTrue(attempt['added_to_pool'])
+            self.assertEqual(attempt['verifier'],'completed')
+            planned=(self.root/f'run/attempt_{index:04d}/plan.txt').read_text()
+            self.assertNotIn('(from',planned)
+            self.assertNotIn('<Image',planned)
+            self.assertEqual(self.flux.calls[index][0][1],[])
+        for system,user,refs in self.events:
+            if system.startswith('You are the FLUX'):
+                self.assertEqual(refs,[])
+                self.assertNotIn('(from',user)
+        keys=[frozenset((row['artifact_id'],row['line_number']) for row in a['sampled_lines'])
+              for a in graph['attempts']]
+        self.assertEqual(len(set(keys)),3)
+        self.assertTrue(all(n['in_pool'] and n['description']==self.verified for n in graph['artifacts'][1:]))
+
+    def test_overlapping_observations_bind_only_to_each_new_artifact(self):
+        # Exact same wording at each generation must still create independent pool entries.
+        text='A silver gown.\nThe fabric shines.'
+        self.roots[0]['description']=text
+        self.manifest.write_text(json.dumps(self.roots))
+        self.verified=text
+        candidate_pools=[]
+        original=cpg.sample_selection
+        def capture(pool,k,rng,**options):
+            candidate_pools.append(list(pool))
+            return original(pool,k,rng,**options)
+        with patch.object(cpg,'sample_selection',side_effect=capture):
+            graph=self.run_loop(attempts=2,keep=(2,2))
+        self.assertEqual(len(graph['artifacts']),3)
+        self.assertTrue(all(n['description']==text for n in graph['artifacts']))
+        second=next(pool for pool in candidate_pools if len(pool)==2)
+        self.assertEqual([ref.artifact_id for _,ref in second],['artifact_0','artifact_1'])
+        self.assertEqual(second[1][0],text)
+        self.assertEqual(str(second[1][1].path),graph['artifacts'][1]['path'])
+        for system,user,refs in self.events:
+            if system.startswith('You are attribute_verifier'):
+                self.assertEqual(len(refs),1)
+                self.assertIn(refs[0].artifact_id,('artifact_1','artifact_2'))
+                self.assertIn('/generated/',str(refs[0].path))
+        sampled,refs=sample_selection([second[1]],2,random.Random(0))
+        self.assertEqual([ref.artifact_id for ref in refs],['artifact_1'])
+        self.assertNotIn('artifact_0',sampled)
+
+    def test_seen_combination_reserved_even_when_generation_fails(self):
+        self.roots[0]['description']='A silver gown.'
+        self.manifest.write_text(json.dumps(self.roots))
+        with patch.object(cpg,'flux_prompter',return_value=None) as prompter:
+            graph=self.run_loop(attempts=2,keep=(1,1),max_sampling_retries=2)
+        self.assertEqual(prompter.call_count,1)
+        self.assertEqual(graph['attempts'][0]['stage'],'prompt_expert')
+        self.assertEqual(graph['attempts'][1]['stage'],'selection')
+        self.assertEqual(graph['attempts'][1]['selection_draws'],3)
+
+    def test_all_counts_grow_pool_and_supply_new_sampleable_lines(self):
+        # A zero draw adds an asset to the next candidate pool; a subsequent
+        # nonzero draw also verifies and grows the pool again.
+        self.roots[0]['description']='A root.'
+        self.manifest.write_text(json.dumps(self.roots))
+        observed_calls=[]
+        original=cpg.sample_selection
+        def select(pool,k,rng,**kw):
+            observed_calls.append([ref.artifact_id for _,ref in pool])
+            return original(pool,k,rng,**kw)
+        with patch.object(cpg,'sample_count',side_effect=[0,1]), patch.object(cpg,'sample_selection',side_effect=select):
+            graph=self.run_loop(attempts=2)
+        self.assertEqual(observed_calls,[['artifact_0'],['artifact_0','artifact_1']])
+        self.assertTrue(graph['artifacts'][1]['in_pool'])
+        self.assertTrue(graph['artifacts'][2]['in_pool'])
+        self.assertEqual(sum(e[0].startswith('You are attribute_verifier') for e in self.events),2)
 
     def test_reference_limit_redraws_inside_same_attempt(self):
         self.roots[0]['description']='A silver gown.\nThe fabric shines.\nThe hem curves.'
@@ -301,7 +408,7 @@ class LoopTests(unittest.TestCase):
 
     def test_rejected_verification_media_survives_cleanup(self):
         self.verified='NO_OBSERVATION'
-        graph=self.run_loop(cleanup=True)
+        graph=self.run_loop(cleanup=True,keep=(0,0))
         self.assertEqual(len(graph['artifacts']),1)
         self.assertEqual(graph['attempts'][0]['status'],'skipped')
         self.assertEqual(Path(graph['attempts'][0]['generated_media']['path']).read_bytes(),b'generated image')
@@ -309,7 +416,7 @@ class LoopTests(unittest.TestCase):
 
     def test_error_after_generation_preserves_media_and_diagnostics(self):
         with patch.object(cpg,'attribute_verifier',side_effect=RuntimeError('failed')):
-            with self.assertRaises(RuntimeError): self.run_loop(cleanup=True)
+            with self.assertRaises(RuntimeError): self.run_loop(cleanup=True,keep=(0,0))
         graph=json.loads((self.root/'run/graph.json').read_text())
         self.assertTrue(Path(graph['attempts'][0]['generated_media']['path']).is_file())
         self.assertTrue((self.root/'run/attempt_0000').is_dir())
@@ -322,7 +429,7 @@ class LoopTests(unittest.TestCase):
             options['frame_output'].touch()
             return .4
         with patch.object(cpg,'find_video_frame',side_effect=frame):
-            graph=self.run_loop(cleanup=True)
+            graph=self.run_loop(cleanup=True,keep=(2,2))
         record=graph['attempts'][0]['frames'][0]
         self.assertEqual(record['timestamp_seconds'],.4)
         self.assertNotIn('path',record)

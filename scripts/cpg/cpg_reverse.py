@@ -14,7 +14,7 @@ if __package__ in (None, ''):
 from cocreation import Qwen, Flux, VDNH3, VDNRuntime, Reference
 from tools.extractor import extractor
 from tools._attribute_protocol import (
-    description_text, sample_count, sample_selection, prune_references, media_catalog, source_description)
+    SOURCE, description_text, sample_count, sample_selection, prune_references, media_catalog, source_description)
 from tools.attribute_rewriter import attribute_rewriter
 from tools.attribute_verifier import attribute_verifier
 from tools.flux_prompter import flux_prompter, flux_generation_prompt
@@ -118,7 +118,10 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
     Zero attributes creates a new identity as an image first. Otherwise p_video
     selects modality and rewriter only minimally resolves cross-source conflicts. Models are
     shared for the run. Invalid tool outputs skip an attempt; operational errors
-    checkpoint and propagate. Only verified observations enter the pool. Generated
+    checkpoint and propagate. Every successful generation is verified and its observation enters the pool,
+    regardless of sampled count or overlap with existing descriptions. Each new
+    observation belongs only to its newly generated artifact. Single-line samples
+    still reach prompter/generator as source-free text. Nonempty line sets never repeat. Generated
     files move immediately into generated/ even when verification fails. Optional
     cleanup runs only after all attempts complete and model contexts close.
     """
@@ -154,11 +157,14 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
         max_parents=max_parents, p_video=p_video, seconds=seconds, brief=brief,
         sampling_weights=list(range(keep[1]-keep[0]+1, 0, -1)),
         zero_attribute_kind="image", max_attributes_per_reference=2,
-        max_sampling_retries=max_sampling_retries, cleanup=cleanup),
+        max_sampling_retries=max_sampling_retries, cleanup=cleanup,
+        unique_line_combinations=True, verify_zero_only=False),
         artifacts=[], attempts=[])
     # Runtime pool is literally a list of (description, artifact reference) tuples.
-    # graph.artifacts persists the same pairs plus attempt/parent bookkeeping.
+    # Every accepted artifact has its own observed description. Equal text from
+    # different artifacts remains separate evidence; never deduplicate observations.
     pool = []
+    seen_combinations = set()
     next_number = max(artifact_number(r['artifact_id']) for r in roots) + 1
     save(output / 'graph.json', graph)
     emit('Run configuration', graph['config'])
@@ -180,7 +186,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 observed = description_text(observed)
                 pool.append((observed, ref))
                 graph['artifacts'].append(dict(artifact_id=ref.artifact_id, kind=ref.kind,
-                    path=str(ref.path), description=observed, parents=[]))
+                    path=str(ref.path), description=observed, parents=[], in_pool=True))
             except Exception as error:
                 graph.setdefault('root_errors', []).append(dict(artifact_id=ref.artifact_id, reason=str(error)))
                 raise
@@ -194,21 +200,25 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
             stage = 'selection'
             try:
                 artifact_id = f'artifact_{next_number + attempt}'
+                selected_lines = []
                 for retry in range(max_sampling_retries + 1):
                     k = sample_count(keep, rng)
                     kind = 'image' if k == 0 else ('video' if rng.random() < p_video else 'image')
                     selected = sample_selection(pool, k, rng,
-                        max_parents=min(max_parents, 4 if kind == 'image' else 32))
+                        max_parents=min(max_parents, 4 if kind == 'image' else 32),
+                        seen_combinations=seen_combinations, selected_lines=selected_lines)
                     if selected is not None:
                         break
                 log.update(artifact_id=artifact_id, kind=kind, sampled_count=k,
                            selection_retries=retry, selection_draws=retry + 1,
-                           mode='new_identity' if k == 0 else 'reuse_attributes')
+                           mode='new_identity' if k == 0 else ('single_attribute' if k == 1 else 'reuse_attributes'),
+                           added_to_pool=False)
                 if selected is None:
                     log.update(status='skipped', stage=stage,
-                               reason='sampling retries exhausted: insufficient lines or reference limits')
+                               reason='sampling retries exhausted: repeated combinations, insufficient lines or reference limits')
                     continue
                 sampled, refs = selected
+                log['sampled_lines'] = selected_lines
                 log['sampled_parents'] = [r.artifact_id for r in refs]
                 (directory / 'selection.txt').write_text(sampled, encoding='utf-8')
                 emit(f'Attempt {attempt} / sampled description', sampled)
@@ -218,7 +228,11 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 if planned is None:
                     log.update(status='skipped', stage=stage, reason='invalid or unavailable rewrite')
                     continue
-                planned, expert_refs = prune_references(planned, refs)
+                if k == 1:
+                    # Treat this one property as a fresh text-only requirement.
+                    planned, expert_refs = SOURCE.sub('', planned).strip(), []
+                else:
+                    planned, expert_refs = prune_references(planned, refs)
                 (directory / 'plan.txt').write_text(planned, encoding='utf-8')
                 log['references'] = [dict(artifact_id=r.artifact_id, kind=r.kind,
                     path=str(r.path), label=media_catalog(expert_refs)[r.artifact_id]) for r in expert_refs]
@@ -284,8 +298,8 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 pool.append((observed, generated))
                 graph['artifacts'].append(dict(artifact_id=artifact_id, kind=kind,
                     path=str(generated.path), description=observed,
-                    parents=[r.artifact_id for r in expert_refs], attempt=attempt))
-                log.update(status='accepted', stage='complete')
+                    parents=[r.artifact_id for r in expert_refs], attempt=attempt, in_pool=True))
+                log.update(status='accepted', stage='complete', added_to_pool=True, verifier='completed')
             except Exception as error:
                 log.update(status='error', stage=stage, reason=f'{type(error).__name__}: {error}')
                 raise

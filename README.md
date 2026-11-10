@@ -245,6 +245,13 @@ python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifac
 python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 0 3 --attempts 10
 ```
 
+Nonempty selections are unique per run by their unordered source/line-number
+combination, including failed downstream attempts. Zero draws can repeat to invent
+new identities. Single-line selections become text-only generation requirements:
+no reference media or labels reach the prompter/generator. All generated results
+run verifier and, on success, enter the pool regardless of sampled count or text
+overlap. New observations bind only to the newly generated media, never old parents.
+
 Each reference contributes at most two sampled lines. Invalid draws retry inside
 the attempt (default `--max-sampling-retries 128`), redrawing the count and attributes.
 Generated media always move to `generated/artifact_N.png` or `.mp4`, including
