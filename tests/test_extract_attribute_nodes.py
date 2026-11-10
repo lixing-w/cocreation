@@ -250,10 +250,38 @@ class RepairTests(unittest.TestCase):
         from tools.attribute_verifier_prompts import REVISE, INHERIT, VIEWPOINT_EXAMPLE
         for example in (VIDEO_EXAMPLE['attributes'],VIEWPOINT_EXAMPLE):
             self.assertEqual(len(example['viewpoint']),3)
-            self.assertIn('without cutting',example['viewpoint_change'])
+            self.assertIn('Continuous push-in',example['viewpoint_change'])
             self.assertIn('hard cut',example['viewpoint_change'])
             for stage in example['viewpoint']:
                 self.assertIn(stage['uid'],example['viewpoint_change'])
         for prompt in (extraction_system_prompt(),REVISE,INHERIT):
             self.assertIn('view0_vp',prompt)
             self.assertIn('view2_vp',prompt)
+
+
+class DraftTests(unittest.TestCase):
+    def test_draft_removed_before_validation_and_not_promoted(self):
+        from tools.attribute_observation_prompts import DRAFT_KEY
+        value=copy.deepcopy(IMAGE_EXAMPLE)
+        value['attributes']={DRAFT_KEY:{'identity':[{'uid':'invented','description':'Unused draft object.'}]},
+                             **value['attributes']}
+        result=parse_attributes(json.dumps(value),'example_image','image')
+        self.assertEqual(result,IMAGE_EXAMPLE)
+        self.assertNotIn(DRAFT_KEY,result['attributes'])
+        for draft in (None,'freeform',[],{'arbitrary':'data'}):
+            value=copy.deepcopy(IMAGE_EXAMPLE)
+            value['attributes'][DRAFT_KEY]=draft
+            self.assertEqual(repair_attributes(value),IMAGE_EXAMPLE)
+
+    def test_prompt_examples_draft_first_and_short_descriptions(self):
+        from tools.attribute_observation_prompts import DRAFT_KEY, with_draft
+        for value in (IMAGE_EXAMPLE,VIDEO_EXAMPLE):
+            example=with_draft(value)
+            self.assertEqual(next(iter(example['attributes'])),DRAFT_KEY)
+            self.assertNotIn(DRAFT_KEY,value['attributes'])
+            self.assertEqual(repair_attributes(example),value)
+        prompt=extraction_system_prompt()
+        # Full human-facing documentation is intentionally not sent to the model.
+        self.assertNotIn('### Conservative observation repair',prompt)
+        self.assertIn('< 10 words',prompt)
+        self.assertIn(DRAFT_KEY,prompt)

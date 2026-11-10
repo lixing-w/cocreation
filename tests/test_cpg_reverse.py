@@ -262,6 +262,18 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result['attributes']['identity'][0]['appearance'],['Violet glaze.'])
         self.assertIn('style',self.observed['attributes'])
 
+    def test_verifier_discards_draft_and_imaginer_has_no_word_limit(self):
+        from tools.attribute_observation_prompts import DRAFT_KEY
+        value=copy.deepcopy(self.observed)
+        value['attributes']={DRAFT_KEY:{'identity':[], 'environment':[]}, **value['attributes']}
+        model=Mock(return_value={'text':json.dumps(value)})
+        result=attribute_verifier(mode='revise_observation',generated_media=self.new,
+                                 target_attributes=self.observed,qwen=model)
+        self.assertEqual(result,self.observed)
+        text='A deliberately lengthy desired description ' + 'detail '*25
+        result=apply_variations(self.rows,[{'id':self.rows[1]['id'],'text':text}], [self.rows[1]['id']])
+        self.assertEqual(result[1]['text'],text)
+
     def test_second_pass_only_selected_originals_and_empty_vs_null(self):
         selected=self.rows[:2]
         sources=[dict(reference=self.old,attributes=selected)]

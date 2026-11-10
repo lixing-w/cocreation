@@ -12,7 +12,14 @@ actual generated media. Audio is outside scope for the observing Qwen3-VL interf
 ### JSON contract
 
 The response has exactly `artifact_id`, `kind` (`image` or `video`), and `attributes`.
-`attributes` is a dictionary with only the nine keys listed below. This is a nested
+Persisted `attributes` is a dictionary with only the nine keys listed below.
+Extractor and verifier pass 1 first emit a temporary first key inside `attributes`:
+`"all identities and all environments draft"`, containing `identity` and
+`environment` lists of `{uid, description}` for all clearly observed major objects
+used in the response. Normal attributes follow, reusing these UIDs. This is an
+object inventory, not reasoning. Python unconditionally removes this draft before
+repair/validation and before assigning atom IDs; it never counts toward K or
+provenance. A missing draft is tolerated. Verifier pass 2 returns matches only. This is a nested
 protocol: dotted paths in the table describe nesting, never literal JSON keys.
 Unknown, absent, unclear or inapplicable fields/categories are omitted. Never emit
 null, empty strings, empty arrays or placeholder strings such as "unknown"/"None".
@@ -30,7 +37,7 @@ other metadata fields belong in this JSON; express grounded timing/spatial scope
 in descriptions when useful. Never invent precise timestamps.
 
 All strings except uid/link identifiers are concise natural-language descriptions
-(at most 15 whitespace-separated words each). Change descriptions name states
+(< 10 words each, prompt guidance only; no length enforcement). Change descriptions name states
 in natural language because states no longer have IDs. Global changes can mention
 existing environment/viewpoint UIDs in their descriptions; they have no links array.
 
@@ -182,6 +189,7 @@ attributes: {
   Visible_text entries describe actually legible words plus presentation/placement;
   they have only uid and description, without carrier links.
 
+Write only clearly observed, unambiguous information; omit anything uncertain.
 Keep observations grounded in the media. Video sampling does not justify inventing
 unseen events between frames. Unknowns are omitted, not inferred. This JSON is an
 observation representation, not proof of shared-attribute edges in a CPG.
@@ -215,11 +223,11 @@ shot; the third starts after an edit. A useful representation is:
 ```json
 {
   "viewpoint": [
-    {"uid": "view0_vp", "description": "A wide shot of the woman from behind, beside an office desk."},
-    {"uid": "view1_vp", "description": "Close-up of the woman's hands from behind after the continuous push-in."},
+    {"uid": "view0_vp", "description": "Wide shot of the woman from behind."},
+    {"uid": "view1_vp", "description": "Close-up of her hands from behind."},
     {"uid": "view2_vp", "description": "Static high-angle wide view looking down into the courtyard."}
   ],
-  "viewpoint_change": "Continuous push-in: view0_vp to view1_vp, without cutting; then hard cut to view2_vp."
+  "viewpoint_change": "Continuous push-in view0_vp→view1_vp; hard cut view1_vp→view2_vp."
 }
 ```
 

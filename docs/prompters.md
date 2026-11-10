@@ -128,3 +128,11 @@ body pose. Identity.motion includes interpretable actions with their visible mov
 e.g. "She hands a package through the service window, extending both arms." Action
 interpretation must be supported by the interaction, not guessed hidden intentions;
 no additional action field is introduced. Still images do not establish a handover.
+
+Attribute descriptions are prompted to stay < 10 words; Python does not enforce
+this length. Observations must be clearly visible and unambiguous; uncertainty
+means omission. Imaginer's creative changes are desired properties, not source
+observations. Extractor/verifier-pass-1 JSON starts attributes with a temporary
+"all identities and all environments draft" inventory. Python removes it before
+validation, atomization or provenance. Pass 2 remains match-only. Observation
+prompts use a compact shared contract/schema instead of the full CPG document.

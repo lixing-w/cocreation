@@ -225,9 +225,9 @@ def apply_variations(selected, edits, vary_ids):
         uid, text = edit['id'], edit['text']
         if not isinstance(uid, str) or uid not in vary_ids or uid in changes:
             raise ValueError('Unexpected/duplicate edit ID')
-        if (not isinstance(text, str) or not 0 < len(text.split()) <= 15 or
+        if (not isinstance(text, str) or not text.strip() or
                 text.strip().lower() in ('none', 'null', 'unknown')):
-            raise ValueError('Edited text must have 1–15 words')
+            raise ValueError('Edited text must be nonempty, not a placeholder')
         if ' '.join(text.lower().split()) == ' '.join(originals[uid]['text'].lower().split()):
             raise ValueError('No-op variation')
         changes[uid] = text

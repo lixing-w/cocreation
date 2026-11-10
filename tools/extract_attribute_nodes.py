@@ -9,6 +9,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cocreation import Qwen, Reference
 from cocreation.storage import scratch_root
+from tools.attribute_observation_prompts import DRAFT_KEY
 from tools.extract_attribute_nodes_prompts import (
     CATEGORY_RULES, OBJECT_FIELDS, TOP_LEVEL_CATEGORIES,
     extraction_prompt, extraction_system_prompt)
@@ -47,6 +48,7 @@ def repair_attributes(result):
     attrs = result.get('attributes')
     if not isinstance(attrs, dict):
         return result
+    attrs.pop(DRAFT_KEY, None)  # Generation scaffold, never observation/provenance.
     removed_uids, removed_categories = set(), set()
     for category in list(attrs):
         value = attrs[category]
