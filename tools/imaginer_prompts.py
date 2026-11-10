@@ -11,6 +11,8 @@ in its original language. For an image, describe static states only: no motion,
 camera movement, temporal change or invented history. Do not add properties that
 contradict fixed descriptions. If a coherent requested edit is impossible, return
 null. Otherwise return ONLY {"edits":[{"id":"requested ID","text":"new description"}]}.
+Viewpoint edits describe framing scale and viewing direction relative to the subject.
+Identity.motion edits describe the meaningful action and its visible movement.
 Include exactly one edit per requested ID; no other keys, explanation or new atoms.
 '''
 

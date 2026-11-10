@@ -27,6 +27,9 @@ code fences or alternate versions. Write the prompt in English, retaining exact
 requested visible text in its original language. Refer to EVERY supplied source
 using its generator_label; invent no source labels. References are numbered in
 input order. Media labels identify sources; they are not visual special tokens.
+Preserve viewpoint direction relative to the subject (front, behind, side, etc.)
+as well as framing scale. Identity.motion includes the meaningful action, its
+object/target and visible movement; do not reduce it to vague limb motion.
 Use only the requested inheritance; minimal connective details may complete the
 scene but may not contradict any selected property. No tool calls or API payloads.
 The official guides below teach phrasing; our target model, label map, output

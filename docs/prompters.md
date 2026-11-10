@@ -121,3 +121,10 @@ wide view into a close-up may yield two viewpoint objects, linked by a continuou
 viewpoint_change without a cut. Small drift need not split the stage. H3 must keep
 these stages within one [Shot N]; new shot headings represent actual editing/shot
 transitions. Preserve the transition type supplied by viewpoint_change.
+
+Viewpoint descriptions include framing scale and supported viewing direction relative
+to the subject, e.g. "A wide shot of the woman from behind." This is distinct from
+body pose. Identity.motion includes interpretable actions with their visible movement,
+e.g. "She hands a package through the service window, extending both arms." Action
+interpretation must be supported by the interaction, not guessed hidden intentions;
+no additional action field is introduced. Still images do not establish a handover.

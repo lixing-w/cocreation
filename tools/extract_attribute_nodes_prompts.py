@@ -135,7 +135,13 @@ attributes: {
   facial/expressive state. Their lists may describe states at different times.
 - Appearance_change, expression_change and pose_change describe observed transitions
   between the same identity's states, in order. Motion describes meaningful activity
-  and its visible trajectory, speed, rhythm, phases or deformation. Emit change
+  (action) together with its visible trajectory, speed, rhythm, phases or deformation.
+  Interpret an action when the observed interaction supports it: for example,
+  "She hands a package through the service window, extending both arms." This is
+  more useful than only "Her arms move forward." Describe the action, its object/
+  target and relevant movement together; no separate action field is needed.
+  Do not infer hidden motives, an unseen recipient or events between sampled frames.
+  A still image supports a pose/contact state, not a completed handover. Emit change
   fields only for actual observed changes, never merely "unchanged throughout".
 - An environment is a coherent physical, imagined or abstract setting, independent
   of shot boundaries. Description summarizes it; location describes visible place
@@ -157,7 +163,13 @@ attributes: {
   stages, not a strict one-object-per-editing-shot rule. A continuous move from a
   wide view to a close-up has two viewpoints when those stages are perceptually
   distinct. Minor camera drift or every intermediate frame does not need a new
-  object. Each description summarizes that stage's scale, angle and composition.
+  object. Each description includes framing scale and viewing direction relative
+  to the subject, plus relevant camera height/angle and composition. For example,
+  "A wide shot of the woman from behind." Distinguish front, rear, side/profile,
+  three-quarter and over-the-shoulder views when supported. Viewing direction is
+  not the subject's body_pose: a woman facing left may still be viewed from behind.
+  Do not invent an uncertain direction; retain the framing information that is clear.
+
   A cut creates a new occurrence even when returning to the same framing; keep
   viewpoints in temporal order. Do not merge distinct occurrences by similarity.
 - Viewpoint_change connects the viewpoint UIDs in order and explicitly distinguishes
@@ -197,16 +209,16 @@ Description length is prompt guidance, not a reason to truncate or discard evide
 
 ### Viewpoint example: continuous movement followed by a cut
 
-A wide office view continuously pushes into a close-up of a woman's face. A hard
+A rear wide office view continuously pushes into a close-up of a woman's hands. A hard
 cut then reveals a courtyard. The first two viewpoints belong to the same uncut
 shot; the third starts after an edit. A useful representation is:
 
 ```json
 {
   "viewpoint": [
-    {"uid": "view0_vp", "description": "Wide office view with the woman beside a desk."},
-    {"uid": "view1_vp", "description": "Close-up of the woman's face after the continuous push-in."},
-    {"uid": "view2_vp", "description": "Static wide view of the courtyard."}
+    {"uid": "view0_vp", "description": "A wide shot of the woman from behind, beside an office desk."},
+    {"uid": "view1_vp", "description": "Close-up of the woman's hands from behind after the continuous push-in."},
+    {"uid": "view2_vp", "description": "Static high-angle wide view looking down into the courtyard."}
   ],
   "viewpoint_change": "Continuous push-in: view0_vp to view1_vp, without cutting; then hard cut to view2_vp."
 }
@@ -375,15 +387,15 @@ VIDEO_EXAMPLE = json.loads(r'''
     "viewpoint": [
       {
         "uid": "view0_vp",
-        "description": "Wide office view with the woman beside a desk."
+        "description": "A wide shot of the woman from behind, beside an office desk."
       },
       {
         "uid": "view1_vp",
-        "description": "Close-up of the woman's face after the continuous push-in."
+        "description": "Close-up of the woman's hands from behind after the continuous push-in."
       },
       {
         "uid": "view2_vp",
-        "description": "Static wide view of the courtyard."
+        "description": "Static high-angle wide view looking down into the courtyard."
       }
     ],
     "viewpoint_change": "Continuous push-in: view0_vp to view1_vp, without cutting; then hard cut to view2_vp.",

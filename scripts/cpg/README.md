@@ -251,3 +251,10 @@ Tests use fake media files and mocked model responses, including null at every
 stage, invalid patches/matches, dependency closure, multi-parent bindings, model
 reuse, original-versus-varied verification input and provenance propagation. They
 do not require GPU inference. Run `python -m unittest tests.test_cpg_reverse`.
+
+Viewpoint descriptions include framing scale and supported viewing direction relative
+to the subject, e.g. "A wide shot of the woman from behind." This is distinct from
+body pose. Identity.motion includes interpretable actions with their visible movement,
+e.g. "She hands a package through the service window, extending both arms." Action
+interpretation must be supported by the interaction, not guessed hidden intentions;
+no additional action field is introduced. Still images do not establish a handover.
