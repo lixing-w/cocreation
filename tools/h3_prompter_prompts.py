@@ -14,27 +14,34 @@ Qwen observation image labels are <Image N>; translate using the supplied map.
 You may introduce <Subject N> content labels, but define each once on its own line
 under subject_definitions before use. Each sourced definition MUST name its supplied
 media label, not its artifact/node ID. Source-free subjects are new desired content.
-After EVERY sourced property in every section, immediately append
-"like in <Video N>" or "like in <Picture N>" using the mapped label. A <Subject N>
+After every sourced property in every section, immediately append
+"like in <Video N>" or "like in <Picture N>" using the mapped label. If the property 
+is unsourced, DO NOT add source labels. A <Subject N>
 alias is not a substitute for this inline media reference. Do not fill sections
 with unselected scenery, camera moves or actions; a static requested scene can
 simply remain visible for the requested duration.
-Complete reference example (five-second clip):
-Input: Green foliage is visible on the right. (from <Video 1>)
+
+Complete reference example:
+Note: DO NOT add properties not listed in the input text, visual reference images 
+and videos often carry irrelevant properties.
+Input: A girl wears a white skirt. (from <Video 1>)
+A photo studio with cinematic lighting. (from <Video 2>)
 Output:
 subject_definitions:
-<Subject 1> is the green foliage on the right, like in <Video 1>.
+<Subject 1> is the girl wearing a white skirt, like in <Video 1>.
 summary:
-Green foliage is visible on the right, like in <Video 1>.
+A girl wears a white skirt, like in <Video 1>, stands 
+in a photo studio with cinematic lighting, like in <Video 2>.
 retention_analysis:
-Retain only the green foliage on the right, like in <Video 1>.
+Retain the girl with white skirt, like in <Video 1>, and 
+only the studio setting with cinematic lighting, like in <Video 2>
 detailed_description:
-[Shot 1] Green foliage remains visible on the right for five seconds, like in <Video 1>.
+[Shot 1] The girl wears a white skirt stands in a photo studio with cinematic lighting.
 overall_soundscape:
-N/A
+Soft studio ambient humming, gentle click of camera shutters, and subtle rustle of the skirt fabric.
 non_diegetic_music:
 N/A
-No bear, wall, rocks or camera motion is added from the reference.
+
 
 Image-reference binding example:
 Input: A silver gown has rounded folds. (from <Image 1>)
@@ -51,10 +58,10 @@ Output:
 integrated_multimodal_description:
 [Shot 1] A pearl-colored sphere rests on pale sand for five seconds.
 overall_soundscape:
-N/A
+Gentle ocean waves rolling ashore, soft wind whispering across the sand, 
+and subtle crunch of tiny sand grains settling around the sphere.
 non_diegetic_music:
 N/A
-Do not add warming light, breeze, camera moves or other unselected details.
 
 Retain only selected source attributes; retention_analysis describes only those.
 Within detailed_description or integrated_multimodal_description, start with
@@ -65,9 +72,8 @@ are needed by the requested attributes/brief. Viewpoint objects are perceptually
 meaningful framing stages, not necessarily editing shots. A continuous wide-to-close
 viewpoint_change stays within one [Shot N]; add a new [Shot N] only for an actual
 requested edit/shot transition. Preserve continuous versus cut transition types.
-Use N/A for soundscape and music unless the supplied description explicitly
-requests sound or music. Never infer sound from the reference or add ambience,
-music or speech to fill the required sections. You cannot hear source audio.
+You may infer sound from the reference or add ambience,
+music or speech to fill the required sections. 
 Return all six Ref2VA sections when references exist, or all three T2VA sections
 when none exist, as direct plain text, without any envelope.
 '''

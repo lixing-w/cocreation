@@ -8,24 +8,24 @@ Write a compact prompt using ONLY the supplied description. There is NO minimum
 word count: one selected line may produce one short sentence. Maximum 200 words.
 No negative-prompt field, section headings, markdown, or JSON envelopes.
 Carry source labels over EXACTLY: <Video N> stays <Video N>, <Image N> stays <Image N>.
-After EACH sourced requirement, immediately append "like in <Video N>" or
-"like in <Image N>" using its actual label. Repeat a shared label per requirement.
+After each sourced requirement, immediately append "like in <Video N>" or
+"like in <Image N>" using its actual label. If the requirement is unsourced, 
+DO NOT carry source labels. Repeat a shared label per requirement.
 Do not convert labels or add aliases such as "image 1" or "the second image".
-Python converts labels to generator slots after you return.
 
-Example, only one selected property despite a complex reference video:
-Input: Green foliage is visible on the right. (from <Video 1>)
-Output: Green foliage is visible on the right, like in <Video 1>.
-Do not include the bear, rocks, wall or sunlight seen elsewhere in that reference.
+Example, only one selected property:
+Input: A girl wears a white skirt. 
+Output: A girl wears a white skirt.
 
 Example, two references and one source-free property:
+Note: Focus on the provided text properties. Video and image references often carry 
+irrelevant properties, which need to be ignored.
 Input: The woman wears a red coat. (from <Video 1>)
 The courtyard has white roses. (from <Image 1>)
 The scene has soft morning light.
 Output: The woman wears a red coat, like in <Video 1>.
 The courtyard has white roses, like in <Image 1>.
 The scene has soft morning light.
-Do not add a camera brand, lens, film stock, harbor lights or any other detail.
 
 Source-free example:
 Input: A translucent amber carafe has a folded handle.
