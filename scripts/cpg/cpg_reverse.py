@@ -13,7 +13,7 @@ if __package__ in (None, ''):
 from cocreation import Qwen, Flux, VDNH3, VDNRuntime, Reference
 from tools.extract_attribute_nodes import extract_attribute_nodes, validate_attributes
 from tools._attribute_protocol import (
-    atomize, assemble, sample_selection, apply_variations, expert_rows, compact_rows,
+    atomize, assemble, sample_selection, apply_additions, expert_rows, compact_rows,
     attach_provenance, validate_matches, canonicalize_shared)
 from tools.extract_attribute_nodes_prompts import CATEGORY_RULES
 from tools.imaginer import imaginer
@@ -70,7 +70,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
     """Run at most attempts trials, not attempts successful generations.
 
     K is the minimum retained count; K and V use inclusive random ranges.
-    V above the actual selected count skips without clamping. Sampling is
+    V counts new attributes and may exceed the retained count. Sampling is
     seeded, inference is not promised bitwise reproducible. Operational exceptions
     checkpoint and propagate; malformed/null tool outputs skip without retrying.
     Root extraction happens only when observation is absent. No historical search.
@@ -149,7 +149,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 parents = rng.sample(available, count)
                 k, v = rng.randint(*keep), rng.randint(*variate)
                 artifact_id = f'artifact_{next_number + attempt}'
-                log.update(artifact_id=artifact_id, kind=kind, keep=k, variate=v,
+                log.update(artifact_id=artifact_id, kind=kind, keep=k, add_count=v,
                            sampled_parents=[p['artifact_id'] for p in parents])
                 emit(f'Attempt {attempt} / sampled configuration', log)
                 pool = [r for p in parents for r in atomize(p['observation'], p['provenance'])]
@@ -163,30 +163,30 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                 emit(f'Attempt {attempt} / actual selection',
                      {'minimum_K': k, 'actual_count': len(selected) if selected is not None else None,
                       'requested_V': v, 'atoms': selected})
-                if selected is None or v > len(selected):
-                    log.update(status='skipped', stage=stage, reason='no feasible K/V selection')
+                if selected is None:
+                    log.update(status='skipped', stage=stage, reason='no feasible K selection')
                     continue
                 log['actual_keep'] = len(selected)
-                vary_ids = rng.sample([r['id'] for r in selected], v)
                 # Only carriers actually used by the sample are attached.
                 used = {r['carrier_artifact_id'] for r in selected}
                 log.update(parent_limit=parent_limit, parent_count=len(used))
                 refs = [Reference(p['artifact_id'], p['path'], p['kind']) for p in parents
                         if p['artifact_id'] in used]
-                save(directory / 'selection.json', dict(selected=selected, vary_ids=vary_ids, sampling_trace=sampling_trace))
+                save(directory / 'selection.json', dict(selected=selected, add_count=v, sampling_trace=sampling_trace))
                 stage = 'imaginer'
                 emit(f'Attempt {attempt} / imaginer input',
-                     {'vary_ids': vary_ids, 'references': media_rows(refs), 'kind': kind})
-                edits = imaginer(selected, vary_ids, refs, kind=kind, qwen=qwen,
+                     {'add_count': v, 'selected_attributes': selected, 'references': media_rows(refs), 'kind': kind})
+                additions = imaginer(selected, v, refs, kind=kind, qwen=qwen,
                                  output_dir=directory / stage, seed=rng.randrange(2**31))
-                emit(f'Attempt {attempt} / imaginer result', edits)
-                if edits is None:
+                emit(f'Attempt {attempt} / imaginer result', additions)
+                if additions is None:
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
-                planned = apply_variations(selected, edits, vary_ids)
+                planned = apply_additions(selected, additions, v, kind)
+                log['actual_add'] = len(planned) - len(selected)
                 target = assemble(planned, artifact_id, kind)
                 emit(f'Attempt {attempt} / assembled target attributes', target)
-                save(directory / 'plan.json', dict(target=target, variations=edits, records=planned))
+                save(directory / 'plan.json', dict(target=target, additions=additions, records=planned))
                 # Experts get new desired values without falsely claiming source support.
                 rows = expert_rows(planned)
                 expert_used = {a for row in rows for a in row.get('artifact_ids', [])}
@@ -254,7 +254,7 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8), variate=(0, 2
                     log.update(status='skipped', stage=stage, reason='null or invalid response')
                     continue
                 save(directory / 'observation.json', observed)
-                # Original selected text, including pre-imaginer values. Never dropped properties.
+                # Retained originals only; imagined additions have no old source.
                 sources = [dict(reference=r, attributes=[a for a in selected
                            if a['carrier_artifact_id'] == r.artifact_id]) for r in refs]
                 stage = 'verify_inheritance'
@@ -301,8 +301,8 @@ def main():
     parser.add_argument('--seed', type=int, default=0, help='Random seed for parent/attribute sampling and generation seeds')
     parser.add_argument('--keep', type=int, nargs=2, default=(3, 8), metavar=('MIN', 'MAX'),
                         help='Inclusive range for minimum retained K; dependencies may exceed K (e.g. 3 5)')
-    parser.add_argument('--variate', type=int, nargs=2, default=(0, 2), metavar=('MIN', 'MAX'),
-                        help='Inclusive range for varied atoms V; use 1 1 for one edit, 0 0 to disable')
+    parser.add_argument('--add', '--variate', dest='variate', type=int, nargs=2, default=(0, 2), metavar=('MIN', 'MAX'),
+                        help='Inclusive range for NEW attributes V; 1 1 adds one, 0 0 disables; --variate is an alias')
     parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=2,
                         help='Maximum old-media references per trial; also capped at Flux 4 / H3 32')
     parser.add_argument('--p-video', type=float, default=0.5, help='Output video probability: 1=video only, 0=image only')

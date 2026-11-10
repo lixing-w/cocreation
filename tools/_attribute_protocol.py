@@ -1,6 +1,7 @@
 """Pure nested-attribute adapters, bounded selection and provenance bookkeeping."""
 import copy
 import re
+import sys
 
 from tools.extract_attribute_nodes import validate_attributes
 from tools.extract_attribute_nodes_prompts import CATEGORY_RULES, OBJECT_FIELDS, TOP_LEVEL_CATEGORIES
@@ -246,6 +247,68 @@ def compact_rows(records):
              if key in record} for record in records]
 
 
+def repair_additions(selected, additions, count, kind):
+    """Keep up to V usable additions; local errors never discard valid siblings."""
+    if type(count) is not int or count < 0:
+        raise ValueError('Addition count must be a nonnegative integer')
+    if not isinstance(additions, list):
+        raise ValueError('Expected additions array')
+    accepted = []
+    for index, entry in enumerate(additions):
+        try:
+            if len(accepted) >= count:
+                raise ValueError('Requested addition count already reached')
+            if isinstance(entry, dict):
+                entry = {key: entry[key] for key in ('category', 'text') if key in entry}
+                if isinstance(entry.get('text'), str):
+                    entry['text'] = entry['text'].strip()
+            _apply_additions(selected, accepted + [entry], len(accepted) + 1, kind)
+        except (ValueError, TypeError, KeyError) as error:
+            print(f'imaginer: dropped additions[{index}]: {error}', file=sys.stderr)
+            continue
+        accepted.append(entry)
+    return accepted
+
+
+def apply_additions(selected, additions, count, kind):
+    repaired = repair_additions(selected, additions, count, kind)
+    return _apply_additions(selected, repaired, len(repaired), kind)
+
+
+def _apply_additions(selected, additions, count, kind):
+    """Append new desired atoms without changing retained atoms or claiming sources."""
+    if type(count) is not int or count < 0:
+        raise ValueError('Addition count must be a nonnegative integer')
+    if not isinstance(additions, list) or len(additions) != count:
+        raise ValueError('Expected exactly V additions')
+    result = copy.deepcopy(selected)
+    occupied = {r['id'] for r in result} | {r.get('owner_uid') for r in result}
+    seen = {(r['category'], r['text'].strip().casefold()) for r in result}
+    for index, entry in enumerate(additions):
+        if not isinstance(entry, dict) or set(entry) != {'category', 'text'}:
+            raise ValueError('Addition needs category/text')
+        category, text = entry['category'], entry['text']
+        if not isinstance(category, str) or category not in ('identity', 'environment', 'viewpoint', 'style'):
+            raise ValueError('Unsupported addition category')
+        if not isinstance(text, str) or not text.strip() or text.strip().lower() in ('none', 'null', 'unknown'):
+            raise ValueError('Addition needs a meaningful description')
+        category = category + '.description' if category in ('identity', 'environment') else category
+        key = (category, text.strip().casefold())
+        if key in seen:
+            raise ValueError('Duplicate addition')
+        seen.add(key)
+        uid = f'imagined_a{index:04d}'
+        while uid in occupied:
+            uid = '_' + uid
+        occupied.add(uid)
+        record = dict(id=uid, category=category, text=text.strip(), operation='add')
+        if category != 'style':
+            record['owner_uid'] = uid
+        result.append(record)
+    assemble(result, 'selection', kind)  # also rejects a second scalar style
+    return result
+
+
 def apply_variations(selected, edits, vary_ids):
     """Validate exact edit coverage and immutable bindings; reject no-op edits."""
     if not isinstance(edits, list) or len(vary_ids) != len(set(vary_ids)):
@@ -282,7 +345,7 @@ def expert_rows(records):
     for record in records:
         category = record['category']
         row = dict(id=record['id'], category=category, text=_bound_text(record),
-                   artifact_ids=[] if record.get('operation') == 'variate' else [record['carrier_artifact_id']])
+                   artifact_ids=[] if record.get('operation') in ('variate', 'add') else [record['carrier_artifact_id']])
         if category in ('identity.description', 'environment.description'):
             # The description is also the structural anchor, not an extra counted atom.
             row.update(id=record['owner_uid'], category=category.split('.')[0])

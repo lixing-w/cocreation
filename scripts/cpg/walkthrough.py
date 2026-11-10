@@ -5,7 +5,7 @@ import sys
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools._attribute_protocol import atomize, assemble, apply_variations, attach_provenance, expert_rows
+from tools._attribute_protocol import atomize, assemble, apply_additions, attach_provenance, expert_rows
 
 
 def walkthrough():
@@ -24,23 +24,22 @@ def walkthrough():
     pool = [r for root in roots for r in atomize(root)]
     ids = ['artifact_0_a0000','artifact_0_a0001','artifact_1_a0000','artifact_1_a0002','artifact_1_a0003']
     selected = [r for r in pool if r['id'] in ids]
-    edits = [{'id':'artifact_0_a0001','text':'Violet glaze flecked with tiny golden stars.'}]
-    planned = apply_variations(selected, edits, ['artifact_0_a0001'])
+    additions = [{'category':'identity','text':'A tiny glass dragon beside the cup.'}]
+    planned = apply_additions(selected, additions, 1, 'image')
     target = assemble(planned, 'artifact_2','image')
-    # Pretend the generator omitted the gold stars and added legible lettering.
+    # Pretend all requested properties appeared, plus unrequested lettering.
     observed = json.loads(json.dumps(target))
-    observed['attributes']['identity'][0]['appearance'] = ['Violet glaze.']
-    observed['attributes']['visible_text'] = [{'uid':'tea_label','description':'“TEA” appears in white letters on the cup.'}]
+    observed['attributes']['visible_text'] = [{'uid':'tea_label','description':'“TEA” appears on the cup.'}]
     new = atomize(observed)
-    matches = [{'observed_id':'artifact_2_a0000','source_id':'artifact_0_a0000'},
-               {'observed_id':'artifact_2_a0002','source_id':'artifact_1_a0000'},
-               {'observed_id':'artifact_2_a0003','source_id':'artifact_1_a0002'},
-               {'observed_id':'artifact_2_a0004','source_id':'artifact_1_a0003'}]
+    # Fictional oracle only; production uses verifier pass 2 with media.
+    matches = [{'observed_id':row['id'],'source_id':source['id']}
+               for row in new for source in selected
+               if row['category']==source['category'] and row['text']==source['text']]
     provenance = attach_provenance(new, matches, selected)
     return dict(fictional=True, roots=roots, candidate_pool=pool,
         selection=dict(N=len(pool), K=5, V=1, dropped_ids=[r['id'] for r in pool if r['id'] not in ids],
                        selected_originals=selected),
-        imaginer_output={'edits':edits}, target=target, expert_input=expert_rows(planned),
+        imaginer_output={'additions':additions}, target=target, expert_input=expert_rows(planned),
         verifier_pass_1_output=observed,
         verifier_pass_2_selected_originals=selected,
         verifier_pass_2_output={'matches':matches},

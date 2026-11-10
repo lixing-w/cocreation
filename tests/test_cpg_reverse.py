@@ -163,8 +163,10 @@ class ProtocolTests(unittest.TestCase):
         from scripts.cpg.walkthrough import walkthrough
         fixture=json.loads((Path(__file__).resolve().parents[1]/'scripts/cpg/examples/walkthrough.json').read_text())
         self.assertEqual(walkthrough(),fixture)
-        self.assertEqual(len(fixture['next_candidate_pool']),6)
+        self.assertEqual(len(fixture['next_candidate_pool']),7)
         self.assertEqual(fixture['accepted_node']['provenance']['artifact_2_a0001']['source_artifact_id'],
+                         'artifact_0')
+        self.assertEqual(fixture['accepted_node']['provenance']['artifact_2_a0002']['source_artifact_id'],
                          'artifact_2')
 
     def test_shared_atoms_choose_earliest_candidate_not_text_or_origin_media(self):
@@ -246,17 +248,47 @@ class ToolTests(unittest.TestCase):
         self.rows = atomize(observation())
         self.observed = observation('artifact_1')
 
-    def test_imaginer_exact_edits_and_no_call_for_zero(self):
-        model = Mock(return_value={'text':json.dumps({'edits':[{'id':self.rows[1]['id'],'text':'Blue glaze.'}]})})
-        self.assertEqual(imaginer(self.rows,[],kind='image',qwen=model),[])
+    def test_imaginer_additions_and_no_call_for_zero(self):
+        model = Mock(return_value={'text':json.dumps({'additions':[{'category':'identity','text':'A tiny glass dragon.'}]})})
+        self.assertEqual(imaginer(self.rows,0,kind='image',qwen=model),[])
         model.assert_not_called()
-        result = imaginer(self.rows,[self.rows[1]['id']],[self.old],kind='image',qwen=model)
-        self.assertEqual(result[0]['text'],'Blue glaze.')
+        result = imaginer(self.rows,1,[self.old],kind='image',qwen=model)
+        self.assertEqual(result[0]['text'],'A tiny glass dragon.')
         model.close.assert_not_called()
         for text in ('null','bad','{"edits":[]}','{"edits":[],"edits":[]}',
                      '{"edits":[{"id":"missing","text":"Blue."}]}'):
             model.return_value={'text':text}
-            self.assertIsNone(imaginer(self.rows,[self.rows[1]['id']],[self.old],kind='image',qwen=model))
+            self.assertIsNone(imaginer(self.rows,1,[self.old],kind='image',qwen=model))
+
+    def test_additions_preserve_selection_and_have_no_source(self):
+        from tools._attribute_protocol import apply_additions
+        before=copy.deepcopy(self.rows)
+        additions=[{'category':'identity','text':'A tiny glass dragon.'},
+                   {'category':'environment','text':'A floating moss garden.'},
+                   {'category':'viewpoint','text':'Wide shot from behind the cup.'}]
+        planned=apply_additions(self.rows,additions,3,'image')
+        self.assertEqual(planned[:len(self.rows)],before)
+        self.assertEqual(self.rows,before)
+        self.assertTrue(all(row['artifact_ids']==[] for row in expert_rows(planned)[-3:]))
+        self.assertEqual(len(planned),len(before)+3)
+        for invalid in ([{'category':'style','text':'Paper collage.'}],
+                        [{'category':'identity','text':'A ceramic cup.'}],
+                        [{'category':'unknown','text':'Something.'}]):
+            self.assertEqual(apply_additions(self.rows,invalid,1,'image'),self.rows)
+        self.assertEqual(len(apply_additions(self.rows[:1],additions,3,'image')),4)
+
+    def test_imaginer_repairs_style_conflict_and_keeps_valid_additions(self):
+        model=Mock(return_value={'text':json.dumps({'additions':[
+            {'category':'style','text':'Paper collage.'}, None,
+            {'category':'identity','text':'  A tiny glass dragon.  ','reason':'Creative'},
+            {'category':'identity','text':'unknown'},
+            {'category':'identity','text':'A tiny glass dragon.'}], 'notes':'Optional'})})
+        result=imaginer(self.rows,5,[self.old],kind='image',qwen=model)
+        self.assertEqual(result,[{'category':'identity','text':'A tiny glass dragon.'}])
+        model.return_value={'text':'{"additions":[{"category":"style","text":"Paper collage."}]}'}
+        self.assertEqual(imaginer(self.rows,1,[self.old],kind='image',qwen=model),[])
+        model.return_value={'text':'{"additions":null}'}
+        self.assertIsNone(imaginer(self.rows,1,[self.old],kind='image',qwen=model))
 
     def test_revision_preserves_contract_and_only_sees_new_media(self):
         model=Mock(return_value={'text':json.dumps(self.observed)})
@@ -382,11 +414,11 @@ class ToolTests(unittest.TestCase):
         model=Mock(side_effect=RuntimeError('worker failed'))
         with patch('tools._attribute_vlm.Qwen',return_value=model):
             with self.assertRaises(RuntimeError):
-                imaginer(self.rows,[self.rows[1]['id']],[self.old],kind='image')
+                imaginer(self.rows,1,[self.old],kind='image')
         model.close.assert_called_once()
         model.reset_mock()
         with self.assertRaises(RuntimeError):
-            imaginer(self.rows,[self.rows[1]['id']],[self.old],kind='image',qwen=model)
+            imaginer(self.rows,1,[self.old],kind='image',qwen=model)
         model.close.assert_not_called()
 
 
@@ -496,7 +528,7 @@ class LoopTests(unittest.TestCase):
                 self.assertEqual(len(graph['artifacts']),2)
 
     def test_video_branch_and_original_text_to_second_pass(self):
-        self.imagine.side_effect=lambda selected,ids,*a,**kw: [{'id':uid,'text':'A surreal visual reinterpretation.'} for uid in ids]
+        self.imagine.side_effect=lambda selected,count,*a,**kw: [{'category':'identity','text':f'A tiny glass dragon {i}.'} for i in range(count)]
         graph=self.run_loop(attempts=1,p_video=1,variate=(1,1))
         self.assertEqual(graph['attempts'][0]['status'],'accepted')
         self.assertEqual(len(self.vdn.calls),1)

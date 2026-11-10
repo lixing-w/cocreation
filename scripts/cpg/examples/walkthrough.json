@@ -351,10 +351,10 @@
     ]
   },
   "imaginer_output": {
-    "edits": [
+    "additions": [
       {
-        "id": "artifact_0_a0001",
-        "text": "Violet glaze flecked with tiny golden stars."
+        "category": "identity",
+        "text": "A tiny glass dragon beside the cup."
       }
     ]
   },
@@ -367,8 +367,12 @@
           "uid": "artifact_0_cup",
           "description": "A ceramic cup.",
           "appearance": [
-            "Violet glaze flecked with tiny golden stars."
+            "Red glaze."
           ]
+        },
+        {
+          "uid": "imagined_a0000",
+          "description": "A tiny glass dragon beside the cup."
         }
       ],
       "environment": [
@@ -393,8 +397,10 @@
     {
       "id": "artifact_0_a0001",
       "category": "identity.appearance",
-      "text": "Violet glaze flecked with tiny golden stars.",
-      "artifact_ids": [],
+      "text": "Red glaze.",
+      "artifact_ids": [
+        "artifact_0"
+      ],
       "parent_id": "artifact_0_cup"
     },
     {
@@ -421,6 +427,12 @@
       "artifact_ids": [
         "artifact_1"
       ]
+    },
+    {
+      "id": "imagined_a0000",
+      "category": "identity",
+      "text": "A tiny glass dragon beside the cup.",
+      "artifact_ids": []
     }
   ],
   "verifier_pass_1_output": {
@@ -432,8 +444,12 @@
           "uid": "artifact_0_cup",
           "description": "A ceramic cup.",
           "appearance": [
-            "Violet glaze."
+            "Red glaze."
           ]
+        },
+        {
+          "uid": "imagined_a0000",
+          "description": "A tiny glass dragon beside the cup."
         }
       ],
       "environment": [
@@ -447,7 +463,7 @@
       "visible_text": [
         {
           "uid": "tea_label",
-          "description": "“TEA” appears in white letters on the cup."
+          "description": "“TEA” appears on the cup."
         }
       ]
     }
@@ -553,15 +569,19 @@
         "source_id": "artifact_0_a0000"
       },
       {
-        "observed_id": "artifact_2_a0002",
-        "source_id": "artifact_1_a0000"
+        "observed_id": "artifact_2_a0001",
+        "source_id": "artifact_0_a0001"
       },
       {
         "observed_id": "artifact_2_a0003",
-        "source_id": "artifact_1_a0002"
+        "source_id": "artifact_1_a0000"
       },
       {
         "observed_id": "artifact_2_a0004",
+        "source_id": "artifact_1_a0002"
+      },
+      {
+        "observed_id": "artifact_2_a0005",
         "source_id": "artifact_1_a0003"
       }
     ]
@@ -576,8 +596,12 @@
             "uid": "artifact_0_cup",
             "description": "A ceramic cup.",
             "appearance": [
-              "Violet glaze."
+              "Red glaze."
             ]
+          },
+          {
+            "uid": "imagined_a0000",
+            "description": "A tiny glass dragon beside the cup."
           }
         ],
         "environment": [
@@ -591,7 +615,7 @@
         "visible_text": [
           {
             "uid": "tea_label",
-            "description": "“TEA” appears in white letters on the cup."
+            "description": "“TEA” appears on the cup."
           }
         ]
       }
@@ -621,11 +645,27 @@
           "appearance",
           0
         ],
-        "source_artifact_id": "artifact_2",
-        "source_attribute_uid": "artifact_2_a0001",
-        "inherited_from": []
+        "source_artifact_id": "artifact_0",
+        "source_attribute_uid": "artifact_0_a0001",
+        "inherited_from": [
+          {
+            "artifact_id": "artifact_0",
+            "attribute_uid": "artifact_0_a0001"
+          }
+        ]
       },
       "artifact_2_a0002": {
+        "path": [
+          "attributes",
+          "identity",
+          1,
+          "description"
+        ],
+        "source_artifact_id": "artifact_2",
+        "source_attribute_uid": "artifact_2_a0002",
+        "inherited_from": []
+      },
+      "artifact_2_a0003": {
         "path": [
           "attributes",
           "environment",
@@ -641,7 +681,7 @@
           }
         ]
       },
-      "artifact_2_a0003": {
+      "artifact_2_a0004": {
         "path": [
           "attributes",
           "environment",
@@ -657,7 +697,7 @@
           }
         ]
       },
-      "artifact_2_a0004": {
+      "artifact_2_a0005": {
         "path": [
           "attributes",
           "style"
@@ -671,7 +711,7 @@
           }
         ]
       },
-      "artifact_2_a0005": {
+      "artifact_2_a0006": {
         "path": [
           "attributes",
           "visible_text",
@@ -679,7 +719,7 @@
           "description"
         ],
         "source_artifact_id": "artifact_2",
-        "source_attribute_uid": "artifact_2_a0005",
+        "source_attribute_uid": "artifact_2_a0006",
         "inherited_from": []
       }
     },
@@ -703,6 +743,7 @@
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
@@ -711,7 +752,7 @@
     },
     {
       "category": "identity.appearance",
-      "text": "Violet glaze.",
+      "text": "Red glaze.",
       "owner_uid": "artifact_2_artifact_0_cup",
       "path": [
         "attributes",
@@ -724,11 +765,33 @@
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
+        "artifact_1_garden": "artifact_2_artifact_1_garden",
+        "tea_label": "artifact_2_tea_label"
+      },
+      "source_artifact_id": "artifact_0",
+      "source_attribute_uid": "artifact_0_a0001"
+    },
+    {
+      "category": "identity.description",
+      "text": "A tiny glass dragon beside the cup.",
+      "owner_uid": "artifact_2_imagined_a0000",
+      "path": [
+        "attributes",
+        "identity",
+        1,
+        "description"
+      ],
+      "id": "artifact_2_a0002",
+      "carrier_artifact_id": "artifact_2",
+      "uid_map": {
+        "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
       "source_artifact_id": "artifact_2",
-      "source_attribute_uid": "artifact_2_a0001"
+      "source_attribute_uid": "artifact_2_a0002"
     },
     {
       "category": "environment.description",
@@ -740,10 +803,11 @@
         0,
         "description"
       ],
-      "id": "artifact_2_a0002",
+      "id": "artifact_2_a0003",
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
@@ -760,10 +824,11 @@
         0,
         "lighting"
       ],
-      "id": "artifact_2_a0003",
+      "id": "artifact_2_a0004",
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
@@ -777,10 +842,11 @@
         "attributes",
         "style"
       ],
-      "id": "artifact_2_a0004",
+      "id": "artifact_2_a0005",
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
@@ -789,7 +855,7 @@
     },
     {
       "category": "visible_text",
-      "text": "“TEA” appears in white letters on the cup.",
+      "text": "“TEA” appears on the cup.",
       "owner_uid": "artifact_2_tea_label",
       "path": [
         "attributes",
@@ -797,15 +863,16 @@
         0,
         "description"
       ],
-      "id": "artifact_2_a0005",
+      "id": "artifact_2_a0006",
       "carrier_artifact_id": "artifact_2",
       "uid_map": {
         "artifact_0_cup": "artifact_2_artifact_0_cup",
+        "imagined_a0000": "artifact_2_imagined_a0000",
         "artifact_1_garden": "artifact_2_artifact_1_garden",
         "tea_label": "artifact_2_tea_label"
       },
       "source_artifact_id": "artifact_2",
-      "source_attribute_uid": "artifact_2_a0005"
+      "source_attribute_uid": "artifact_2_a0006"
     }
   ]
 }

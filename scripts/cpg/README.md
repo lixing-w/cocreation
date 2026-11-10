@@ -29,9 +29,9 @@ System prompts live in `tools/imaginer_prompts.py` and
 ## Interfaces
 
 ```python
-imaginer(selected_attributes, vary_ids, references, *, kind, qwen=None,
+imaginer(selected_attributes, add_count, references, *, kind, qwen=None,
          output_dir=None, seed=0, ...)
-# -> [{"id": "artifact_0_a0001", "text": "Violet glaze."}], [] for V=0, or None
+# -> [{"category": "identity", "text": "A tiny glass dragon."}], [] or None
 
 attribute_verifier(mode="revise_observation", generated_media=new_ref,
                    target_attributes=target_json, qwen=shared_qwen, ...)
@@ -48,7 +48,7 @@ attribute_verifier(mode="verify_inheritance", generated_media=new_ref,
 ```
 
 All tools accept optional observation/token budgets. They close only Qwen instances
-that they create. Invalid model JSON, unknown/duplicate IDs, unexpected edits,
+that they create. Invalid model JSON, unknown/duplicate IDs, unrecoverable additions,
 unrecoverable unsupported fields and invalid bindings return None. Extractor and
 verifier pass 1 first repair harmless empty placeholders and scalar/list wrapping;
 missing required objects and their dependent relations are omitted. Strict validators
@@ -56,13 +56,17 @@ and verifier pass 2 do not mutate existing observations or guess bindings. Opera
 raise: missing files, inference failures and programming bugs are not disguised
 as a creative failure. There are no internal retries.
 
-The imaginer sees only the selected attributes, their source media and the exact
-IDs it may edit. It returns text patches, never a reconstructed graph. A varying
-attribute cannot change owner, category, relation endpoints or atom count. Its
-new value is a desired property, not a claim that the source contains that value.
-The prompt asks for creative, coherent changes while keeping other values fixed;
-code checks the contract, not semantic creativity or coherence. Experts can reject
-contradictory combinations. V=0 makes no imaginer inference call.
+The imaginer sees retained attributes, their source media and requested new count V.
+It returns `additions` with `category` and `text`. Categories are identity, environment,
+viewpoint and style. Each entry counts as one atom; identity/environment entries
+introduce a new object with one description. Python assigns IDs. Retained atoms
+remain unchanged; additions have no old source. Style may be added only when absent.
+Python drops conflicting style, duplicates, empty/invalid entries and excess entries,
+ignores extra fields, and keeps valid additions in response order. Fewer than V,
+including zero, is valid; malformed envelopes/non-array additions still fail.
+V may exceed K. V=0 skips the model. Descriptions are prompted under 10 words,
+without a hard word-count limit. `--add MIN MAX` configures V; `--variate` remains
+an alias and the Python `run(..., variate=...)` parameter now means additions.
 
 Pass 1 sees only new media and target JSON. It preserves supported wording/UIDs,
 corrects inaccurate observations, omits uncertain/absent fields, and adds salient
@@ -71,8 +75,7 @@ the existing observation protocol. No VLM retry is needed for harmless repairs. 
 used as a future parent.
 
 Pass 2 sees new media, its revised observations, and **only selected original
-attributes** with their old carrier media. For variated atoms this means the
-pre-imaginer text, not the new requested value. It returns human-intuitive conceptual/visual property-level
+attributes** with their old carrier media. Imagined additions are not supplied as old-source candidates. It returns human-intuitive conceptual/visual property-level
 inheritance pairs, not a rewritten JSON. Empty matches is success, null is failure.
 The code drops individual pairs with unknown/unselected IDs, category mismatch,
 duplicates or inconsistent object/endpoint correspondence, keeping valid pairs in
@@ -86,7 +89,7 @@ previously unselected properties is implemented.
 
 1. Read root media and observations, or call extractor once per root missing one.
 2. For each bounded attempt, draw output modality, 1..max_parents parent nodes,
-   a minimum retained count K and V variations from the inclusive configured ranges.
+   a minimum retained count K and V additions from the inclusive configured ranges.
 3. Flatten parents into a candidate pool. One atom is a scalar string, one string
    list item, or one relation/viewpoint/visible_text object. Container descriptions
    are atoms and count toward K; UIDs and link endpoints do not count separately.
@@ -100,12 +103,11 @@ previously unselected properties is implemented.
    instead of letting long identity lists dominate. Dependencies still come along,
    so selection is diversity/dependency-biased, **not uniform** over subsets.
    It may skip a feasible but hard-to-find combination after 128 cheap attempts.
-5. Pick V distinct selected atom IDs. If V exceeds the actual selected count, or
-   no valid selection reaches K, skip. The log records requested `keep` and
-   `actual_keep`; V is never silently clamped. No semantic projection.
-6. Call imaginer once, validate exact edit coverage, and assemble target JSON.
+5. If no valid selection reaches K, skip. Keep all sampled atoms unchanged.
+6. Request V additions, repair individual invalid entries, and assemble target JSON.
+   Log requested `add_count` and successful `actual_add` separately.
 7. Adapt to existing `flux_prompter` or `h3_prompter` flat records. Kept properties
-   reference their current carrier media; variated properties are source-free desired
+   reference their current carrier media; imagined additions are source-free desired
    values. Descriptions serve as container anchors without adding counted attributes.
    Include only references used by these expert records, in stable slot order.
 8. For Flux, replace each selected video reference with one frame satisfying all
@@ -163,61 +165,19 @@ Root 0 has a ceramic cup with red glaze and a curved handle, a tabletop, their
 placement relation, and photographic style (6 atoms). Root 1 has a flower garden,
 its location and morning light, and watercolor style (4 atoms).
 
-Choose K=5, V=1 from N=10:
-
-| Atom | Selected original | Action |
-|---|---|---|
-| artifact_0_a0000 | A ceramic cup. | Keep |
-| artifact_0_a0001 | Red glaze. | Variate |
-| artifact_1_a0000 | A garden filled with white flowers. | Keep |
-| artifact_1_a0002 | Soft morning sunlight. | Keep |
-| artifact_1_a0003 | Watercolor with soft pigment edges. | Keep |
-
-Drop the curved-handle property, tabletop description, tabletop relation,
-photographic style and garden location. Imaginer returns exactly one edit:
+Choose K=5, V=1: retain cup description, red glaze, garden, morning light and
+watercolor style. Imaginer adds one new identity:
 
 ```json
-{"edits":[{"id":"artifact_0_a0001","text":"Violet glaze flecked with tiny golden stars."}]}
+{"additions":[{"category":"identity","text":"A tiny glass dragon beside the cup."}]}
 ```
 
-Programmatically assembled target:
-
-```json
-{
-  "artifact_id": "artifact_2",
-  "kind": "image",
-  "attributes": {
-    "identity": [{
-      "uid": "artifact_0_cup",
-      "description": "A ceramic cup.",
-      "appearance": ["Violet glaze flecked with tiny golden stars."]
-    }],
-    "environment": [{
-      "uid": "artifact_1_garden",
-      "description": "A garden filled with white flowers.",
-      "lighting": "Soft morning sunlight."
-    }],
-    "style": "Watercolor with soft pigment edges."
-  }
-}
-```
-
-The Flux expert receives selected flat constraints; the violet-glaze atom has no
-source claim. Suppose the generated image omits the stars and adds a “TEA” label.
-Pass 1 returns the same structure except appearance becomes `["Violet glaze."]`
-and it adds:
-
-```json
-"visible_text": [{"uid":"tea_label","description":"“TEA” appears in white letters on the cup."}]
-```
-
-Pass 2 compares these observations with the selected **red-glaze original**, cup,
-garden, sunlight and watercolor values, plus both old media. Suppose it confirms
-cup description, garden description, lighting and style, but not violet glaze or
-the new text. Its four matches refer to observed atoms 0000, 0002, 0003 and 0004.
-External code carries their original provenance forward. Violet glaze and “TEA”
-start at artifact_2. The accepted six-atom observation enters the next pool.
-The requested gold stars are retained only in the plan log, not as an observation.
+The target retains all five original atoms plus the dragon (six atoms). The dragon
+has no reference label. Suppose pass 1 observes these six atoms plus new lettering
+“TEA”. Pass 2 matches the five retained originals, using only their old media.
+Python carries forward those five origins; the dragon and lettering start at the
+new artifact. All seven observed atoms enter the next pool. If imaginer also returned
+a conflicting style, Python would discard that entry while preserving the dragon.
 
 ## Running on a configured model host
 
@@ -237,7 +197,7 @@ Use the repository's configured Qwen/Flux/VDN model environment for real executi
 ```sh
 python scripts/cpg/cpg_reverse.py roots.json \
   --output-dir /tmp/cpg-run-001 --attempts 10 --seed 42 \
-  --keep 3 8 --variate 0 2 --max-parents 2 --p-video 0.5 --seconds 5
+  --keep 3 8 --add 0 2 --max-parents 2 --p-video 0.5 --seconds 5
 ```
 
 The output directory must be new. `--attempts` limits trials, not successful nodes;
@@ -246,7 +206,7 @@ The seed determines sampling given the same sequence of tool outcomes, not bitwi
 model reproducibility. Constructor/runtime options use existing model defaults;
 `--vdn-python` optionally supplies the VDN bootstrap interpreter.
 
-Each attempt records selection, edits/target, expert prompt, generation metadata,
+Each attempt records selection, additions/target, expert prompt, generation metadata,
 revised observations and verified matches as it reaches those stages. `graph.json`
 is checkpointed atomically after roots and every attempt. Skipped/generated-but-
 unverified media remain in run logs but never enter the graph. Exceptions checkpoint
@@ -267,7 +227,7 @@ no additional action field is introduced. Still images do not establish a handov
 
 Attribute descriptions are prompted to stay < 10 words; Python does not enforce
 this length. Observations must be clearly visible and unambiguous; uncertainty
-means omission. Imaginer's creative changes are desired properties, not source
+means omission. Imaginer's creative additions are desired properties, not source
 observations. Extractor/verifier-pass-1 JSON starts attributes with a temporary
 "all identities and all environments draft" inventory. Python removes it before
 validation, atomization or provenance. Pass 2 remains match-only. Observation
@@ -284,7 +244,7 @@ This is a prompt instruction; draft removal and Python validation remain unchang
 Stage dumps are printed to stderr by default and always appended to `debug.log` in
 the output directory. Headers precede slow model calls; results include nulls and
 skip/error reasons. Dumps show root observations, raw and deduplicated eligible
-pools, actual selected atoms/K/V, imaginer patches, target JSON, expert input/prompt,
+pools, actual selected atoms/K/V, imaginer additions, target JSON, expert input/prompt,
 frame search, generation metadata, both verifier passes and final provenance.
 These are parsed tool returns (after draft removal/repair); raw model responses
 remain in the tools' normal run records. `--quiet` hides console dumps only.
@@ -296,7 +256,7 @@ From the repository root on a configured model host, use the checked-in manifest
 ```sh
 python -u scripts/cpg/cpg_reverse.py scripts/cpg/examples/video_root.json \
   --output-dir "scratch/runs/cpg_reverse_$(date +%Y%m%d_%H%M%S)" \
-  --attempts 3 --seed 42 --keep 3 5 --variate 1 1 \
+  --attempts 3 --seed 42 --keep 3 5 --add 1 1 \
   --parent-count 1 --p-video 1 --seconds 5
 ```
 
