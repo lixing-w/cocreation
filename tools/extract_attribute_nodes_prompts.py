@@ -18,7 +18,13 @@ Persisted `attributes` is a dictionary with only the nine keys listed below.
 Extractor and verifier pass 1 first emit a temporary first key inside `attributes`:
 `"all identities and all environments draft"`, containing `identity` and
 `environment` lists of `{uid, description}` for all clearly observed major objects
-used in the response. Normal attributes follow, reusing these UIDs. This is an
+used in the response. Normal attributes follow, reusing these UIDs. The draft is
+a closed inventory: subsequent identity/environment entries must come from their
+respective draft lists, with no new objects or replacement UIDs. identity_relations
+can reference only draft identities; identity_background_relations can reference
+only a draft identity and draft environment. Relation descriptions cannot introduce
+undeclared objects either. Omit an attribute/relation needing an undeclared object.
+This is a prompt constraint, not a new Python rejection rule. The draft is an
 object inventory, not reasoning. Python unconditionally removes this draft before
 repair/validation and before assigning atom IDs; it never counts toward K or
 provenance. A missing draft is tolerated. Verifier pass 2 returns matches only. This is a nested

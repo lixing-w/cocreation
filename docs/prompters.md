@@ -136,3 +136,9 @@ observations. Extractor/verifier-pass-1 JSON starts attributes with a temporary
 "all identities and all environments draft" inventory. Python removes it before
 validation, atomization or provenance. Pass 2 remains match-only. Observation
 prompts use a compact shared contract/schema instead of the full CPG document.
+
+The draft is a closed object inventory: later identity/environment entries and
+identity_relations/identity_background_relations endpoints must use draft-listed
+objects and UIDs only. No new objects, replacement UIDs or undeclared relation
+participants may appear after the draft. Omit attributes needing undeclared objects.
+This is a prompt instruction; draft removal and Python validation remain unchanged.
