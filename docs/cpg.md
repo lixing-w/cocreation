@@ -144,4 +144,9 @@ Use intuitive sentence grouping instead of forcing every concept into a response
 
 Images establish static states, not completed actions or motion. Video sampling
 cannot establish unseen events between frames. Audio is outside Qwen's observing
-scope. New H3 sound design is a generation choice, not a source observation.
+scope. H3 sound or music requires an explicit request in the supplied description;
+otherwise its audio sections use N/A.
+
+Both generation prompters use only the supplied description, ignoring all other
+media content. Each sourced requirement is immediately followed by `like in <its source label>`, repeated per requirement. Sparse selections stay sparse; no
+camera/lighting/background embellishment or minimum word count is required.

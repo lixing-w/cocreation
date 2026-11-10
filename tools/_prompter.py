@@ -68,6 +68,8 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
             if re.fullmatch(r'<Subject [1-9]\d*>', label) and target == 'h3' and catalog:
                 subjects.add(label)
             elif label in expected:
+                require(prompt[:match.start()].endswith('like in '), 'source_attachment',
+                        f'Each media label must immediately follow like in: {label}')
                 found.add(label)
             else:
                 raise PromptValidationError('unexpected_label',

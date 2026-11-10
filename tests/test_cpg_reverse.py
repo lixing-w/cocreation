@@ -112,10 +112,10 @@ class LoopTests(unittest.TestCase):
                 from tools._attribute_protocol import SOURCE
                 labels=[]
                 labels=list(media_catalog(refs).values())
-                return {'text':'An elegant portrait '+('with a hat from '+' and '.join(labels) if labels else 'of a satin arch')+'.'}
+                return {'text':'An elegant portrait '+('with a hat '+' and '.join('like in '+label for label in labels) if labels else 'of a satin arch')+'.'}
             if system.startswith('You are the VDN'):
-                return {'text': 'subject_definitions:\nA hat from <Picture 1>.\nsummary:\nA hat floats.\n'
-                    'retention_analysis:\nPreserve the hat from <Picture 1>.\ndetailed_description:\n'
+                return {'text': 'subject_definitions:\nA hat like in <Picture 1>.\nsummary:\nA hat floats.\n'
+                    'retention_analysis:\nPreserve the hat like in <Picture 1>.\ndetailed_description:\n'
                     '[Shot 1] A hat floats over sand.\noverall_soundscape:\nSoft wind.\nnon_diegetic_music:\nN/A'}
             self.fail(system)
         self.qwen=Model(respond)

@@ -25,6 +25,26 @@ line has `(from <Image N>)` or `(from <Video N>)`; unreferenced lines describe n
 content. Every supplied reference must be used. Rewriter output is pruned and
 renumbered by `prune_references` before these tools run. This can yield no references.
 
+## Selected-description scope
+
+Both prompters use only the supplied description as content. This is not image or
+video captioning: every unselected subject, background, action, lighting detail,
+style or camera property in the reference must be ignored. Media may only clarify
+the selected property, not expand the scene. A brief guides wording, not additional
+content. Do not add guide-example details, camera brands, lenses or film stocks.
+Sparse input can yield a single short sentence; Flux has no minimum word count.
+
+Each sourced requirement must immediately end with `like in <its source label>`;
+repeat this for every requirement even when they share a source. No detached label
+list, and H3 subject aliases do not replace inline source bindings. The parser
+rejects missing labels and media-label mentions without the `like in ` prefix.
+This checks label formatting, not semantic completeness or whether every clause
+stays within the selected content; those remain model instructions.
+
+For input `Green foliage is visible on the right. (from <Video 1>)`, the Flux output
+should be `Green foliage is visible on the right, like in <Video 1>.` The bear,
+rocks, wall or sunlight visible elsewhere in the reference must not be included.
+
 ## Media mapping
 
 | Source order | Qwen observation / Flux prompter output | Python-prepared Flux input | H3 output |
@@ -60,9 +80,9 @@ CPG inheritance test. Optional `<Subject N>` labels must be defined once.
 The first shot is `[Shot 1]`, with no timestamp. Later cuts use
 `[Shot N] At MM:SS.mmm,` with consecutive numbers and increasing times below the
 requested duration (5–15 seconds). A continuous camera move remains within one
-shot. H3 may design restrained, plausible new sound and subtle music, honoring
-silence requests. It cannot hear reference audio and must not claim voice/audio
-inheritance or add unrequested speech.
+shot. H3 uses `N/A` for soundscape and music unless the supplied description explicitly
+requests them. It must not add unselected ambience, music, speech, camera movements
+or actions just to fill its required sections. It cannot hear reference audio.
 
 Both tool prompts begin with their expert role and purpose, require direct output,
 include local task-specific examples, and reuse pinned repository guide material.
