@@ -292,3 +292,21 @@ python -m unittest discover -s tests -p 'test_qwen_prefix_cache.py' -v
 
 Prefix reuse saves repeated system prefill computation; it does not reduce context
 length. The cache file and in-memory tensors still represent every system token.
+
+
+### Generation prompt writers
+
+`tools/flux_prompter.py` and `tools/h3_prompter.py` use Qwen to write expert prompts
+from selected CPG attributes and original image/video references. New attributes may
+have no media source; every supplied reference must belong to an input attribute.
+Each tool embeds pinned official guides from `skills/` and has its own system KV
+cache. Both accept an optional shared Qwen instance and return `str | None`.
+See [input schema, usage, label mapping and generator input formats](docs/prompters.md).
+
+
+Attribute extraction logs default to `scratch/runs/extract_attribute_nodes/`, with
+one job subdirectory per call, including when a shared Qwen instance is supplied.
+`extract_attribute_nodes(..., output_dir=...)` overrides that root for the call.
+Qwen also accepts per-call `output_dir` without changing its instance default or
+reloading its model. Invalid extraction responses return `None` and print a diagnostic
+to stderr: JSON syntax locations, or schema field paths and failure reasons.

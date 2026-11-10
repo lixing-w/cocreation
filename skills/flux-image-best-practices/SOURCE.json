@@ -1,0 +1,70 @@
+{
+  "repository": "black-forest-labs/skills",
+  "revision": "8907d515b0ac270a988ec7a239add81ee13d6cba",
+  "files": {
+    "AGENTS.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/AGENTS.md",
+      "sha256": "6ad3167a100bda6a3e5baca0e607ee24bab6eb816d8127fcfd834c35d2085153"
+    },
+    "SKILL.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/SKILL.md",
+      "sha256": "3429e0b7be3c86cec1abbea68c4f8188dbb6fd1070b46be49908ffb92147db36"
+    },
+    "metadata.json": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/metadata.json",
+      "sha256": "a993cdada15500e293def482efbb8b3a55c4c788703e614852145946fffbc041"
+    },
+    "rules/_sections.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/_sections.md",
+      "sha256": "671ab85105753f711ee72f0813dfd5aa4d7df83da5a923a3052d79982e9f612c"
+    },
+    "rules/core-principles.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/core-principles.md",
+      "sha256": "1a98fd74e4e1cf64a8a0812ee063ef62046aa6587246a20b9d550965b8b2ee93"
+    },
+    "rules/flux1-models.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/flux1-models.md",
+      "sha256": "84af468f51581e963391594f73ea3a230f9936635e1c26cc3a2201ac28b0b46e"
+    },
+    "rules/flux2-models.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/flux2-models.md",
+      "sha256": "a25e6d7b40eff9661aabd5d9853ce7b04600c62502a3aadfff8d3fa37352a304"
+    },
+    "rules/hex-color-prompting.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/hex-color-prompting.md",
+      "sha256": "263215a3fdf9f27b4c7b18beb096ea367bb0193345b4b27794a3bde9a920b632"
+    },
+    "rules/i2i-prompting.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/i2i-prompting.md",
+      "sha256": "3c43cb97b48261866e0b4d1c250e634183d954d3837401c1a686843d8cd5e1e9"
+    },
+    "rules/json-structured-prompting.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/json-structured-prompting.md",
+      "sha256": "49178a356e92f62e6bba6c5b91190971c099783bd5e2aeccba5be4b5cfd6d098"
+    },
+    "rules/model-selection-guide.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/model-selection-guide.md",
+      "sha256": "18400b8cde13bdf62e89040d20b65b980031dd263dd5b09ee0b5c14f8f3124cb"
+    },
+    "rules/multi-reference-editing.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/multi-reference-editing.md",
+      "sha256": "9f5d8740ec18650eae72a62302093454a95cb496b5bb2f6829c8c45149ab35d1"
+    },
+    "rules/negative-prompt-alternatives.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/negative-prompt-alternatives.md",
+      "sha256": "6981b5cee7706f1b7d041bedf47ab78171e4c430789506dc282fa961e13b256e"
+    },
+    "rules/t2i-prompting.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/t2i-prompting.md",
+      "sha256": "3fff7ad25888910fe6e01b7dd0648cd3b72e8f37dac3286865f5688be8810596"
+    },
+    "rules/typography-text.md": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/skills/flux-image-best-practices/rules/typography-text.md",
+      "sha256": "7a27a88d1cd5ef652d5ef7d42f79d91ebc476732f5cc81eade54fc43a882f78a"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/black-forest-labs/skills/8907d515b0ac270a988ec7a239add81ee13d6cba/LICENSE",
+      "sha256": "bd01190967ecf4b5967dbd7e49f2be7f14f6948157ffb5086c3b79b52f7f8766"
+    }
+  }
+}

@@ -19,103 +19,143 @@ def _unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError('Duplicate JSON key')
+            raise ValueError(f'Duplicate JSON key {key!r}')
         result[key] = value
     return result
 
 
 def validate_attributes(result, artifact_id, kind):
-    """Validate result structure, source identity, cardinalities and local graph links.
+    """Validate decoded result for source artifact_id/kind; raise path-specific errors.
 
-    Args:
-        result: Decoded JSON object to validate without modifying it.
-        artifact_id: Expected source artifact identifier.
-        kind: Expected source modality, image or video.
-
-    Returns:
-        The original object, or raises ValueError on an invalid contract.
-        Structural validation cannot prove that a visual observation is true.
+    Return the original object without modifying it. Validation checks structure,
+    cardinalities and local graph bindings, not observational truth.
     """
-    def require(condition):
+    def require(condition, path, message):
         if not condition:
-            raise ValueError('Invalid attribute extraction response')
+            raise ValueError(f'{path}: {message}')
 
-    require(kind in ('image', 'video'))
-    require(isinstance(result, dict) and set(result) == {'artifact_id','kind','attributes'})
-    require(result['artifact_id'] == artifact_id and result['kind'] == kind)
+    require(kind in ('image', 'video'), '$.kind', 'expected image or video')
+    require(isinstance(result, dict), '$', 'expected a JSON object')
+    required = {'artifact_id', 'kind', 'attributes'}
+    require(set(result) == required, '$',
+            f'expected exactly {sorted(required)}; got {sorted(result)}')
+    require(result['artifact_id'] == artifact_id, '$.artifact_id', f'expected {artifact_id!r}')
+    require(result['kind'] == kind, '$.kind', f'expected {kind!r}')
     attrs = result['attributes']
-    require(isinstance(attrs, dict) and set(attrs) <= set(CATEGORY_RULES))
+    require(isinstance(attrs, dict), '$.attributes', 'expected an object of category arrays')
+    unknown = set(attrs) - set(CATEGORY_RULES)
+    require(not unknown, '$.attributes', f'unknown categories: {sorted(unknown)}')
     nodes = {}
     for category, entries in attrs.items():
+        category_path = f'$.attributes[{category!r}]'
         rule = CATEGORY_RULES[category]
-        require(isinstance(entries, list) and bool(entries))
-        require(kind != 'image' or rule['temporal'] != 'Yes')
+        require(isinstance(entries, list) and bool(entries), category_path,
+                'expected a nonempty array; omit unobserved categories')
+        require(kind != 'image' or rule['temporal'] != 'Yes', category_path,
+                'flow-in-time attributes cannot be established by an image')
         parents = set()
-        for entry in entries:
-            require(isinstance(entry, dict) and {'id','text'} <= set(entry) <=
-                    {'id','text','parent_id','links','time_range'})
-            require(all(value is not None for value in entry.values()))
+        for index, entry in enumerate(entries):
+            path = f'{category_path}[{index}]'
+            require(isinstance(entry, dict), path, 'expected an entry object')
+            require({'id','text'} <= set(entry), path, 'missing required id/text')
+            extra = set(entry) - {'id','text','parent_id','links','time_range'}
+            require(not extra, path, f'unsupported fields: {sorted(extra)}')
+            for field, value in entry.items():
+                require(value is not None, path+'.'+field, 'omit this field instead of null')
             key, text, parent = entry['id'], entry['text'], entry.get('parent_id')
-            require(isinstance(key, str) and re.fullmatch(r'[A-Za-z0-9_-]+', key))
-            require(key not in nodes)
-            require(isinstance(text, str) and 0 < len(text.split()) <= 15)
-            require(text.strip().lower() not in ('none','null','unknown'))
-            require(parent is None or isinstance(parent, str))
+            require(isinstance(key,str) and re.fullmatch(r'[A-Za-z0-9_-]+',key),
+                    path+'.id', 'expected a nonempty local identifier using letters/digits/_/-')
+            require(key not in nodes, path+'.id', f'duplicate local ID {key!r}')
+            require(isinstance(text,str), path+'.text', 'expected a string')
+            require(0 < len(text.split()) <= 15, path+'.text',
+                    f'expected 1–15 words; got {len(text.split())}')
+            require(text.strip().lower() not in ('none','null','unknown'), path+'.text',
+                    'omit unobserved entries instead of placeholder descriptions')
+            require(parent is None or (isinstance(parent,str) and bool(parent)),
+                    path+'.parent_id', 'expected a nonempty parent identifier')
             links = entry.get('links', [])
-            require(isinstance(links, list) and all(isinstance(x,str) for x in links))
-            require('links' not in entry or bool(links))
+            require(isinstance(links,list) and all(isinstance(x,str) and x for x in links),
+                    path+'.links', 'expected an array of nonempty identifiers')
+            require('links' not in entry or bool(links), path+'.links', 'omit empty links')
             if not rule['multiple']:
-                require(parent not in parents)
+                require(parent not in parents, path,
+                        f'at most one {category} entry for parent {parent!r}')
             parents.add(parent)
             span = entry.get('time_range')
-            require(kind != 'image' or span is None)
+            require(kind != 'image' or span is None, path+'.time_range',
+                    'time ranges must be omitted for images')
             if span is not None:
-                require(isinstance(span,list) and len(span)==2)
-                require(all(type(t) in (int,float) and math.isfinite(t) for t in span))
-                require(0 <= span[0] <= span[1])
-            nodes[key] = (category, entry)
+                require(isinstance(span,list) and len(span)==2, path+'.time_range',
+                        'expected [start_seconds, end_seconds]')
+                require(all(type(t) in (int,float) and math.isfinite(t) for t in span),
+                        path+'.time_range', 'timestamps must be finite numbers, not booleans')
+                require(0 <= span[0] <= span[1], path+'.time_range',
+                        'expected 0 <= start <= end')
+            nodes[key] = (category, entry, path)
     changes = {'identity.appearance_change':'identity.appearance',
                'identity.expression_change':'identity.expression',
                'identity.pose_change':'identity.body_pose',
                'environment_change':'environment', 'viewpoint_change':'viewpoint'}
-    for category, entry in nodes.values():
+    for category, entry, path in nodes.values():
         parent, links = entry.get('parent_id'), entry.get('links', [])
         if '.' in category:
-            require(parent in nodes and nodes[parent][0] == category.split('.')[0])
+            expected = category.split('.')[0]
+            require(parent in nodes, path+'.parent_id', f'missing/unresolved parent {parent!r}')
+            require(nodes[parent][0] == expected, path+'.parent_id',
+                    f'parent {parent!r} must have category {expected!r}')
         else:
-            require(parent is None)
-        require(all(link in nodes and link != entry['id'] for link in links))
+            require(parent is None, path+'.parent_id', 'undotted category cannot have parent_id')
+        for index, link in enumerate(links):
+            require(link in nodes, f'{path}.links[{index}]', f'unresolved ID {link!r}')
+            require(link != entry['id'], f'{path}.links[{index}]', 'self-link is not allowed')
         types = [nodes[link][0] for link in links]
         if category == 'identity_relations':
-            require(types == ['identity','identity'] and links[0] != links[1])
+            require(types == ['identity','identity'] and links[0] != links[1], path+'.links',
+                    'expected exactly two distinct identity endpoints')
         elif category == 'identity_background_relations':
-            require(types == ['identity','environment'])
+            require(types == ['identity','environment'], path+'.links',
+                    'expected exactly one identity then one environment')
         elif category in changes:
-            require(len(set(links)) >= 2 and all(t == changes[category] for t in types))
+            require(len(set(links)) >= 2 and all(t == changes[category] for t in types),
+                    path+'.links', f'expected at least two distinct {changes[category]} IDs')
             if parent is not None:
-                require(all(nodes[link][1].get('parent_id') == parent for link in links))
+                require(all(nodes[link][1].get('parent_id') == parent for link in links),
+                        path+'.links', f'all linked states must belong to parent {parent!r}')
         elif category == 'visible_text':
-            require(all(t == 'identity' for t in types) and len(set(links)) == len(links))
+            require(all(t == 'identity' for t in types) and len(set(links)) == len(links),
+                    path+'.links', 'optional carrier links must be distinct identities')
         else:
-            require(not links)
+            require(not links, path+'.links', f'links not supported for category {category!r}')
     return result
 
 
 def parse_attributes(text, artifact_id, kind):
-    """Parse model text for expected artifact_id/kind; return validated JSON or None."""
+    """Parse text for artifact_id/kind; report failures to stderr and return None.
+
+    Syntax errors include line/column; contract errors include a JSON field path.
+    CLI stdout remains reserved for the resulting JSON/null.
+    """
     try:
         if not isinstance(text, str):
-            return None
+            raise ValueError('$: model response text is missing or is not a string')
         text = text.strip()
         if text.startswith('```json') and text.endswith('```'):
             text = text[7:-3].strip()
         elif text.startswith('```') and text.endswith('```'):
             text = text[3:-3].strip()
+        def invalid_constant(value):
+            raise ValueError(f'JSON contains non-finite number {value!r}')
         result = json.loads(text, object_pairs_hook=_unique_object,
-                            parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
+                            parse_constant=invalid_constant)
         return validate_attributes(result, artifact_id, kind)
-    except (ValueError, TypeError, KeyError, RecursionError):
-        return None
+    except json.JSONDecodeError as error:
+        print(f'extract_attribute_nodes [{artifact_id}] JSON syntax error at '
+              f'line {error.lineno}, column {error.colno} (offset {error.pos}): {error.msg}',
+              file=sys.stderr)
+    except (ValueError, TypeError, KeyError, RecursionError) as error:
+        print(f'extract_attribute_nodes [{artifact_id}] {type(error).__name__}: {error}',
+              file=sys.stderr)
+    return None
 
 
 def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
@@ -126,7 +166,8 @@ def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
     Args:
         artifact: Reference or mapping with artifact_id, path and kind (image/video).
         qwen: Optional shared Qwen instance; never closed by this tool.
-        output_dir: Run-log directory for an internally created Qwen instance.
+        output_dir: Per-call run root, default scratch/runs/extract_attribute_nodes;
+            also applies when reusing a supplied Qwen instance.
         max_new_tokens: Response budget; truncated JSON returns None.
         video_fps: Requested official video sampling rate.
         video_max_frames: Official video sampling frame cap.
@@ -145,11 +186,14 @@ def extract_attribute_nodes(artifact, *, qwen=None, output_dir=None,
     if not path.is_file():
         raise ValueError('artifact path must be a local file')
     reference = Reference(artifact.artifact_id, path, artifact.kind)
+    output_dir = Path(output_dir).expanduser().resolve() if output_dir is not None else (
+        scratch_root() / 'runs/extract_attribute_nodes')
     owned = qwen is None
     model = Qwen(output_dir=output_dir) if owned else qwen
     try:
         response = model(extraction_prompt(reference.artifact_id, reference.kind), [reference],
                          system_prompt=extraction_system_prompt(), max_new_tokens=max_new_tokens,
+                         output_dir=output_dir,
                          system_cache_path=(scratch_root() / "kvcache/extract_attribute_nodes/system_prompt.kvcache"
                                             if use_system_cache else None),
                          video_fps=video_fps, video_max_frames=video_max_frames,

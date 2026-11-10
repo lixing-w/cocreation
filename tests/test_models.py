@@ -106,7 +106,10 @@ assert not {'torch','transformers','diffusers','qwen_vl_utils'} & set(sys.module
                 with Qwen(output_dir=tmp) as model:
                     result = model('hello')
                     session = model._session
-                    model('hello')
+                    override = Path(tmp).resolve() / 'extraction'
+                    routed = model('hello', output_dir=override)
+                    self.assertEqual(Path(routed['request_path']).parent.parent, override)
+                    self.assertEqual(model.output_dir, Path(tmp).resolve())
                     self.assertIs(model._session, session)
             self.assertEqual(result['text'], 'answer')
             self.assertTrue(Path(result['request_path']).is_file())

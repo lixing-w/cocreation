@@ -1,4 +1,7 @@
 import copy
+import io
+import os
+from contextlib import redirect_stderr
 import json
 from pathlib import Path
 import tempfile
@@ -103,3 +106,31 @@ class ExtractionTests(unittest.TestCase):
         with self.assertRaises(ValueError):model('user',system_cache_path='/tmp/cache',dry_run=True)
         request=model('user',system_prompt='Rules',system_cache_path='/tmp/cache',dry_run=True)
         self.assertEqual(request['options']['system_cache_path'],str(Path('/tmp/cache').resolve()))
+
+    def test_error_messages_identify_location(self):
+        bad=copy.deepcopy(IMAGE_EXAMPLE)
+        bad['attributes']['identity.appearance'][0]['parent_id']='missing'
+        for value,expected in [(json.dumps(bad),"$.attributes['identity.appearance'][0].parent_id"),
+                               ('{\n"x":}', 'line 2, column'),
+                               ('{"x":1,"x":2}', "Duplicate JSON key 'x'"),
+                               (None, 'response text is missing')]:
+            stream=io.StringIO()
+            with redirect_stderr(stream):
+                self.assertIsNone(parse_attributes(value,'example_image','image'))
+            self.assertIn(expected,stream.getvalue())
+
+    def test_output_root_owned_and_shared(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,{'COCREATION_SCRATCH':tmp}):
+            path=Path(tmp)/'image.png';path.touch()
+            ref=Reference('example_image',path,'image')
+            model=Mock(return_value={'text':json.dumps(IMAGE_EXAMPLE)})
+            default=Path(tmp).resolve()/'runs/extract_attribute_nodes'
+            with patch('tools.extract_attribute_nodes.Qwen',return_value=model) as factory:
+                extract_attribute_nodes(ref)
+                factory.assert_called_once_with(output_dir=default)
+                self.assertEqual(model.call_args.kwargs['output_dir'],default)
+            extract_attribute_nodes(ref,qwen=model)
+            self.assertEqual(model.call_args.kwargs['output_dir'],default)
+            custom=Path(tmp).resolve()/'custom'
+            extract_attribute_nodes(ref,qwen=model,output_dir=custom)
+            self.assertEqual(model.call_args.kwargs['output_dir'],custom)

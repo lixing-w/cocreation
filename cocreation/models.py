@@ -73,7 +73,7 @@ class _System:
             self.close()
             raise
 
-    def _invoke(self, prompt, references, options, dry_run):
+    def _invoke(self, prompt, references, options, dry_run, *, output_dir=None):
         request = prepare(prompt, list(references or []))
         request.update(backend=self.backend, model_id=self.model_id,
                        runtime=asdict(self.runtime), options=options)
@@ -89,7 +89,8 @@ class _System:
             now = datetime.datetime.now()
             formatted_time = now.strftime("%y-%m-%d-%H-%M-%S-") + now.strftime("%f")[:3]
             # e.g. 26-11-08-17-29-43-823
-            job_dir = self.output_dir / (formatted_time + '-' + uuid.uuid4().hex[:8])
+            run_root = self.output_dir if output_dir is None else Path(output_dir).expanduser().resolve()
+            job_dir = run_root / (formatted_time + '-' + uuid.uuid4().hex[:8])
             job_dir.mkdir(parents=True)
             request_path = job_dir / "request.json"
             request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2))
@@ -125,7 +126,7 @@ class Qwen(_System):
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
                  max_pixels=512 * 512, seed=0, dry_run=False, system_prompt=None,
-                 system_cache_path=None):
+                 system_cache_path=None, output_dir=None):
         if system_prompt is not None and not isinstance(system_prompt, str):
             raise TypeError("system_prompt must be a string or None")
         if system_cache_path is not None:
@@ -137,7 +138,7 @@ class Qwen(_System):
         return self._invoke(prompt, references, dict(max_new_tokens=max_new_tokens,
             video_fps=video_fps, video_max_frames=video_max_frames,
             max_pixels=max_pixels, seed=seed, system_prompt=system_prompt,
-            system_cache_path=system_cache_path), dry_run)
+            system_cache_path=system_cache_path), dry_run, output_dir=output_dir)
 
 
 class Flux(_System):
