@@ -307,11 +307,35 @@ class ToolTests(unittest.TestCase):
         newrows=atomize(self.observed)
         model.return_value={'text':json.dumps({'matches':[{'observed_id':newrows[2]['id'],
                                                           'source_id':self.rows[2]['id']}]})}
-        self.assertIsNone(attribute_verifier(mode='verify_inheritance',generated_media=self.new,
-            observed_attributes=self.observed,selected_sources=sources,qwen=model))
+        self.assertEqual(attribute_verifier(mode='verify_inheritance',generated_media=self.new,
+            observed_attributes=self.observed,selected_sources=sources,qwen=model),[])
         model.return_value={'text':'null'}
         self.assertIsNone(attribute_verifier(mode='verify_inheritance',generated_media=self.new,
             observed_attributes=self.observed,selected_sources=sources,qwen=model))
+
+    def test_verifier_repairs_individual_matches(self):
+        good={'observed_id':'<Image 1>_a0000','source_id':'<Image 2>_a0000'}
+        later={'observed_id':'<Image 1>_a0001','source_id':'<Image 2>_a0001'}
+        matches=[good,
+                 {'observed_id':'<Image 1>_a0001','source_id':'<Image 2>_a0000'},
+                 None, good,
+                 {'observed_id':'unknown','source_id':'<Image 2>_a0000'},
+                 dict(later, reason='Same glaze.')]
+        model=Mock(return_value={'text':json.dumps({'matches':matches,'reason':'Comparison'})})
+        log=io.StringIO()
+        with redirect_stderr(log):
+            result=attribute_verifier(mode='verify_inheritance',generated_media=self.new,
+                observed_attributes=self.observed,
+                selected_sources=[dict(reference=self.old,attributes=self.rows)],qwen=model)
+        self.assertEqual(result,[dict(observed_id='artifact_1_a0000',source_id='artifact_0_a0000'),
+                                 dict(observed_id='artifact_1_a0001',source_id='artifact_0_a0001')])
+        self.assertIn('Matched categories must agree',log.getvalue())
+        self.assertEqual(log.getvalue().count('dropped matches['),4)
+        for malformed in ({'matches':None},{'matches':{}},{}):
+            model.return_value={'text':json.dumps(malformed)}
+            self.assertIsNone(attribute_verifier(mode='verify_inheritance',generated_media=self.new,
+                observed_attributes=self.observed,
+                selected_sources=[dict(reference=self.old,attributes=self.rows)],qwen=model))
 
     def test_verifier_local_ids_roundtrip_and_input_immutability(self):
         observed_before=copy.deepcopy(self.observed)

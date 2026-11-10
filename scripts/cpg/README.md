@@ -74,8 +74,11 @@ Pass 2 sees new media, its revised observations, and **only selected original
 attributes** with their old carrier media. For variated atoms this means the
 pre-imaginer text, not the new requested value. It returns human-intuitive conceptual/visual property-level
 inheritance pairs, not a rewritten JSON. Empty matches is success, null is failure.
-The code rejects unknown/unselected IDs, category mismatch, duplicate pairs and
-inconsistent object/endpoint correspondence. Visual truth remains a VLM judgment;
+The code drops individual pairs with unknown/unselected IDs, category mismatch,
+duplicates or inconsistent object/endpoint correspondence, keeping valid pairs in
+response order (first valid binding wins). Extra commentary fields are ignored.
+If all pairs are dropped, the result is a successful empty list; malformed
+envelopes or non-array matches still fail. Each dropped pair logs its reason. Visual truth remains a VLM judgment;
 there is no claim of perfect verification. No historical search for dropped or
 previously unselected properties is implemented.
 

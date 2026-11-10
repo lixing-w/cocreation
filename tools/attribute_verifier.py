@@ -57,6 +57,27 @@ def restore_matches(matches, maps):
     return result
 
 
+def repair_matches(matches, maps, observed, selected):
+    """Keep valid pairs in response order; discard locally invalid pairs atomically."""
+    if not isinstance(matches, list):
+        raise ValueError('Expected matches array')
+    accepted = []
+    for index, match in enumerate(matches):
+        try:
+            # Extra model commentary is harmless; retain only the two contract fields.
+            if isinstance(match, dict):
+                match = {key: match[key] for key in ('observed_id', 'source_id') if key in match}
+            restored = restore_matches([match], maps)
+            # Revalidate from scratch so rejected relations cannot leave partial bindings.
+            validate_matches(accepted + restored, observed, selected)
+        except (ValueError, TypeError, KeyError) as error:
+            print(f'attribute_verifier inheritance: dropped matches[{index}]: {error}',
+                  file=sys.stderr)
+            continue
+        accepted.extend(restored)
+    return accepted
+
+
 def attribute_verifier(*, mode, generated_media, target_attributes=None,
                        observed_attributes=None, selected_sources=None, qwen=None,
                        output_dir=None, max_new_tokens=4096, video_fps=2.0,
@@ -70,7 +91,8 @@ def attribute_verifier(*, mode, generated_media, target_attributes=None,
     returned pairs to original IDs. It compares conceptual/visual attribute equivalence
     and never edits observations or provenance. Input/operational errors
     raise; pass 1 repairs harmless omissions/wrapping before strict validation.
-    Unrecoverable output returns None; pass 2 matches stay strict. No automatic retry.
+    Pass 2 drops invalid pairs and preserves valid ones (first valid binding wins).
+    Unrecoverable output returns None; all pairs dropped returns []. No automatic retry.
     """
     generated = reference(generated_media)
     options = dict(qwen=qwen, output_dir=output_dir, max_new_tokens=max_new_tokens,
@@ -118,9 +140,9 @@ def attribute_verifier(*, mode, generated_media, target_attributes=None,
     if result is None:
         return None
     try:
-        if not isinstance(result, dict) or set(result) != {'matches'}:
+        if not isinstance(result, dict) or 'matches' not in result:
             raise ValueError('Expected matches object')
-        return validate_matches(restore_matches(result['matches'], maps), observed, selected)
+        return repair_matches(result['matches'], maps, observed, selected)
     except (ValueError, TypeError, KeyError, RecursionError) as error:
         print(f'attribute_verifier inheritance: {error}', file=sys.stderr)
         return None
