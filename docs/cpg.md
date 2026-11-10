@@ -17,37 +17,49 @@ environment or viewpoint; undotted entries are counted per artifact. `No` means 
 most one, not that a value must always be present. Unknown/inapplicable values are
 omitted rather than invented.
 
+**short name** is unique across all categories and is the literal category suffix
+in an entry ID; dots are retained. A child ID is
+`<full parent_id>_<self>_<short name>`; a parentless ID is `<self>_<short name>`.
+`self` is a meaningful name or a sibling-distinguishing label, using letters,
+digits or hyphens. For example: `woman0_id`, `woman0_id_d1_id.desc`,
+`canal0_env`, `canal0_env_s0_env.space`, `canal0_env_s0_env.season`.
+Every ID must remain unique across the entire artifact. Use distinct self labels
+for multiple entries of the same category under one parent. Reuse the full IDs in
+parent_id, links and textual references; artifact_id is prefixed only downstream.
+Season means a visibly supported season, not time of day; late afternoon belongs
+to environment.time_of_day. Omit uncertain seasons.
+
 ### Identities
 
-| Category | Definition and scope | Need flow in time? | Allow multiple? |
-|---|---|---|---|
-| identity | A perceptually coherent subject or meaningful object group | No | Yes |
-| &nbsp;&nbsp;identity.description | Overall identity/design description | No | No |
-| &nbsp;&nbsp;identity.appearance | Local appearance: clothing, color, material, shape, texture | No | Yes |
-| &nbsp;&nbsp;identity.body_pose | A body's configuration and orientation at a given state | No | Yes |
-| &nbsp;&nbsp;identity.expression | A visible facial/expressive state | No | Yes |
-| &nbsp;&nbsp;identity.appearance_change | Timeline connecting this identity's appearance states | Yes | No |
-| &nbsp;&nbsp;identity.expression_change | Timeline connecting this identity's expression states | Yes | No |
-| &nbsp;&nbsp;identity.pose_change | Timeline connecting this identity's body-pose states | Yes | No |
-| &nbsp;&nbsp;identity.motion | A subject's activity and phases, including trajectory, speed, rhythm or deformation | Yes | Yes |
+| Category | short name | Definition and scope | Need flow in time? | Allow multiple? |
+|---|---|---|---|---|
+| identity | id | A perceptually coherent subject or meaningful object group | No | Yes |
+| &nbsp;&nbsp;identity.description | id.desc | Overall identity/design description | No | No |
+| &nbsp;&nbsp;identity.appearance | id.app | Local appearance: clothing, color, material, shape, texture | No | Yes |
+| &nbsp;&nbsp;identity.body_pose | id.pose | A body's configuration and orientation at a given state | No | Yes |
+| &nbsp;&nbsp;identity.expression | id.expr | A visible facial/expressive state | No | Yes |
+| &nbsp;&nbsp;identity.appearance_change | id.appc | Timeline connecting this identity's appearance states | Yes | No |
+| &nbsp;&nbsp;identity.expression_change | id.exprc | Timeline connecting this identity's expression states | Yes | No |
+| &nbsp;&nbsp;identity.pose_change | id.posec | Timeline connecting this identity's body-pose states | Yes | No |
+| &nbsp;&nbsp;identity.motion | id.mot | A subject's activity and phases, including trajectory, speed, rhythm or deformation | Yes | Yes |
 
 **Fictional video example (6 seconds).** A woman in an open red coat stands facing
 left, buttons her coat, turns toward the camera, smiles, and sits on a stool.
 
-- `identity`: `person_A` (woman), `stool_A` (stool). The following children belong
-  to `person_A`; the stool can have its own description and appearance.
+- `identity`: `woman0_id` (woman), `stool0_id` (stool). The following children belong
+  to `woman0_id`; the stool can have its own description and appearance.
 - `identity.description`: an adult woman with short curly hair.
-- `identity.appearance`: `a1` open red wool coat (0–2 s), `a2` buttoned red wool
-  coat (2–6 s), `a3` short curly black hair (0–6 s).
-- `identity.body_pose`: `p1` upright, facing left (0–2 s); `p2` upright, facing
-  camera (3–4 s); `p3` seated, knees bent (5–6 s).
-- `identity.expression`: `e1` neutral mouth (0–3 s); `e2` visible smile (4–6 s).
-- `identity.appearance_change`: "As the coat closes, a1 changes to a2 by 2 s.
-  a3 is present throughout and unchanged."
+- `identity.appearance`: `woman0_id_a1_id.app` open red wool coat (0–2 s), `woman0_id_a2_id.app` buttoned red wool
+  coat (2–6 s), `woman0_id_a3_id.app` short curly black hair (0–6 s).
+- `identity.body_pose`: `woman0_id_p1_id.pose` upright, facing left (0–2 s); `woman0_id_p2_id.pose` upright, facing
+  camera (3–4 s); `woman0_id_p3_id.pose` seated, knees bent (5–6 s).
+- `identity.expression`: `woman0_id_e1_id.expr` neutral mouth (0–3 s); `woman0_id_e2_id.expr` visible smile (4–6 s).
+- `identity.appearance_change`: "As the coat closes, woman0_id_a1_id.app changes to woman0_id_a2_id.app by 2 s.
+  woman0_id_a3_id.app is present throughout and unchanged."
 - `identity.expression_change`: "The person starts with the neutral expression
-  e1, then changes to the smile e2 during 3–4 s and keeps smiling through 6 s."
-- `identity.pose_change`: "The person starts with p1, then changes to p2 as she
-  turns toward the camera during 2–3 s, then changes to p3 as she lowers herself
+  woman0_id_e1_id.expr, then changes to the smile woman0_id_e2_id.expr during 3–4 s and keeps smiling through 6 s."
+- `identity.pose_change`: "The person starts with woman0_id_p1_id.pose, then changes to woman0_id_p2_id.pose as she
+  turns toward the camera during 2–3 s, then changes to woman0_id_p3_id.pose as she lowers herself
   onto the stool during 4–5 s. She remains seated through the end."
 - `identity.motion`: three entries: "The person buttons her coat during 0–2 s,
   bringing its front panels together"; "She turns toward the camera during 2–3 s,
@@ -58,13 +70,13 @@ left, buttons her coat, turns toward the camera, smiles, and sits on a stool.
 **Fictional image example.** A woman with short curly hair sits on a wooden stool,
 wearing a buttoned red wool coat and smiling at the camera.
 
-- `identity`: `person_B` and `stool_B`, two coherent subjects.
-- `identity.description`: for `person_B`, an adult woman with short curly hair;
-  for `stool_B`, a four-legged wooden stool.
-- `identity.appearance`: for `person_B`, red wool coat and curly black hair as
-  separate entries; for `stool_B`, pale wood grain.
-- `identity.body_pose`: for `person_B`, seated upright with bent knees.
-- `identity.expression`: for `person_B`, a visible smile.
+- `identity`: `woman1_id` and `stool1_id`, two coherent subjects.
+- `identity.description`: for `woman1_id`, an adult woman with short curly hair;
+  for `stool1_id`, a four-legged wooden stool.
+- `identity.appearance`: for `woman1_id`, red wool coat and curly black hair as
+  separate entries; for `stool1_id`, pale wood grain.
+- `identity.body_pose`: for `woman1_id`, seated upright with bent knees.
+- `identity.expression`: for `woman1_id`, a visible smile.
 - `identity.appearance_change`, `identity.expression_change`, `identity.pose_change`,
   `identity.motion`: absent. The still supports a seated state,
   not a claim that she sat down, turned, or changed expression.
@@ -92,33 +104,33 @@ still an open design choice.
 `background` in relation endpoints refers to an `environment` ID; it is not a second
 unconnected object type. An environment is a coherent setting, physical or imagined.
 
-| Category | Definition and scope | Need flow in time? | Allow multiple? |
-|---|---|---|---|
-| environment | A distinct setting/background, independent of shot boundaries | No | Yes |
-| &nbsp;&nbsp;environment.description | Overall setting, including abstract or virtual worlds | No | No |
-| &nbsp;&nbsp;environment.location | Place, spatial layout or imagined spatial context | No | No |
-| &nbsp;&nbsp;environment.space_type | Indoor, outdoor, mixed, or non-spatial/abstract | No | No |
-| &nbsp;&nbsp;environment.season | Visible seasonal setting; optional for nonliteral worlds | No | No |
-| &nbsp;&nbsp;environment.weather | Weather or analogous atmospheric phenomena | No | Yes |
-| &nbsp;&nbsp;environment.time_of_day | Visible day/night or other temporal setting cues | No | No |
-| &nbsp;&nbsp;environment.lighting | Illumination, direction, contrast and visible light sources | No | Yes |
-| &nbsp;&nbsp;environment.structure | Architecture, terrain, layers or abstract geometric fields | No | Yes |
-| &nbsp;&nbsp;environment.atmosphere | Visible atmospheric qualities: fog, openness, density, haze | No | Yes |
-| &nbsp;&nbsp;environment.mood | Perceived scene tone, such as tranquil, tense or surreal | No | Yes |
-| &nbsp;&nbsp;environment.motion | Within-setting changes, each bound to one environment | Yes | Yes |
-| environment_change | Global timeline connecting distinct environment IDs | Yes | No |
+| Category | short name | Definition and scope | Need flow in time? | Allow multiple? |
+|---|---|---|---|---|
+| environment | env | A distinct setting/background, independent of shot boundaries | No | Yes |
+| &nbsp;&nbsp;environment.description | env.desc | Overall setting, including abstract or virtual worlds | No | No |
+| &nbsp;&nbsp;environment.location | env.loc | Place, spatial layout or imagined spatial context | No | No |
+| &nbsp;&nbsp;environment.space_type | env.space | Indoor, outdoor, mixed, or non-spatial/abstract | No | No |
+| &nbsp;&nbsp;environment.season | env.season | Visible seasonal setting; optional for nonliteral worlds | No | No |
+| &nbsp;&nbsp;environment.weather | env.weather | Weather or analogous atmospheric phenomena | No | Yes |
+| &nbsp;&nbsp;environment.time_of_day | env.tod | Visible day/night or other temporal setting cues | No | No |
+| &nbsp;&nbsp;environment.lighting | env.light | Illumination, direction, contrast and visible light sources | No | Yes |
+| &nbsp;&nbsp;environment.structure | env.struct | Architecture, terrain, layers or abstract geometric fields | No | Yes |
+| &nbsp;&nbsp;environment.atmosphere | env.atm | Visible atmospheric qualities: fog, openness, density, haze | No | Yes |
+| &nbsp;&nbsp;environment.mood | env.mood | Perceived scene tone, such as tranquil, tense or surreal | No | Yes |
+| &nbsp;&nbsp;environment.motion | env.mot | Within-setting changes, each bound to one environment | Yes | Yes |
+| environment_change | envc | Global timeline connecting distinct environment IDs | Yes | No |
 
 **Fictional video example (9 seconds).** Two shots show the same office: daylight
 enters a window and a desk lamp switches on. A cut reveals a snowy courtyard in
 winter daylight, with falling snow and mist drifting between bare trees.
 
-- `environment`: `office_A` (0–6 s, two shots), `courtyard_A` (6–9 s, one shot).
+- `environment`: `office0_env` (0–6 s, two shots), `courtyard0_env` (6–9 s, one shot).
 - `environment.description`: a compact furnished office; a snow-covered courtyard.
 - `environment.location`: desk beside a window in an office; courtyard enclosed
   by brick walls. No city or other unseen location is inferred.
-- `environment.space_type`: indoor for `office_A`; outdoor for `courtyard_A`.
-- `environment.season`: visibly wintry for `courtyard_A`; omitted for `office_A`.
-- `environment.weather`: falling snow for `courtyard_A`; omitted for `office_A`.
+- `environment.space_type`: indoor for `office0_env`; outdoor for `courtyard0_env`.
+- `environment.season`: visibly wintry for `courtyard0_env`; omitted for `office0_env`.
+- `environment.weather`: falling snow for `courtyard0_env`; omitted for `office0_env`.
 - `environment.time_of_day`: daylight for both environments.
 - `environment.lighting`: office window daylight and warm desk-lamp light
   (after 3 s), separate entries; diffuse overcast light for the courtyard.
@@ -127,18 +139,18 @@ winter daylight, with falling snow and mist drifting between bare trees.
 - `environment.atmosphere`: clear office air; thin courtyard mist.
 - `environment.mood`: orderly and quiet office; hushed, bleak courtyard. These
   are visual impressions, not inferred emotions of a person.
-- `environment.motion`: for `office_A`, "At 3 s, the desk lamp switches on,
+- `environment.motion`: for `office0_env`, "At 3 s, the desk lamp switches on,
   adding warm light to the desk while window daylight remains present." For
-  `courtyard_A`, two entries: "Snow falls through the courtyard during 6–9 s";
+  `courtyard0_env`, two entries: "Snow falls through the courtyard during 6–9 s";
   "Thin mist drifts between the bare trees during 6–9 s."
-- `environment_change`: one global entry: "The video begins in office_A and
+- `environment_change`: one global entry: "The video begins in office0_env and
   stays in that environment across the first two shots. At 6 s, the setting
-  changes to courtyard_A, which remains visible through the end."
+  changes to courtyard0_env, which remains visible through the end."
 
 **Fictional image example.** An abstract background contains violet planar bands,
 a gold circular glow, and a translucent haze, with no horizon or recognizable place.
 
-- `environment`: `abstract_A`, one coherent nonliteral background.
+- `environment`: `abstract0_env`, one coherent nonliteral background.
 - `environment.description`: violet geometric fields surrounding a gold glow.
 - `environment.location`: omitted; no spatial location can be established.
 - `environment.space_type`: non-spatial/abstract.
@@ -169,47 +181,47 @@ Attribute states may carry time ranges without themselves requiring flow.
 
 ### Relations, viewpoints and global attributes
 
-| Category | Definition and scope | Need flow in time? | Allow multiple? |
-|---|---|---|---|
-| identity_relations | Spatial/contact/interaction relation between exactly two identities | Optional | Yes |
-| identity_background_relations | Placement/scale/occlusion relation between one identity and one background | Optional | Yes |
-| viewpoint | One shot's viewing/framing configuration, including its internal stages | No | Yes |
-| &nbsp;&nbsp;viewpoint.viewpoint_motion | Continuous viewing/framing evolution within one shot | Yes | No |
-| viewpoint_change | Global timeline connecting viewpoints across shot transitions | Yes | No |
-| style | Artifact-wide rendering medium and visual treatment | No | No |
-| visible_text | Actually legible text, its presentation and placement | No | Yes |
+| Category | short name | Definition and scope | Need flow in time? | Allow multiple? |
+|---|---|---|---|---|
+| identity_relations | idr | Spatial/contact/interaction relation between exactly two identities | Optional | Yes |
+| identity_background_relations | idbr | Placement/scale/occlusion relation between one identity and one background | Optional | Yes |
+| viewpoint | vp | One shot's viewing/framing configuration, including its internal stages | No | Yes |
+| &nbsp;&nbsp;viewpoint.viewpoint_motion | vp.mot | Continuous viewing/framing evolution within one shot | Yes | No |
+| viewpoint_change | vpc | Global timeline connecting viewpoints across shot transitions | Yes | No |
+| style | st | Artifact-wide rendering medium and visual treatment | No | No |
+| visible_text | txt | Actually legible text, its presentation and placement | No | Yes |
 
 **Fictional video example (8 seconds).** In one office, a woman passes a red mug
 across a desk to a man. The first shot begins wide, pushes toward her hands, then
 arcs to her right. At 5 s, a cut shows a static close-up of the man holding the mug.
 A wall sign reads “STUDIO”. The whole clip uses a watercolor rendering treatment.
 
-- `identity_relations`: (`woman_A`, `man_A`) face each other across the desk;
-  (`woman_A`, `mug_A`) holds then releases the mug;
-  (`man_A`, `mug_A`) receives then holds it. Each entry has exactly two endpoints.
-- `identity_background_relations`: (`woman_A`, `office_A`) occupies the left
-  foreground of shot 1; (`man_A`, `office_A`) moves from background placement
+- `identity_relations`: (`woman0_id`, `man0_id`) face each other across the desk;
+  (`woman0_id`, `mug0_id`) holds then releases the mug;
+  (`man0_id`, `mug0_id`) receives then holds it. Each entry has exactly two endpoints.
+- `identity_background_relations`: (`woman0_id`, `office0_env`) occupies the left
+  foreground of shot 1; (`man0_id`, `office0_env`) moves from background placement
   in shot 1 to filling most of shot 2. Each binds one identity and one background;
   the latter describes changing depicted placement, not necessarily walking.
-- `viewpoint`: `v1` (0–5 s), the continuous wide-to-close arcing shot;
-  `v2` (5–8 s), the static frontal close-up. Both depict `office_A`.
-- `viewpoint.viewpoint_motion`: one entry under `v1`: "The camera holds a wide
+- `viewpoint`: `shot0_vp` (0–5 s), the continuous wide-to-close arcing shot;
+  `shot1_vp` (5–8 s), the static frontal close-up. Both depict `office0_env`.
+- `viewpoint.viewpoint_motion`: one entry under `shot0_vp`: "The camera holds a wide
   view during 0–1 s, pushes forward toward the woman's hands during 1–3 s, then
-  arcs to her right during 3–5 s without a cut." Absent under static `v2`.
-- `viewpoint_change`: one global entry: "At 5 s, a hard cut changes v1's moving
-  view of the handover to v2's static frontal close-up of the man holding the mug."
+  arcs to her right during 3–5 s without a cut." Absent under static `shot1_vp`.
+- `viewpoint_change`: one global entry: "At 5 s, a hard cut changes shot0_vp's moving
+  view of the handover to shot1_vp's static frontal close-up of the man holding the mug."
 - `style`: one global watercolor treatment with soft pigment edges.
 - `visible_text`: “STUDIO”, dark uppercase letters on the office wall sign,
-  legible in the wide portion of `v1`.
+  legible in the wide portion of `shot0_vp`.
 
 **Fictional image example.** A watercolor image shows a woman to the left of a man
 at an office desk. She holds a red mug in the foreground; a wall sign reads “STUDIO”.
 
-- `identity_relations`: (`woman_B`, `man_B`) woman left of man;
-  (`woman_B`, `mug_B`) hand in contact with mug handle. Each is a static relation.
-- `identity_background_relations`: (`woman_B`, `office_B`) left foreground;
-  (`mug_B`, `office_B`) small object near the lower center of the depicted scene.
-- `viewpoint`: `v_image`, one eye-level medium-wide view of the desk and people.
+- `identity_relations`: (`woman1_id`, `man1_id`) woman left of man;
+  (`woman1_id`, `mug1_id`) hand in contact with mug handle. Each is a static relation.
+- `identity_background_relations`: (`woman1_id`, `office1_env`) left foreground;
+  (`mug1_id`, `office1_env`) small object near the lower center of the depicted scene.
+- `viewpoint`: `shot2_vp`, one eye-level medium-wide view of the desk and people.
 - `viewpoint.viewpoint_motion`, `viewpoint_change`: absent; there is no observed
   camera movement or transition in the image.
 - `style`: one global watercolor treatment with soft pigment edges.

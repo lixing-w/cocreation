@@ -37,11 +37,11 @@ class ExtractionTests(unittest.TestCase):
             lambda d: d['attributes'].update(style=[]),
             lambda d: d['attributes']['style'][0].update(text='word '*16),
             lambda d: d['attributes']['identity.appearance'][0].update(parent_id='missing'),
-            lambda d: d['attributes']['identity.appearance_change'][0].update(links=['woman0_p1','woman0_p2']),
-            lambda d: d['attributes']['identity.pose_change'][0].update(links=['woman0_p1']),
+            lambda d: d['attributes']['identity.appearance_change'][0].update(links=['woman0_id_p1_id.pose','woman0_id_p2_id.pose']),
+            lambda d: d['attributes']['identity.pose_change'][0].update(links=['woman0_id_p1_id.pose']),
             lambda d: d['attributes']['identity'][0].update(time_range=[float('nan'),2]),
             lambda d: d['attributes']['style'].append(copy.deepcopy(d['attributes']['style'][0])),
-            lambda d: d['attributes']['identity_background_relations'][0].update(links=['office0','woman0']),
+            lambda d: d['attributes']['identity_background_relations'][0].update(links=['office0_env','woman0_id']),
         ]
         for mutate in mutations:
             d=copy.deepcopy(VIDEO_EXAMPLE); mutate(d)
@@ -145,5 +145,20 @@ class ExtractionTests(unittest.TestCase):
                     self.assertTrue(entry['id'].startswith(entry['parent_id']+'_'))
         structures=VIDEO_EXAMPLE['attributes']['environment.structure']
         self.assertGreaterEqual(len(structures),2)
-        self.assertEqual({e['parent_id'] for e in structures},{'office0','courtyard0'})
+        self.assertEqual({e['parent_id'] for e in structures},{'office0_env','courtyard0_env'})
         self.assertIn('across the ENTIRE artifact',extraction_system_prompt())
+
+    def test_short_names_match_documentation_and_example_suffixes(self):
+        from tools.extract_attribute_nodes_prompts import CATEGORY_SHORT_NAMES
+        names=CATEGORY_SHORT_NAMES
+        self.assertEqual(set(names),set(CATEGORY_RULES))
+        self.assertEqual(len(names),len(set(names.values())))
+        docs=(Path(__file__).resolve().parents[1]/'docs/cpg.md').read_text()
+        for category,short in names.items():
+            row=f'{category} | {short} |'
+            self.assertIn(row,docs)
+            self.assertIn(row,DEFINITIONS)
+        for example in (VIDEO_EXAMPLE,IMAGE_EXAMPLE):
+            for category,entries in example['attributes'].items():
+                for entry in entries:
+                    self.assertTrue(entry['id'].endswith('_'+names[category]))

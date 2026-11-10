@@ -63,8 +63,8 @@ def validate_attributes(result, artifact_id, kind):
             for field, value in entry.items():
                 require(value is not None, path+'.'+field, 'omit this field instead of null')
             key, text, parent = entry['id'], entry['text'], entry.get('parent_id')
-            require(isinstance(key,str) and re.fullmatch(r'[A-Za-z0-9_-]+',key),
-                    path+'.id', 'expected a nonempty local identifier using letters/digits/_/-')
+            require(isinstance(key,str) and re.fullmatch(r'[A-Za-z0-9_.-]+',key),
+                    path+'.id', 'expected a nonempty local identifier using letters/digits/_/./-')
             require(key not in nodes, path+'.id', f'duplicate local ID {key!r}')
             require(isinstance(text,str), path+'.text', 'expected a string')
             require(0 < len(text.split()) <= 15, path+'.text',
