@@ -23,12 +23,34 @@ Paths are relative to the manifest. Use your actual media path. Optional
 `--brief` guides new-identity design and the prompter; `--quiet` suppresses console
 stage logs while retaining `debug.log` and checkpoints.
 
-Outputs: `graph.json` version 2, `debug.log`, and per-attempt `selection.txt`,
-`plan.txt`, `prompt.txt`, `observation.txt`, plus application metadata and model
-logs. JSON files are local bookkeeping; no VLM is asked to consume or return JSON.
-Only successfully verified results enter the pool. Skips count toward attempts.
-Operational failures checkpoint before raising. The same Qwen, Flux and VDNH3
-objects serve the whole run.
+Final outputs by default:
+
+```text
+run/
+  debug.log
+  graph.json
+  roots/
+  generated/
+    artifact_1.png
+    artifact_2.mp4
+```
+
+Every returned generated media file moves to `generated/` immediately, named by
+artifact ID, including results later rejected by verifier. Graph artifact and
+reference paths use these permanent locations. Rejected outputs remain listed
+under the attempt's `generated_media`, without entering the sampling pool.
+
+`--cleanup` defaults on. After all attempts finish, it removes `attempt_*`, `flux`,
+`vdn_h3`, and `qwen` intermediates; the four entries above are always preserved.
+Use `--no-cleanup` to retain per-attempt prose, generation metadata, and model logs.
+Media collection remains enabled either way. Operational errors checkpoint and
+retain diagnostics; already generated media stay in `generated/`.
+
+Each sampled reference contributes no more than two lines. Invalid selections
+redraw both count and attributes inside the same attempt; `--max-sampling-retries 128` allows up to 128 retries after the initial draw. Only exhaustion skips the
+attempt. `selection_retries` and `selection_draws` record this in `graph.json`.
+The same Qwen, Flux and VDNH3 objects serve the whole run. JSON is local bookkeeping;
+VLM task input/output remains plain text.
 
 A deterministic fictional walkthrough requires no models or media files:
 

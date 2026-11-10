@@ -245,6 +245,13 @@ python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifac
 python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 0 3 --attempts 10
 ```
 
+Each reference contributes at most two sampled lines. Invalid draws retry inside
+the attempt (default `--max-sampling-retries 128`), redrawing the count and attributes.
+Generated media always move to `generated/artifact_N.png` or `.mp4`, including
+outputs rejected by verifier. At normal completion, cleanup removes intermediate
+attempt/model directories by default; `debug.log`, `roots/`, `graph.json`, and
+`generated/` remain. Use `--no-cleanup` to keep intermediate logs and prose.
+
 See [pipeline, attribute definitions and migration](docs/cpg.md), and
 [prompter inputs and media mapping](docs/prompters.md). Old JSON observations must
 be re-extracted or replaced by supplied prose; `--add` / `--variate` are removed.
@@ -305,5 +312,7 @@ Qwen lifecycle. See [usage and formats](docs/prompters.md).
 
 Extractor logs default to `scratch/runs/extractor/`. Per-call `output_dir` overrides
 the log root without reloading the model. Observation tools save `input.txt` and
-`response.txt`; the pipeline saves each prose stage separately. Invalid model text
+`response.txt`; the pipeline saves each prose stage separately. Intermediate files
+are retained after successful completion only with `--no-cleanup`; root logs and
+`debug.log` are always retained. Invalid model text
 returns `None` with diagnostics; missing files and inference failures raise.

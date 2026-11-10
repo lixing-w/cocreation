@@ -74,11 +74,11 @@ def sample_count(bounds, rng):
 
 
 def sample_selection(pool, k, rng, *, max_parents=2):
-    """Sample lines from (description, artifact) tuples, tracking actual carriers.
+    """Draw one proposal without replacement; reject invalid carrier counts.
 
-    Randomize the full line pool; accept lines until K or the carrier cap prevents
-    completion. Repeated text on separate artifacts remains separate evidence.
-    One nonempty line is the smallest intuitive paragraph, as instructed to VLMs.
+    At most two lines may come from each actual artifact, regardless of its
+    temporary media label. The orchestrator retries rejected draws within the
+    same attempt, including resampling K from its configured distribution.
     """
     if type(k) is not int or k < 0 or type(max_parents) is not int or max_parents < 1:
         raise ValueError('k must be nonnegative and max_parents positive')
@@ -86,17 +86,17 @@ def sample_selection(pool, k, rng, *, max_parents=2):
         return '', []
     candidates = [(line, ref) for description, ref in pool
                   for line in description_text(description).splitlines() if line]
-    rng.shuffle(candidates)
-    chosen, refs, seen = [], [], set()
-    for line, ref in candidates:
-        if ref.artifact_id not in seen:
-            if len(refs) >= max_parents:
-                continue
+    if k > len(candidates):
+        return None
+    chosen = rng.sample(candidates, k)
+    refs, counts = [], {}
+    for _, ref in chosen:
+        if ref.artifact_id not in counts:
             refs.append(ref)
-            seen.add(ref.artifact_id)
-        chosen.append((line, ref))
-        if len(chosen) == k:
-            labels = media_catalog(refs)
-            return '\n'.join(line + ' (from ' + labels[ref.artifact_id] + ')'
-                             for line, ref in chosen), refs
-    return None
+            counts[ref.artifact_id] = 0
+        counts[ref.artifact_id] += 1
+        if counts[ref.artifact_id] > 2 or len(refs) > max_parents:
+            return None
+    labels = media_catalog(refs)
+    return '\n'.join(line + ' (from ' + labels[ref.artifact_id] + ')'
+                     for line, ref in chosen), refs

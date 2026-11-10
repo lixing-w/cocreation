@@ -43,6 +43,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(sample_selection(pool,9,random.Random(1)))
         self.assertTrue(all('(from' not in text for text,ref in pool))
 
+    def test_each_carrier_has_at_most_two_lines(self):
+        refs=[Reference('a','/a','image'),Reference('b','/b','image')]
+        pool=[('A silver gown.\nThe fabric shines.\nThe hem curves.',refs[0]),
+              ('A garden.\nA stone wall.',refs[1])]
+        self.assertIsNone(sample_selection(pool[:1],3,random.Random(0)))
+        accepted=0
+        for seed in range(100):
+            result=sample_selection(pool,3,random.Random(seed))
+            if result is None: continue
+            text,used=result
+            accepted+=1
+            for label in media_catalog(used).values():
+                self.assertLessEqual(text.count('(from '+label+')'),2)
+            self.assertEqual(len(used),2)
+        self.assertGreater(accepted,0)
+
     def test_pruning_renumbers_simultaneously_without_changing_carrier(self):
         refs=[Reference('a','/a','image'),Reference('v','/v','video'),
               Reference('b','/b','image'),Reference('c','/c','image')]
@@ -74,7 +90,7 @@ class Model:
 class LoopTests(unittest.TestCase):
     def setUp(self):
         tmp=tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.root=Path(tmp.name)
+        self.root=Path(tmp.name).resolve()
         for name in ('source.png','source.mp4','generated.png','generated.mp4'):
             (self.root/name).touch()
         self.manifest=self.root/'roots.json'
@@ -103,14 +119,21 @@ class LoopTests(unittest.TestCase):
                     '[Shot 1] A hat floats over sand.\noverall_soundscape:\nSoft wind.\nnon_diegetic_music:\nN/A'}
             self.fail(system)
         self.qwen=Model(respond)
-        self.flux=Model(lambda *a,**kw:dict(kind='image',path=str(self.root/'generated.png')))
-        self.vdn=Model(lambda *a,**kw:dict(kind='video',path=str(self.root/'generated.mp4')))
+        def generate(kind):
+            # Match real adapters: each response owns a unique file in its run root.
+            parent=self.root/'run'/('flux' if kind=='image' else 'vdn_h3')
+            parent.mkdir(parents=True,exist_ok=True)
+            media=parent/('output.png' if kind=='image' else 'output.mp4')
+            media.write_bytes(b'generated '+kind.encode())
+            return dict(kind=kind,path=str(media))
+        self.flux=Model(lambda *a,**kw:generate('image'))
+        self.vdn=Model(lambda *a,**kw:generate('video'))
         for name,model in [('Qwen',self.qwen),('Flux',self.flux),('VDNH3',self.vdn)]:
             self.enterContext(patch.object(cpg,name,return_value=model))
 
     def run_loop(self,**kwargs):
         return cpg.run(self.manifest,self.root/'run',**dict(
-            dict(attempts=1,keep=(1,1),p_video=0,seed=0,debug=False),**kwargs))
+            dict(attempts=1,keep=(1,1),p_video=0,seed=0,debug=False,cleanup=False),**kwargs))
 
     def test_real_tools_complete_loop_and_recycle_verified_artifact(self):
         graph=self.run_loop(attempts=2)
@@ -216,6 +239,89 @@ class LoopTests(unittest.TestCase):
         with patch.object(cpg,'find_video_frame',return_value=None): graph=self.run_loop()
         self.assertEqual(graph['attempts'][0]['stage'],'frame_search')
         self.assertEqual(len(self.flux.calls),0)
+
+    def test_reference_limit_redraws_inside_same_attempt(self):
+        self.roots[0]['description']='A silver gown.\nThe fabric shines.\nThe hem curves.'
+        self.manifest.write_text(json.dumps(self.roots))
+        with patch.object(cpg,'sample_count',side_effect=[3,2]) as count:
+            graph=self.run_loop()
+        self.assertEqual(count.call_count,2)
+        self.assertEqual(len(graph['attempts']),1)
+        attempt=graph['attempts'][0]
+        self.assertEqual(attempt['status'],'accepted')
+        self.assertEqual(attempt['sampled_count'],2)
+        self.assertEqual(attempt['selection_retries'],1)
+        self.assertEqual(len(self.flux.calls),1)
+
+    def test_retry_limit_bounds_impossible_samples(self):
+        self.roots[0]['description']='A silver gown.\nThe fabric shines.\nThe hem curves.'
+        self.manifest.write_text(json.dumps(self.roots))
+        graph=self.run_loop(keep=(3,3),max_sampling_retries=2)
+        self.assertEqual(len(graph['attempts']),1)
+        attempt=graph['attempts'][0]
+        self.assertEqual(attempt['status'],'skipped')
+        self.assertEqual(attempt['selection_draws'],3)
+        self.assertEqual(attempt['selection_retries'],2)
+        self.assertIn('retries exhausted',attempt['reason'])
+        self.assertFalse(self.flux.calls)
+
+    def test_default_cleanup_preserves_media_and_required_files(self):
+        # Direct call deliberately exercises default cleanup=True.
+        graph=cpg.run(self.manifest,self.root/'run',attempts=2,keep=(1,1),p_video=0,debug=False)
+        output=self.root/'run'
+        self.assertEqual({p.name for p in output.iterdir()},
+                         {'generated','roots','graph.json','debug.log'})
+        self.assertTrue(graph['cleaned_up'])
+        for node in graph['artifacts'][1:]:
+            path=Path(node['path'])
+            self.assertEqual(path,output/'generated'/(node['artifact_id']+'.png'))
+            self.assertEqual(path.read_bytes(),b'generated image')
+        for attempt in graph['attempts']:
+            self.assertTrue(Path(attempt['generated_media']['path']).is_file())
+            for ref in attempt['references']:
+                self.assertTrue(Path(ref['path']).is_file())
+        self.assertTrue((output/'roots/artifact_0/input.txt').is_file())
+        self.assertTrue((self.root/'source.png').is_file())
+        self.assertEqual(json.loads((output/'graph.json').read_text()),graph)
+
+    def test_cleanup_disabled_still_moves_video_media(self):
+        graph=self.run_loop(p_video=1,cleanup=False)
+        path=Path(graph['artifacts'][-1]['path'])
+        self.assertEqual(path,self.root/'run/generated/artifact_1.mp4')
+        self.assertTrue(path.is_file())
+        self.assertFalse((self.root/'run/vdn_h3/output.mp4').exists())
+        self.assertTrue((self.root/'run/attempt_0000').is_dir())
+        self.assertEqual(json.loads((self.root/'run/attempt_0000/generation.json').read_text())['path'],str(path))
+
+    def test_rejected_verification_media_survives_cleanup(self):
+        self.verified='NO_OBSERVATION'
+        graph=self.run_loop(cleanup=True)
+        self.assertEqual(len(graph['artifacts']),1)
+        self.assertEqual(graph['attempts'][0]['status'],'skipped')
+        self.assertEqual(Path(graph['attempts'][0]['generated_media']['path']).read_bytes(),b'generated image')
+        self.assertFalse((self.root/'run/attempt_0000').exists())
+
+    def test_error_after_generation_preserves_media_and_diagnostics(self):
+        with patch.object(cpg,'attribute_verifier',side_effect=RuntimeError('failed')):
+            with self.assertRaises(RuntimeError): self.run_loop(cleanup=True)
+        graph=json.loads((self.root/'run/graph.json').read_text())
+        self.assertTrue(Path(graph['attempts'][0]['generated_media']['path']).is_file())
+        self.assertTrue((self.root/'run/attempt_0000').is_dir())
+        self.assertNotIn('cleaned_up',graph)
+
+    def test_cleanup_removes_stale_frame_paths(self):
+        self.roots[0].update(kind='video',path='source.mp4')
+        self.manifest.write_text(json.dumps(self.roots))
+        def frame(path,description,**options):
+            options['frame_output'].touch()
+            return .4
+        with patch.object(cpg,'find_video_frame',side_effect=frame):
+            graph=self.run_loop(cleanup=True)
+        record=graph['attempts'][0]['frames'][0]
+        self.assertEqual(record['timestamp_seconds'],.4)
+        self.assertNotIn('path',record)
+        self.assertFalse(record['retained'])
+        self.assertTrue(Path(graph['artifacts'][-1]['path']).is_file())
 
     def test_default_count_policy_recorded_and_zero_exploration_rejoins_pool(self):
         self.rewrite='An ivory cape has a sculptural collar.'

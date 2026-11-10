@@ -14,8 +14,13 @@ artifacts remain two separate observations.
    unobserved or nonessential details. It returns direct prose.
 2. Sample **0–3 lines by default**, with probabilities **40%, 30%, 20%, 10%**.
    `--sample MIN MAX` changes the inclusive range; descending linear weights
-   favor lower counts within that range. `--parent-count` caps distinct carriers.
-   Insufficient nonzero samples skip that attempt. Zero sampling succeeds even
+   favor lower counts within that range. `--parent-count` caps distinct carriers, and each actual reference may contribute
+   **at most two lines**. Draw without replacement and reject selections that exceed
+   either cap or cannot supply K lines. Retry **inside the same attempt**, redrawing
+   both K and attributes; `--max-sampling-retries` defaults to 128 extra draws after
+   the initial draw. Only exhausted retries skip the attempt. The probabilities above
+   describe proposals; accepted counts are conditioned on feasible selections.
+   Zero sampling succeeds even
    with an empty pool. Zero-attribute exploration always generates an **image first**;
    `--p-video` applies only to nonzero samples.
 3. For nonzero samples, assign temporary `<Image N>` / `<Video N>` labels, numbered
@@ -38,7 +43,10 @@ artifacts remain two separate observations.
    Send this rewritten description and exactly its referenced media to the
    appropriate generation prompter: **flux_prompter** for images or **h3_prompter**
    for videos. Both consume prose and return the finished expert prompt directly.
-6. Call Flux or VDNH3. For Flux, original videos are observed by the prompter but
+6. Call Flux or VDNH3. Move each returned media file immediately to
+   `generated/artifact_N.<extension>` and use that permanent path thereafter.
+   Even outputs later rejected by verifier remain here, with a `generated_media`
+   record in their attempt. A generated output does not enter the pool until verified. For Flux, original videos are observed by the prompter but
    replaced by matching still frames before generation, without changing slots.
    Frame search consumes only the prose associated with that source; if no one
    frame satisfies it, skip the attempt. Never silently use frame zero.
@@ -61,8 +69,16 @@ use JSON on disk. These are application bookkeeping, never serialized attribute
 messages presented to a VLM. `graph.json` version 2 persists each pool pair as an
 artifact record with `description`, `artifact_id`, `kind`, `path`, and optional
 attempt/parent metadata. `parents` records generation inputs, not proven inheritance.
-Per-attempt `selection.txt`, `plan.txt`, `prompt.txt`, and `observation.txt` preserve
-the natural-language stages. Each text tool logs `input.txt`; observation tools
+With `--no-cleanup`, per-attempt `selection.txt`, `plan.txt`, `prompt.txt`, and
+`observation.txt` preserve the natural-language stages. By default, after all
+attempts finish and models close, intermediate `attempt_*`, `flux`, `vdn_h3` and
+`qwen` directories are removed. Always retain `debug.log`, `roots/`, `graph.json`
+and `generated/`. Root media are never moved or deleted. Interrupted/failed runs
+retain intermediate diagnostics, but already returned generated media still use
+permanent paths. `--no-cleanup` disables deletion, not media collection.
+Transport frame files are temporary: after cleanup their source/timestamp stay in
+the graph with `retained: false`, and their removed `path` is no longer advertised.
+Attempts log `selection_draws` and `selection_retries`; config records the limit. Before cleanup, each text tool logs `input.txt`; observation tools
 also save `response.txt`. All tools share one Qwen instance in the pipeline; the
 Flux and VDNH3 adapters are also reused. Model sampling itself is not deterministic.
 

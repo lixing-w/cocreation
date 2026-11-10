@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import random
 import re
+import shutil
 import sys
 
 if __package__ in (None, ''):
@@ -63,19 +64,71 @@ def read_roots(manifest):
     return roots
 
 
+def collect_generated(result, artifact_id, output):
+    """Move a returned generated artifact to its permanent path before verification.
+
+    This also preserves outputs whose verification later fails. Never move roots
+    or files outside the generator's run directory; never overwrite an artifact.
+    """
+    source = Path(result['path']).resolve(strict=True)
+    allowed = [output / 'flux', output / 'vdn_h3']
+    if not any(source.is_relative_to(folder) for folder in allowed):
+        raise ValueError('Generated media must be inside this run’s generator directory')
+    destination = output / 'generated' / (artifact_id + source.suffix.lower())
+    if destination.exists():
+        raise FileExistsError(destination)
+    shutil.move(str(source), destination)
+    return dict(result, path=str(destination))
+
+
+def clean_run(output, graph):
+    """Delete only known transient directories after all models have closed."""
+    # Check durable outputs before deleting any diagnostics/intermediate files.
+    for attempt in graph['attempts']:
+        media = attempt.get('generated_media')
+        if media is not None and not Path(media['path']).is_file():
+            raise FileNotFoundError(media['path'])
+    for node in graph['artifacts']:
+        if not Path(node['path']).is_file():
+            raise FileNotFoundError(node['path'])
+    for entry in output.iterdir():
+        if entry.name in ('flux', 'vdn_h3', 'qwen') or re.fullmatch(r'attempt_\d+', entry.name):
+            if entry.is_symlink():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+    # Transport frames are not generated artifact nodes. Keep their source and
+    # time, but do not leave live-looking paths pointing to deleted intermediates.
+    for attempt in graph['attempts']:
+        for frame in attempt.get('frames', []):
+            frame.pop('path', None)
+            frame['retained'] = False
+    graph['cleaned_up'] = True
+    save(output / 'graph.json', graph)
+
+
 def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
-        max_parents=2, p_video=0.5, seconds=5.0, brief='', vdn_python=None, debug=True):
+        max_parents=2, p_video=0.5, seconds=5.0, brief='', vdn_python=None, debug=True,
+        max_sampling_retries=128, cleanup=True):
     """Explore a new identity or reuse K sentences, generate, verify and grow the pool.
 
     K uses decreasing linear weights; max_parents limits sampled carriers.
+    Each carrier contributes at most two lines. Invalid selections redraw K and
+    attributes inside the attempt, for at most max_sampling_retries extra draws.
     Zero attributes creates a new identity as an image first. Otherwise p_video
     selects modality and rewriter only minimally resolves cross-source conflicts. Models are
     shared for the run. Invalid tool outputs skip an attempt; operational errors
-    checkpoint and propagate. Only verified observations enter the pool.
+    checkpoint and propagate. Only verified observations enter the pool. Generated
+    files move immediately into generated/ even when verification fails. Optional
+    cleanup runs only after all attempts complete and model contexts close.
     """
     if (len(keep) != 2 or any(type(x) is not int for x in keep)
             or not 0 <= keep[0] <= keep[1]):
         raise ValueError('keep must be an inclusive nonnegative integer range')
+    if type(max_sampling_retries) is not int or max_sampling_retries < 0:
+        raise ValueError('max_sampling_retries must be a nonnegative integer')
+    if type(cleanup) is not bool:
+        raise ValueError('cleanup must be boolean')
     if type(attempts) is not int or attempts < 0:
         raise ValueError('attempts must be nonnegative')
     if type(max_parents) is not int or not 1 <= max_parents <= 32:
@@ -85,6 +138,8 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
     roots = read_roots(manifest)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
+    (output / 'generated').mkdir()
+    (output / 'roots').mkdir()
 
     def emit(title, payload):
         detail = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=2)
@@ -98,7 +153,8 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
     graph = dict(version=2, seed=seed, config=dict(attempts=attempts, keep=list(keep),
         max_parents=max_parents, p_video=p_video, seconds=seconds, brief=brief,
         sampling_weights=list(range(keep[1]-keep[0]+1, 0, -1)),
-        zero_attribute_kind="image"),
+        zero_attribute_kind="image", max_attributes_per_reference=2,
+        max_sampling_retries=max_sampling_retries, cleanup=cleanup),
         artifacts=[], attempts=[])
     # Runtime pool is literally a list of (description, artifact reference) tuples.
     # graph.artifacts persists the same pairs plus attempt/parent bookkeeping.
@@ -137,15 +193,20 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
             graph['attempts'].append(log)
             stage = 'selection'
             try:
-                k = sample_count(keep, rng)
-                kind = 'image' if k == 0 else ('video' if rng.random() < p_video else 'image')
                 artifact_id = f'artifact_{next_number + attempt}'
+                for retry in range(max_sampling_retries + 1):
+                    k = sample_count(keep, rng)
+                    kind = 'image' if k == 0 else ('video' if rng.random() < p_video else 'image')
+                    selected = sample_selection(pool, k, rng,
+                        max_parents=min(max_parents, 4 if kind == 'image' else 32))
+                    if selected is not None:
+                        break
                 log.update(artifact_id=artifact_id, kind=kind, sampled_count=k,
+                           selection_retries=retry, selection_draws=retry + 1,
                            mode='new_identity' if k == 0 else 'reuse_attributes')
-                selected = sample_selection(pool, k, rng,
-                    max_parents=min(max_parents, 4 if kind == 'image' else 32))
                 if selected is None:
-                    log.update(status='skipped', stage=stage, reason='insufficient sample within parent cap')
+                    log.update(status='skipped', stage=stage,
+                               reason='sampling retries exhausted: insufficient lines or reference limits')
                     continue
                 sampled, refs = selected
                 log['sampled_parents'] = [r.artifact_id for r in refs]
@@ -194,11 +255,18 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 log['generation_seed'] = generation_seed
                 result = (flux(prompt, generation_refs, seed=generation_seed) if kind == 'image' else
                           vdn(prompt, generation_refs, seconds=seconds, seed=generation_seed))
-                if (not isinstance(result, dict) or result.get('kind') != kind or
-                        not isinstance(result.get('path'), str) or not Path(result['path']).is_file()):
+                if (not isinstance(result, dict) or not isinstance(result.get('path'), str)
+                        or not Path(result['path']).is_file()):
                     log.update(status='skipped', stage=stage, reason='missing generated media')
                     continue
+                result = collect_generated(result, artifact_id, output)
+                log['generated_media'] = dict(artifact_id=artifact_id, kind=result.get('kind'), path=result['path'])
+                # Durable checkpoint even if verification or later inference fails.
+                save(output / 'graph.json', graph)
                 save(directory / 'generation.json', result)
+                if result.get('kind') != kind:
+                    log.update(status='skipped', stage=stage, reason='unexpected generated media kind')
+                    continue
                 generated = Reference(artifact_id, result['path'], kind)
                 stage = 'attribute_verifier'
                 observed = attribute_verifier(generated_media=generated, description=planned,
@@ -221,6 +289,9 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
                 save(directory / 'attempt.json', log)
                 save(output / 'graph.json', graph)
                 emit(f'Attempt {attempt} / outcome', log)
+    if cleanup:
+        clean_run(output, graph)
+        emit('Run cleanup', 'Removed intermediate directories; media retained in generated/.')
     return graph
 
 
@@ -234,6 +305,10 @@ def main():
     parser.add_argument('--sample', '--keep', dest='keep', type=int, nargs=2, default=(0, 3),
                         metavar=('MIN', 'MAX'), help='Sampled line range; lower counts have greater weight (default 40/30/20/10%%)')
     parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=2)
+    parser.add_argument('--max-sampling-retries', type=int, default=128,
+                        help='Retries within each attempt after the initial rejected sample')
+    parser.add_argument('--cleanup', action=argparse.BooleanOptionalAction, default=True,
+                        help='Remove intermediate run directories after completion; media always moves to generated/')
     parser.add_argument('--p-video', type=float, default=0.5,
                         help='Video probability for nonzero samples; zero samples always explore an image first')
     parser.add_argument('--seconds', type=float, default=5.0)
