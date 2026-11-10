@@ -218,12 +218,13 @@ CPG now uses a pool of `(description, artifact)` pairs. Descriptions are short
 natural-language sentences, one intuitive attribute per line. The pipeline is:
 `extractor → sample lines → attribute_rewriter → Flux/H3 prompter → generator → attribute_verifier → pool`.
 
-Extractor and verifier omit uncertain or nonessential observations. Rewriter
-corrects sampled descriptions and invents elegant, unexpected combinations, keeping
-`(from <Image N>)` / `(from <Video N>)` only for elements that remain fundamentally
-unchanged. Unused sources are removed and surviving labels renumbered together.
-Verifier inspects the actual generated result in one pass; no atom IDs, dependency
-closure or strict inheritance matching remain.
+Extractor and verifier omit uncertain or nonessential observations. Each round
+samples 0–3 lines by default, with probabilities 40%, 30%, 20%, 10%. Zero attributes
+asks rewriter for one new identity in one or two sentences and generates an image
+first. Same-source attributes pass through unchanged without inference; different
+sources permit only minimal repair of strict conflicts, not creative embellishment.
+Retained attributes keep `(from <Image N>)` / `(from <Video N>)` annotations.
+Verifier inspects actual output in one pass; no strict inheritance matching remains.
 
 ```python
 from cocreation import Qwen, Reference
@@ -241,7 +242,7 @@ configuration, checkpoints, logs and low-level application transport.
 
 ```bash
 python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifact-id root_image --kind image
-python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 3 8 --attempts 10
+python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 0 3 --attempts 10
 ```
 
 See [pipeline, attribute definitions and migration](docs/cpg.md), and

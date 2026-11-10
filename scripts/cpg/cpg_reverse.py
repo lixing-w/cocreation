@@ -13,7 +13,7 @@ if __package__ in (None, ''):
 from cocreation import Qwen, Flux, VDNH3, VDNRuntime, Reference
 from tools.extractor import extractor
 from tools._attribute_protocol import (
-    description_text, sample_selection, prune_references, media_catalog, source_description)
+    description_text, sample_count, sample_selection, prune_references, media_catalog, source_description)
 from tools.attribute_rewriter import attribute_rewriter
 from tools.attribute_verifier import attribute_verifier
 from tools.flux_prompter import flux_prompter
@@ -63,18 +63,19 @@ def read_roots(manifest):
     return roots
 
 
-def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8),
+def run(manifest, output_dir, *, attempts=10, seed=0, keep=(0, 3),
         max_parents=2, p_video=0.5, seconds=5.0, brief='', vdn_python=None, debug=True):
-    """Sample K sentences, creatively rewrite, generate, observe and add to the pool.
+    """Explore a new identity or reuse K sentences, generate, verify and grow the pool.
 
-    K uses an inclusive range; max_parents limits sampled carriers. Rewriter has
-    no fixed addition count. Modality is sampled before rewriting. Models are
+    K uses decreasing linear weights; max_parents limits sampled carriers.
+    Zero attributes creates a new identity as an image first. Otherwise p_video
+    selects modality and rewriter only minimally resolves cross-source conflicts. Models are
     shared for the run. Invalid tool outputs skip an attempt; operational errors
     checkpoint and propagate. Only verified observations enter the pool.
     """
     if (len(keep) != 2 or any(type(x) is not int for x in keep)
-            or not 1 <= keep[0] <= keep[1]):
-        raise ValueError('keep must be an inclusive positive integer range')
+            or not 0 <= keep[0] <= keep[1]):
+        raise ValueError('keep must be an inclusive nonnegative integer range')
     if type(attempts) is not int or attempts < 0:
         raise ValueError('attempts must be nonnegative')
     if type(max_parents) is not int or not 1 <= max_parents <= 32:
@@ -95,7 +96,9 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8),
 
     rng = random.Random(seed)
     graph = dict(version=2, seed=seed, config=dict(attempts=attempts, keep=list(keep),
-        max_parents=max_parents, p_video=p_video, seconds=seconds, brief=brief),
+        max_parents=max_parents, p_video=p_video, seconds=seconds, brief=brief,
+        sampling_weights=list(range(keep[1]-keep[0]+1, 0, -1)),
+        zero_attribute_kind="image"),
         artifacts=[], attempts=[])
     # Runtime pool is literally a list of (description, artifact reference) tuples.
     # graph.artifacts persists the same pairs plus attempt/parent bookkeeping.
@@ -134,10 +137,11 @@ def run(manifest, output_dir, *, attempts=10, seed=0, keep=(3, 8),
             graph['attempts'].append(log)
             stage = 'selection'
             try:
-                kind = 'video' if rng.random() < p_video else 'image'
-                k = rng.randint(*keep)
+                k = sample_count(keep, rng)
+                kind = 'image' if k == 0 else ('video' if rng.random() < p_video else 'image')
                 artifact_id = f'artifact_{next_number + attempt}'
-                log.update(artifact_id=artifact_id, kind=kind, sampled_count=k)
+                log.update(artifact_id=artifact_id, kind=kind, sampled_count=k,
+                           mode='new_identity' if k == 0 else 'reuse_attributes')
                 selected = sample_selection(pool, k, rng,
                     max_parents=min(max_parents, 4 if kind == 'image' else 32))
                 if selected is None:
@@ -227,10 +231,11 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True, help='New directory; never overwritten')
     parser.add_argument('--attempts', type=int, default=10)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--sample', '--keep', dest='keep', type=int, nargs=2, default=(3, 8),
-                        metavar=('MIN', 'MAX'), help='Inclusive range of sampled description lines')
+    parser.add_argument('--sample', '--keep', dest='keep', type=int, nargs=2, default=(0, 3),
+                        metavar=('MIN', 'MAX'), help='Sampled line range; lower counts have greater weight (default 40/30/20/10%%)')
     parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=2)
-    parser.add_argument('--p-video', type=float, default=0.5)
+    parser.add_argument('--p-video', type=float, default=0.5,
+                        help='Video probability for nonzero samples; zero samples always explore an image first')
     parser.add_argument('--seconds', type=float, default=5.0)
     parser.add_argument('--brief', default='')
     parser.add_argument('--vdn-python')

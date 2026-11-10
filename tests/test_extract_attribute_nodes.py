@@ -48,19 +48,39 @@ class ObservationTests(unittest.TestCase):
                 extractor(self.ref, output_dir=self.root/'out')
         model.close.assert_called_once()
 
-    def test_rewriter_free_changes_and_unknown_sources(self):
-        sampled = 'The woman wears a hat. (from <Image 1>)'
-        rewritten = 'The woman wears a hat. (from <Image 1>)\nA satin arch floats overhead.'
-        model = Mock(return_value={'text':rewritten})
-        self.assertEqual(attribute_rewriter(sampled, [self.ref], kind='image', qwen=model), rewritten)
-        self.assertIn(sampled, model.call_args.args[0])
-        for invalid in ('The hat glows. (from <Image 2>)', 'A hat from <Image 1>.',
+    def test_same_source_is_exact_passthrough_without_inference(self):
+        sampled = 'The woman wears a hat. (from <Image 1>)\nA white studio. (from <Image 1>)'
+        model = Mock(side_effect=AssertionError('Must not call model'))
+        self.assertEqual(attribute_rewriter(sampled, [self.ref], kind='image', qwen=model,
+                         output_dir=self.root/'rewrite'), sampled)
+        model.assert_not_called()
+        self.assertEqual((self.root/'rewrite/response.txt').read_text(), sampled)
+
+    def test_zero_attributes_creates_identity_without_media(self):
+        output = 'A sculptural wool cape has a crescent collar.'
+        model = Mock(return_value={'text': output})
+        self.assertEqual(attribute_rewriter('', [], kind='image', qwen=model, seed=1), output)
+        first = model.call_args.args[0]
+        self.assertEqual(model.call_args.args[1], [])
+        self.assertIn('one or two concise sentences', first)
+        attribute_rewriter('', [], kind='image', qwen=model, seed=2)
+        self.assertNotEqual(first, model.call_args.args[0])
+        with self.assertRaises(ValueError):
+            attribute_rewriter('', [self.ref], kind='image', qwen=model)
+        model.return_value={'text':'A hat. (from <Image 1>)'}
+        self.assertIsNone(attribute_rewriter('', [], kind='image', qwen=model))
+
+    def test_cross_source_repair_and_unknown_sources(self):
+        other = Reference('artifact_24', self.ref.path, 'image')
+        sampled = 'A blue coat. (from <Image 1>)\nA red chair. (from <Image 2>)'
+        model = Mock(return_value={'text':sampled})
+        self.assertEqual(attribute_rewriter(sampled, [self.ref,other], kind='image', qwen=model), sampled)
+        self.assertIn('smallest necessary change', model.call_args.args[0])
+        self.assertEqual(model.call_args.args[1], [self.ref,other])
+        for invalid in ('A hat. (from <Image 3>)', 'A hat from <Image 1>.',
                         '{"description":"A hat."}', 'CANNOT_FULFILL'):
             model.return_value={'text': invalid}
-            self.assertIsNone(attribute_rewriter(sampled, [self.ref], kind='image', qwen=model))
-        model.return_value={'text': 'A silver arch floats above pale sand.'}
-        self.assertEqual(attribute_rewriter(sampled, [self.ref], kind='image', qwen=model),
-                         model.return_value['text'])
+            self.assertIsNone(attribute_rewriter(sampled, [self.ref,other], kind='image', qwen=model))
 
     def test_verifier_observes_only_new_media_and_receives_exact_plan(self):
         plan = 'A white hat. (from <Video 2>)\nA mirrored floor.'

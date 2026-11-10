@@ -6,12 +6,29 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from cocreation import Reference
-from tools._attribute_protocol import (sample_selection, prune_references,
+from tools._attribute_protocol import (sample_selection, sample_count, prune_references,
     validate_sources, media_catalog, source_description)
 from scripts.cpg import cpg_reverse as cpg
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_zero_selection_works_even_with_empty_pool(self):
+        self.assertEqual(sample_selection([],0,random.Random(0)),('',[]))
+        with self.assertRaises(ValueError): sample_selection([],-1,random.Random(0))
+
+    def test_decreasing_count_distribution_and_seed(self):
+        from collections import Counter
+        rng=random.Random(42)
+        sequence=[sample_count((0,3),rng) for _ in range(10000)]
+        counts=Counter(sequence)
+        for k,p in enumerate((.4,.3,.2,.1)):
+            self.assertAlmostEqual(counts[k]/10000,p,delta=.015)
+        again=random.Random(42)
+        self.assertEqual(sequence[:20],[sample_count((0,3),again) for _ in range(20)])
+        self.assertEqual(sample_count((0,0),rng),0)
+        self.assertEqual(sample_count((3,3),rng),3)
+        with self.assertRaises(ValueError): sample_count((-1,3),rng)
+
     def test_sampling_preserves_actual_carrier_and_seed(self):
         refs=[Reference(f'artifact_{i}',f'/tmp/{i}.png','image') for i in range(4)]
         pool=[(f'Subject {i} stands.\nSubject {i} wears a hat.',ref) for i,ref in enumerate(refs)]
@@ -107,7 +124,9 @@ class LoopTests(unittest.TestCase):
         for system,user,refs in verifier_events:
             self.assertEqual(len(refs),1)
             self.assertEqual(refs[0].kind,'image')
-            self.assertIn(self.rewrite,user)
+            attempt_index=verifier_events.index((system,user,refs))
+            plan=(self.root/f'run/attempt_{attempt_index:04d}/plan.txt').read_text()
+            self.assertIn(plan,user)
         self.assertTrue(self.qwen.closed and self.flux.closed and self.vdn.closed)
         self.assertTrue((self.root/'run/attempt_0000/plan.txt').is_file())
         self.assertFalse((self.root/'run/attempt_0000/inheritance.json').exists())
@@ -134,9 +153,12 @@ class LoopTests(unittest.TestCase):
 
     def test_source_free_rewrite_sends_no_media_to_generator(self):
         self.rewrite='A satin arch floats above pale sand.'
-        graph=self.run_loop()
+        graph=self.run_loop(keep=(0,0),p_video=1)
         self.assertEqual(graph['attempts'][0]['status'],'accepted')
         self.assertEqual(self.flux.calls[0][0][1],[])
+        self.assertEqual(len(self.vdn.calls),0)
+        self.assertEqual(graph['attempts'][0]['sampled_parents'],[])
+        self.assertEqual(graph['attempts'][0]['mode'],'new_identity')
         self.assertEqual(graph['artifacts'][-1]['parents'],[])
         self.assertIn(self.rewrite,next(e[1] for e in self.events if e[0].startswith('You are attribute_verifier')))
 
@@ -146,11 +168,13 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(len(self.vdn.calls),1)
         self.assertEqual(len(self.flux.calls),0)
         self.assertEqual(graph['artifacts'][-1]['kind'],'video')
-        self.assertIn(self.rewrite,next(e[1] for e in self.events if e[0].startswith('You are the VDN')))
+        self.assertIn((self.root/'run/attempt_0000/plan.txt').read_text(),
+                      next(e[1] for e in self.events if e[0].startswith('You are the VDN')))
+        self.assertFalse(any(e[0].startswith('You are attribute_rewriter') for e in self.events))
 
     def test_failures_never_enter_pool(self):
         self.rewrite='A hat. (from <Image 9>)'
-        graph=self.run_loop()
+        graph=self.run_loop(keep=(0,0))
         self.assertEqual(len(graph['artifacts']),1)
         self.assertEqual(graph['attempts'][0]['stage'],'attribute_rewriter')
         self.assertEqual(len(self.flux.calls),0)
@@ -175,7 +199,7 @@ class LoopTests(unittest.TestCase):
         self.manifest.write_text(json.dumps(self.roots))
         self.rewrite='A sculptural hat. (from <Video 1>)'
         def frame(path,description,**options):
-            self.assertEqual(description,'A sculptural hat.')
+            self.assertIn(description,('A woman wears a sculptural hat.','The studio is white.'))
             options['frame_output'].touch()
             return 0.4
         with patch.object(cpg,'find_video_frame',side_effect=frame): graph=self.run_loop()
@@ -192,6 +216,13 @@ class LoopTests(unittest.TestCase):
         with patch.object(cpg,'find_video_frame',return_value=None): graph=self.run_loop()
         self.assertEqual(graph['attempts'][0]['stage'],'frame_search')
         self.assertEqual(len(self.flux.calls),0)
+
+    def test_default_count_policy_recorded_and_zero_exploration_rejoins_pool(self):
+        self.rewrite='An ivory cape has a sculptural collar.'
+        graph=cpg.run(self.manifest,self.root/'run',attempts=0,debug=False)
+        self.assertEqual(graph['config']['keep'],[0,3])
+        self.assertEqual(graph['config']['sampling_weights'],[4,3,2,1])
+        self.assertEqual(graph['config']['zero_attribute_kind'],'image')
 
     def test_supplied_text_file_and_legacy_migration_error(self):
         (self.root/'description.txt').write_text('A white studio.')

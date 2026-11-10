@@ -12,18 +12,28 @@ artifacts remain two separate observations.
 1. **extractor** observes each root with the CPG definitions as selective guidance.
    It mentions essential, clearly visible attributes and omits uncertain,
    unobserved or nonessential details. It returns direct prose.
-2. Randomly sample nonempty lines across the pool, retaining each line's actual
-   carrier. `--sample MIN MAX` chooses the number of lines; `--parent-count` caps
-   distinct carriers. Insufficient samples skip that attempt. Modality is sampled
-   first using `--p-video`, so rewriter knows whether to design a still or a video.
-3. Assign temporary `<Image N>` / `<Video N>` labels, numbered separately by kind
-   in first-selected-carrier order. Append `(from <Kind N>)` to each sampled line.
-4. **attribute_rewriter** sees sampled prose and its actual media. It resolves
-   ambiguity and logical errors, and freely rewrites, drops, combines or invents
-   elements. Its prompt asks for surprising creative combinations with elegant,
-   beautiful, refined aesthetics, without grotesquerie or shock value. Elements
-   that are not fundamentally changed keep their reference; new/fundamentally
-   transformed elements have none. There is no fixed addition count.
+2. Sample **0–3 lines by default**, with probabilities **40%, 30%, 20%, 10%**.
+   `--sample MIN MAX` changes the inclusive range; descending linear weights
+   favor lower counts within that range. `--parent-count` caps distinct carriers.
+   Insufficient nonzero samples skip that attempt. Zero sampling succeeds even
+   with an empty pool. Zero-attribute exploration always generates an **image first**;
+   `--p-video` applies only to nonzero samples.
+3. For nonzero samples, assign temporary `<Image N>` / `<Video N>` labels, numbered
+   separately by kind in first-selected-carrier order. Append `(from <Kind N>)` to
+   each sampled line. Zero samples attach no media or existing pool descriptions.
+4. **attribute_rewriter** has three modes:
+   - Zero attributes: invent one new identity (person, garment, object or scene),
+     in one or two concise sentences. Aim for elegant, beautiful, refined design,
+     avoiding grotesquerie. Seeded category/form/character directions vary the actual
+     prompt because Qwen currently uses greedy decoding, so seed alone is insufficient.
+   - One actual source: preserve every sampled line and annotation unchanged.
+     Python enforces this by returning the text without a VLM call; `mode.txt`
+     records the passthrough. Multiple lines from one source still use this mode.
+   - Multiple sources: preserve the input unless attributes from different sources
+     strictly conflict. Resolve only that conflict with the smallest necessary change,
+     preserving as many attributes as possible. Do not add unrelated elements or
+     restyle the scene. Compatible differences are not conflicts. Retained properties
+     keep their source markers; changed values must not falsely claim source support.
 5. Drop media no longer mentioned and simultaneously renumber surviving labels.
    Send this rewritten description and exactly its referenced media to the
    appropriate generation prompter: **flux_prompter** for images or **h3_prompter**
@@ -66,15 +76,15 @@ re-extract the actual media. Old run checkpoints are not silently converted.
 
 ```bash
 python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 \
-  --attempts 10 --sample 3 8 --parent-count 2 --p-video 0.5 --seed 0
+  --attempts 10 --sample 0 3 --parent-count 2 --p-video 0.5 --seed 0
 ```
 
 `--keep` remains an alias for `--sample`, but now counts sampled lines, not retained
-atoms or dependency closure. `--add` / `--variate` are removed: the rewriter controls
-creative additions. `extract_attribute_nodes` remains an import/CLI alias for the
+atoms or dependency closure. `--add` / `--variate` are removed: zero-attribute rounds introduce new identities. `extract_attribute_nodes` remains an import/CLI alias for the
 new `extractor`, returning `str | None`. `imaginer`, nested schema validation,
 atomization, provenance matching and the two-pass verifier API have been replaced.
-The new verifier takes `generated_media` and `description` only.
+Checkpoints record `sampling_weights` and `zero_attribute_kind`; attempts record
+`mode` (`new_identity` or `reuse_attributes`). The new verifier takes `generated_media` and `description` only.
 
 ## CPG attribute definitions
 

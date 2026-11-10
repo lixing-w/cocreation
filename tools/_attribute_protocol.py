@@ -64,6 +64,15 @@ def source_description(text, label):
                      if label in SOURCE.findall(line))
 
 
+def sample_count(bounds, rng):
+    """Linearly decreasing weights: default counts 0/1/2/3 have 40/30/20/10%."""
+    if (len(bounds) != 2 or any(type(n) is not int for n in bounds)
+            or not 0 <= bounds[0] <= bounds[1]):
+        raise ValueError('Sample bounds must be an inclusive nonnegative integer range')
+    counts = list(range(bounds[0], bounds[1] + 1))
+    return rng.choices(counts, weights=range(len(counts), 0, -1), k=1)[0]
+
+
 def sample_selection(pool, k, rng, *, max_parents=2):
     """Sample lines from (description, artifact) tuples, tracking actual carriers.
 
@@ -71,8 +80,10 @@ def sample_selection(pool, k, rng, *, max_parents=2):
     completion. Repeated text on separate artifacts remains separate evidence.
     One nonempty line is the smallest intuitive paragraph, as instructed to VLMs.
     """
-    if type(k) is not int or k < 1 or type(max_parents) is not int or max_parents < 1:
-        raise ValueError('k and max_parents must be positive integers')
+    if type(k) is not int or k < 0 or type(max_parents) is not int or max_parents < 1:
+        raise ValueError('k must be nonnegative and max_parents positive')
+    if k == 0:
+        return '', []
     candidates = [(line, ref) for description, ref in pool
                   for line in description_text(description).splitlines() if line]
     rng.shuffle(candidates)
