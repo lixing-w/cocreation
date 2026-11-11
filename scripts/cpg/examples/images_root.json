@@ -1,0 +1,18 @@
+[
+    {
+      "artifact_id": "artifact_0",
+      "kind": "image",
+      "path": "../../../scratch/data/samples/IMG_2931.PNG"
+    },
+    {
+        "artifact_id": "artifact_1",
+        "kind": "image",
+        "path": "../../../scratch/data/samples/IMG_4174.JPG"
+    },
+    {
+        "artifact_id": "artifact_2",
+        "kind": "image",
+        "path": "../../../scratch/data/samples/IMG_5390.PNG"
+    }
+  ]
+  

@@ -321,7 +321,7 @@ def main():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--sample', '--keep', dest='keep', type=int, nargs=2, default=(0, 3),
                         metavar=('MIN', 'MAX'), help='Sampled line range; lower counts have greater weight (default 40/30/20/10%%)')
-    parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=2)
+    parser.add_argument('--parent-count', '--max-parents', dest='max_parents', type=int, default=3)
     parser.add_argument('--max-sampling-retries', type=int, default=128,
                         help='Retries within each attempt after the initial rejected sample')
     parser.add_argument('--cleanup', action=argparse.BooleanOptionalAction, default=True,
