@@ -88,9 +88,12 @@ class PrefixTests(unittest.TestCase):
             return hook
         with torch.inference_mode():
             handle=self.model.register_forward_hook(capture(baseline),with_kwargs=True)
-            expected=self.model.generate(**inputs,max_new_tokens=3,do_sample=False,use_cache=True)
+            torch.manual_seed(456)
+            expected=self.model.generate(**inputs,max_new_tokens=3,do_sample=True,
+                                         temperature=.8,top_p=.95,top_k=50,use_cache=True)
             handle.remove()
             handle=self.model.register_forward_hook(capture(cached),with_kwargs=True)
+            torch.manual_seed(456)
             actual, info=generate_with_prefix(self.model,self.processor,inputs,self.request,state)
             handle.remove()
         self.assertTrue(torch.equal(expected,actual))

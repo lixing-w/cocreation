@@ -107,3 +107,9 @@ original observation labels; callers must run the Python helper before generatio
 In pipeline logs, `prompt.txt` is the original prompter output and
 `generation_prompt.txt` is the final generator input. Both are also logged in
 `debug.log`; the individual files survive normal completion with `--no-cleanup`.
+
+H3 response repair: before validation, Python replaces attached-image observation
+labels such as `<Image 1>` with their matching `<Picture 1>` aliases everywhere in
+the response. Existing `<Picture N>`, `<Video N>` and `<Subject N>` labels remain
+unchanged. This does not invent references: unknown image numbers still fail
+validation. Flux output is unaffected and retains its original source labels.

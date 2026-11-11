@@ -20,6 +20,22 @@ class Contracts(unittest.TestCase):
         env_patch.start()
         self.addCleanup(env_patch.stop)
 
+    def test_qwen_sampling_and_seed_contract(self):
+        model=Qwen()
+        with patch('cocreation.models.secrets.randbits', side_effect=[123,456]):
+            first=model('hello',dry_run=True)['options']
+            second=model('hello',dry_run=True)['options']
+        self.assertEqual((first['seed'],second['seed']),(123,456))
+        self.assertTrue(first['do_sample'])
+        self.assertEqual((first['temperature'],first['top_p'],first['top_k']),(.8,.95,50))
+        explicit=model('hello',seed=7,temperature=.6,top_p=.9,top_k=20,dry_run=True)['options']
+        self.assertEqual(explicit['seed'],7)
+        self.assertEqual((explicit['temperature'],explicit['top_p'],explicit['top_k']),(.6,.9,20))
+        for options in ({'temperature':0},{'temperature':float('nan')},{'top_p':1.1},
+                        {'top_k':-1},{'seed':True},{'seed':-1}):
+            with self.subTest(options=options),self.assertRaises(ValueError):
+                model('hello',dry_run=True,**options)
+
     def test_numbering_preserves_order_per_kind(self):
         refs = [Reference("v4", "4.mp4", "video"), Reference("i7", "7.png", "image"),
                 Reference("v5", "5.mp4", "video")]

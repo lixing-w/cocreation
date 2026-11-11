@@ -16,7 +16,7 @@ def reference(value):
 
 
 def ask_text(system, task, references, *, qwen=None, output_dir=None,
-             max_new_tokens=4096, seed=0, video_fps=2.0, video_max_frames=32,
+             max_new_tokens=4096, seed=None, video_fps=2.0, video_max_frames=32,
              max_pixels=512*512, cache_name=None, use_system_cache=True):
     if not isinstance(task, str) or '{{artifact:' in task:
         raise ValueError('Task must be prose without artifact placeholders')

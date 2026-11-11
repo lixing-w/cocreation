@@ -65,7 +65,6 @@ def run_qwen(request, directory, state=None):
     job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
-    torch.manual_seed(opts["seed"])
     state = {} if state is None else state
     if 'model' not in state:
         state['model'] = Qwen3VLForConditionalGeneration.from_pretrained(request['model_id'],
@@ -85,12 +84,15 @@ def run_qwen(request, directory, state=None):
         video_metadata=video_metadata, do_resize=False, return_tensors="pt", **video_kwargs)
     inputs = inputs.to(rt["device"])
     cache_info = None
+    from .qwen_sampling import generation_options
+    # Seed after model loading/preprocessing so cold and warm calls start alike.
+    torch.manual_seed(opts["seed"])
     with torch.inference_mode():
         if opts.get('system_cache_path'):
             from .qwen_prefix_cache import generate_with_prefix
             generated, cache_info = generate_with_prefix(model, processor, inputs, request, state)
         else:
-            generated = model.generate(**inputs, max_new_tokens=opts["max_new_tokens"], do_sample=False)
+            generated = model.generate(**inputs, max_new_tokens=opts["max_new_tokens"], **generation_options(opts))
     trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
     answer = processor.batch_decode(trimmed, skip_special_tokens=True,
                                    clean_up_tokenization_spaces=False)[0]

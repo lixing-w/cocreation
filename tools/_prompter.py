@@ -55,6 +55,13 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
     try:
         require(isinstance(raw, str), 'missing_text', 'Model response has no string text field')
         prompt = raw.strip()
+        if target == 'h3':
+            # Repair Qwen observation labels before validating H3 generator labels.
+            # Only attached images have aliases; unknown source numbers still fail.
+            aliases = {row['observation_label']: row['generator_label']
+                       for row in catalog if row['kind'] == 'image'}
+            prompt = re.sub(r'<Image [1-9]\d*>',
+                            lambda match: aliases.get(match.group(), match.group()), prompt)
         require(prompt != 'CANNOT_FULFILL', 'model_declined', 'Model could not fulfill the description')
         require(bool(prompt), 'empty_prompt', 'Expected nonempty prompt text')
         require(not prompt.startswith(('{', '[{', '"')), 'invalid_envelope',

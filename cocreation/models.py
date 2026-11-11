@@ -1,6 +1,7 @@
 """Lightweight controller. Heavy runtimes exist only in inference children."""
 from dataclasses import asdict, dataclass, field
 import json
+import secrets
 import os
 from pathlib import Path
 import sys
@@ -9,6 +10,7 @@ import datetime
 import uuid
 
 from .references import Reference, prepare
+from .qwen_sampling import generation_options
 from .h3 import H3Runtime, MODEL_REPO, frame_count
 from .storage import scratch_root, ensure_scratch, runtime_environment
 
@@ -125,8 +127,13 @@ class Qwen(_System):
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
-                 max_pixels=512 * 512, seed=0, dry_run=False, system_prompt=None,
-                 system_cache_path=None, output_dir=None):
+                 max_pixels=512 * 512, seed=None, dry_run=False, system_prompt=None,
+                 system_cache_path=None, output_dir=None, temperature=0.8, top_p=0.95, top_k=50):
+        sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
+        if seed is None:
+            seed = secrets.randbits(63)
+        if type(seed) is not int or not 0 <= seed < 2**63:
+            raise ValueError('Qwen seed must be an integer in [0, 2**63), or None')
         if system_prompt is not None and not isinstance(system_prompt, str):
             raise TypeError("system_prompt must be a string or None")
         if system_cache_path is not None:
@@ -138,7 +145,7 @@ class Qwen(_System):
         return self._invoke(prompt, references, dict(max_new_tokens=max_new_tokens,
             video_fps=video_fps, video_max_frames=video_max_frames,
             max_pixels=max_pixels, seed=seed, system_prompt=system_prompt,
-            system_cache_path=system_cache_path), dry_run, output_dir=output_dir)
+            system_cache_path=system_cache_path, **sampling), dry_run, output_dir=output_dir)
 
 
 class Flux(_System):

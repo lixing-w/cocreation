@@ -36,7 +36,8 @@ artifacts remain two separate observations.
    - Zero attributes: invent one new identity (person, garment, object or scene),
      in one or two concise sentences. Aim for elegant, beautiful, refined design,
      avoiding grotesquerie. Seeded category/form/character directions vary the actual
-     prompt because Qwen currently uses greedy decoding, so seed alone is insufficient.
+     prompt in addition to Qwen’s stochastic decoding. Explicit rewriter seeds
+     reproduce both the chosen direction and sampling seed.
    - One actual source: preserve every sampled line and annotation unchanged.
      Python enforces this by returning the text without a VLM call; `mode.txt`
      records the passthrough. Multiple lines from one source still use this mode.

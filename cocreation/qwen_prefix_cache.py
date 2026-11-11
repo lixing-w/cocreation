@@ -4,6 +4,7 @@ The official processor prepares all inputs. We prefill new media with forward(),
 leaving the final text token to generate(), so its decode-only media suppression
 is safe. Only tensor data and compatibility metadata are persisted, never objects.
 """
+from .qwen_sampling import generation_options
 import hashlib
 import json
 import os
@@ -172,7 +173,7 @@ def generate_with_prefix(model, processor, inputs, request, state):
         generated = model.generate(
             input_ids=ids, attention_mask=mask, past_key_values=result.past_key_values,
             cache_position=torch.arange(total - 1, total, device=ids.device),
-            use_cache=True, max_new_tokens=opts['max_new_tokens'], do_sample=False)
+            use_cache=True, max_new_tokens=opts['max_new_tokens'], **generation_options(opts))
         return generated, dict(status=status, prefix_tokens=n, path=str(path))
     finally:
         # No multimodal position state may leak into a different artifact/request.

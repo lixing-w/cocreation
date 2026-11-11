@@ -8,7 +8,7 @@ from tools.attribute_rewriter_prompts import SYSTEM
 
 
 def attribute_rewriter(description, references=None, *, kind, brief='', qwen=None,
-                       output_dir=None, seed=0, **options):
+                       output_dir=None, seed=None, **options):
     if kind not in ('image', 'video'):
         raise ValueError('Expected image or video target')
     refs = [reference(r) for r in references or []]
@@ -17,8 +17,8 @@ def attribute_rewriter(description, references=None, *, kind, brief='', qwen=Non
     if not description.strip():
         if refs:
             raise ValueError('Zero attributes must not attach references')
-        # Qwen currently decodes greedily. Vary actual creative input, not only its
-        # random seed, so source-free calls do not repeat one identical request.
+        # Vary the creative brief as well as stochastic decoding. An explicit
+        # seed reproduces the chosen direction; None chooses a fresh direction.
         rng = random.Random(seed)
         identity = rng.choice(('person', 'garment', 'object', 'scene'))
         form = rng.choice(('flowing curves', 'crisp geometric planes', 'asymmetric balance',

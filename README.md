@@ -329,3 +329,14 @@ Flux prompter preserves original `<Video N>` / `<Image N>` labels. Python conver
 them to final Flux image slots only after frame selection and immediately before
 generation. See `flux_generation_prompt` in `tools/flux_prompter.py`; prompter CLI
 output also needs this conversion before use with the generator.
+
+### Qwen stochastic decoding
+
+Both ordinary and system-prefix-cached Qwen calls now use `do_sample=True` with
+`temperature=0.8`, `top_p=0.95`, `top_k=50` by default. Override these three values
+in `Qwen(...)` call arguments as needed. Omitting `seed` (or using `seed=None`)
+selects a fresh random seed per call; the resolved seed and sampling options are
+stored in request logs. Explicit seeds retain reproducible stochastic sampling
+within the same model/runtime conditions. Seed initialization happens after model
+loading and preprocessing, before inference. Fixed seeds do not mean greedy decoding.
+The rewriter’s randomized creative directions remain enabled alongside sampling.

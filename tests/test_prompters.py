@@ -142,6 +142,23 @@ class Prompters(unittest.TestCase):
         self.assertEqual(flux_generation_prompt('<Video 2> beside <Image 1> and <Video 1>.',originals,images),
                          '<Image 3> beside <Image 1> and <Image 2>.')
 
+    def test_h3_repairs_image_aliases_before_validation(self):
+        refs=self.refs+[Reference('second_image',self.root/'garden.png','image')]
+        description=self.description+'\nA white vase. (from <Image 2>)'
+        expected=REF_PROMPT.replace('A five-second portrait in the garden.',
+            'A white vase like in <Picture 2> stands in the garden like in <Picture 1>.')
+        raw=expected.replace('<Picture 1>','<Image 1>').replace('<Picture 2>','<Image 2>')
+        _,_,catalog=prepare_inputs(description,refs,'h3')
+        self.assertEqual(parse_prompt({'text':raw},catalog,'h3',5),expected)
+        mixed=raw.replace('garden like in <Image 1>','garden like in <Picture 1>')
+        self.assertEqual(parse_prompt({'text':mixed},catalog,'h3',5),expected)
+        self.assertIsNone(parse_prompt({'text':raw+' like in <Image 9>'},catalog,'h3',5))
+        model=Mock(return_value={'text':raw})
+        self.assertEqual(h3_prompter(description,refs,seconds=5,qwen=model),expected)
+        # Flux still preserves original observation labels, without this H3 repair.
+        _,_,flux_catalog=prepare_inputs(self.description,self.refs,'flux')
+        self.assertEqual(parse_prompt({'text':FLUX_PROMPT},flux_catalog,'flux'),FLUX_PROMPT)
+
     def test_h3_structure_shots_and_times_remain_validated(self):
         _,_,catalog=prepare_inputs(self.description,self.refs,'h3')
         for text in (REF_PROMPT.replace('00:02.000','00:05.000'),
