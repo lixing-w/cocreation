@@ -55,25 +55,31 @@ def qwen_messages(request):
     if opts.get("system_prompt") is not None:
         messages.append(dict(role="system", content=opts["system_prompt"]))
     messages.append(dict(role="user", content=content))
+    if opts.get("assistant_prefill") is not None:
+        messages.append(dict(role="assistant", content=opts["assistant_prefill"]))
     return messages
 
 
 def run_qwen(request, directory, state=None):
     import torch
-    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+    from transformers import AutoProcessor, AutoModelForImageTextToText
     from qwen_vl_utils import process_vision_info
     job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
     state = {} if state is None else state
     if 'model' not in state:
-        state['model'] = Qwen3VLForConditionalGeneration.from_pretrained(request['model_id'],
+        state['model'] = AutoModelForImageTextToText.from_pretrained(request['model_id'],
             dtype=getattr(torch, rt['dtype']), device_map={'': rt['device']},
             attn_implementation='sdpa', **hf_options(rt)).eval()
         state['processor'] = AutoProcessor.from_pretrained(request['model_id'], **hf_options(rt))
     model, processor = state['model'], state['processor']
     messages = qwen_messages(request)
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    # Continue the supplied assistant text, rather than starting another turn.
+    template_options = dict(add_generation_prompt=True)
+    if opts.get("assistant_prefill") is not None:
+        template_options = dict(add_generation_prompt=False, continue_final_message=True)
+    text = processor.apply_chat_template(messages, tokenize=False, **template_options)
     images, videos, video_kwargs = process_vision_info(messages, image_patch_size=16,
         return_video_kwargs=True, return_video_metadata=True)
     video_metadata = None

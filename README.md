@@ -209,60 +209,33 @@ stdout 仅输出一个秒数或 `null`。时间以视频第一个显示帧为零
 
 工具的 Python 返回值为 `float | None`；可选 `frame_output` 导出选中 PNG，默认不覆盖已有文件。详细来源、原视频帧序号、两轮候选及选中 PNG 保存在 `scratch/runs/find_video_frame/<id>/`；未找到时不导出图。推理失败、无效文本输出、非法候选编号会报错，不伪装成未找到。支持本地视频路径，不自动下载远程 URL。
 
-工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。CPG 自然语言流程与属性定义见 [docs/cpg.md](docs/cpg.md)。
+工具自行创建的 Qwen 在返回前关闭；调用方传入的 Qwen 保持可复用。需要 ffmpeg/ffprobe；Mac 上可测抽帧和接口，真实 Qwen/FLUX/H3 仍在 CUDA 服务器验收。多轮对话构造见 [scripts/dialogue_generation/README.md](scripts/dialogue_generation/README.md)。
 
 
-### Natural-language CPG pipeline
+### Target-video conversation generation
 
-CPG now uses a pool of `(description, artifact)` pairs. Descriptions are short
-natural-language sentences, one intuitive attribute per line. The pipeline is:
-`extractor → sample lines → attribute_rewriter → Flux/H3 prompter → generator → attribute_verifier → pool`.
-
-Extractor and verifier omit uncertain or nonessential observations. Each round
-samples 0–3 lines by default, with probabilities 40%, 30%, 20%, 10%. Zero attributes
-asks rewriter for one new identity in one or two sentences and generates an image
-first. Same-source attributes pass through unchanged without inference; different
-sources permit only minimal repair of strict conflicts, not creative embellishment.
-Retained attributes keep `(from <Image N>)` / `(from <Video N>)` annotations.
-Verifier inspects actual output in one pass; no strict inheritance matching remains.
-
-```python
-from cocreation import Qwen, Reference
-from tools.extractor import extractor
-
-with Qwen() as qwen:
-    description = extractor(
-        Reference("root_video", "scratch/data/samples/video.mp4", "video"), qwen=qwen)
-```
-
-The result is `str | None`. All VLM task messages and replies are plain text,
-including both generation prompters and frame search. JSON remains only for local
-configuration, checkpoints, logs and low-level application transport.
-`extract_attribute_nodes` remains an alias returning the new text result.
+The new pipeline consumes an existing VLM observation JSON for a 1–4-shot target.
+Python samples legal asset-preparation, exploration, rework and compilation acts;
+Qwen only writes short natural dialogue. No image/video models are called.
+Every turn retains its underlying intent and media placeholders. A separate
+placeholder catalog contains short media descriptions.
 
 ```bash
-python tools/extract_attribute_nodes.py scratch/data/samples/image.jpg --artifact-id root_image --kind image
-python scripts/cpg/cpg_reverse.py roots.json --output-dir scratch/runs/cpg-v2 --sample 0 3 --attempts 10
+python scripts/dialogue_generation/generate.py \
+  scripts/dialogue_generation/examples/tokyo_vlog.json \
+  --output-dir scratch/runs/dialogue-demo --seed 5 --reworks 1
 ```
 
-Nonempty selections are unique per run by their unordered source/line-number
-combination, including failed downstream attempts. Zero draws can repeat to invent
-new identities. Single-line selections become text-only generation requirements:
-source labels and media are removed before rewriter, so rewriter, prompter and
-generator all see a new source-free requirement. All generated results
-run verifier and, on success, enter the pool regardless of sampled count or text
-overlap. New observations bind only to the newly generated media, never old parents.
+The default text backend is local Ollama (`qwen3-vl:8b`). `--backend local`
+reuses the persistent CUDA Qwen adapter with empty media references. Each Qwen
+prompt has exactly three input/output examples, the complete preceding dialogue,
+the fixed speaker persona, and a short draft for the current act. Five user styles
+are sampled once per conversation. Backend generation inputs are separate from
+references actually shown in chat; adoption and rollback do not reupload media.
+Qwen returns prose, not an internal JSON schema.
 
-Each reference contributes at most two sampled lines. Invalid draws retry inside
-the attempt (default `--max-sampling-retries 128`), redrawing the count and attributes.
-Generated media always move to `generated/artifact_N.png` or `.mp4`, including
-outputs rejected by verifier. At normal completion, cleanup removes intermediate
-attempt/model directories by default; `debug.log`, `roots/`, `graph.json`, and
-`generated/` remain. Use `--no-cleanup` to keep intermediate logs and prose.
-
-See [pipeline, attribute definitions and migration](docs/cpg.md), and
-[prompter inputs and media mapping](docs/prompters.md). Old JSON observations must
-be re-extracted or replaced by supplied prose; `--add` / `--variate` are removed.
+See [input schema, sampling rules, outputs and tests](scripts/dialogue_generation/README.md).
+`scripts/cpg` has been removed; reusable extraction/prompter tools remain available.
 
 
 ### Qwen system prefix cache

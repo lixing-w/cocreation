@@ -1,0 +1,1493 @@
+{
+  "schema_version": 2,
+  "unknown_value": "unknown",
+  "not_applicable_value": "not applicable",
+  "notes": [
+    "For each field of each asset, select exactly one of the listed values.",
+    "Use unknown when the image does not support a judgment. Use not applicable when the field does not make sense for the asset.",
+    "Gender presentation and apparent age describe visible appearance only. Do not infer identity or actual age.",
+    "Select object size and apparent height only when a reliable visual scale is available. Otherwise use unknown.",
+    "Use description for stable details outside the catalog. Leave changeable attributes such as color, material, hairstyle, and weather to their fields.",
+    "Select the dominant value when several are visible. Use unknown when no value clearly dominates."
+  ],
+  "categories": {
+    "person": {
+      "label": "Person",
+      "summary_fields": [
+        "hair_length",
+        "hair_color",
+        "clothing_type",
+        "clothing_color",
+        "expression",
+        "gender_presentation"
+      ],
+      "attributes": {
+        "gender_presentation": {
+          "label": "Gender presentation",
+          "values": [
+            "feminine",
+            "masculine",
+            "androgynous",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "age_group": {
+          "label": "Apparent age group",
+          "values": [
+            "young child",
+            "school-age child",
+            "teenager",
+            "young adult",
+            "middle-aged adult",
+            "older adult",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "hair_length": {
+          "label": "Hair length",
+          "values": [
+            "bald",
+            "buzz-length hair",
+            "short hair",
+            "shoulder-length hair",
+            "long hair",
+            "waist-length hair",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "bald",
+            "buzz-length hair",
+            "short hair",
+            "shoulder-length hair",
+            "long hair",
+            "waist-length hair"
+          ]
+        },
+        "hair_style": {
+          "label": "Hairstyle",
+          "values": [
+            "sleek straight hair",
+            "voluminous straight hair",
+            "slightly wavy hair",
+            "wavy hair",
+            "tight curls",
+            "side part",
+            "center part",
+            "blunt bangs",
+            "wispy bangs",
+            "choppy bangs",
+            "slicked back",
+            "tousled hair",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "hair_color": {
+          "label": "Hair color",
+          "values": [
+            "black",
+            "white",
+            "gray",
+            "beige",
+            "brown",
+            "red",
+            "orange",
+            "yellow",
+            "green",
+            "cyan",
+            "blue",
+            "purple",
+            "pink",
+            "gold",
+            "silver",
+            "copper",
+            "multicolored",
+            "gray-white",
+            "silver-white",
+            "two-tone hair",
+            "highlights",
+            "dark blue",
+            "light blue",
+            "dark green",
+            "light green",
+            "burgundy",
+            "khaki",
+            "off-white",
+            "neon green",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "face_shape": {
+          "label": "Face shape",
+          "values": [
+            "round face",
+            "oval face",
+            "square face",
+            "long face",
+            "heart-shaped face",
+            "diamond-shaped face",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "eye_shape": {
+          "label": "Eye shape",
+          "values": [
+            "round eyes",
+            "almond-shaped eyes",
+            "narrow eyes",
+            "upturned eyes",
+            "downturned eyes",
+            "deep-set eyes",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "eyebrow_shape": {
+          "label": "Eyebrow shape",
+          "values": [
+            "straight brows",
+            "arched brows",
+            "upturned brows",
+            "thick brows",
+            "thin brows",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "nose_shape": {
+          "label": "Nose shape",
+          "values": [
+            "small nose",
+            "straight nose",
+            "rounded nose",
+            "wide nose",
+            "aquiline nose",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "lip_shape": {
+          "label": "Lip shape",
+          "values": [
+            "thin lips",
+            "medium lips",
+            "full lips",
+            "bow-shaped lips",
+            "rounded lips",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "expression": {
+          "label": "Facial expression",
+          "values": [
+            "serious",
+            "calm",
+            "gentle",
+            "smiling",
+            "laughing",
+            "thoughtful",
+            "surprised",
+            "sad",
+            "confident",
+            "tired",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "makeup_intensity": {
+          "label": "Makeup intensity",
+          "values": [
+            "no makeup",
+            "light makeup",
+            "moderate makeup",
+            "heavy makeup",
+            "stage makeup",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no makeup",
+            "light makeup",
+            "moderate makeup",
+            "heavy makeup",
+            "stage makeup"
+          ]
+        },
+        "facial_hair": {
+          "label": "Facial hair",
+          "values": [
+            "clean-shaven",
+            "stubble",
+            "mustache",
+            "goatee",
+            "full beard",
+            "long beard",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "height": {
+          "label": "Apparent height",
+          "values": [
+            "short",
+            "average height",
+            "tall",
+            "very tall",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "short",
+            "average height",
+            "tall",
+            "very tall"
+          ]
+        },
+        "body_build": {
+          "label": "Build",
+          "values": [
+            "slim",
+            "proportionate",
+            "athletic",
+            "stocky",
+            "full-figured",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "clothing_type": {
+          "label": "Main garment",
+          "values": [
+            "coat",
+            "jacket",
+            "trench coat",
+            "down jacket",
+            "suit",
+            "button-up shirt",
+            "T-shirt",
+            "knit sweater",
+            "sweatshirt",
+            "sportswear",
+            "dress",
+            "workwear",
+            "traditional clothing",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "clothing_color": {
+          "label": "Main clothing color",
+          "values": [
+            "black",
+            "white",
+            "gray",
+            "beige",
+            "brown",
+            "red",
+            "orange",
+            "yellow",
+            "green",
+            "cyan",
+            "blue",
+            "purple",
+            "pink",
+            "gold",
+            "silver",
+            "copper",
+            "multicolored",
+            "dark blue",
+            "light blue",
+            "dark green",
+            "light green",
+            "burgundy",
+            "khaki",
+            "off-white",
+            "neon green",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "clothing_fit": {
+          "label": "Clothing fit",
+          "values": [
+            "fitted",
+            "regular fit",
+            "loose",
+            "oversized",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "fitted",
+            "regular fit",
+            "loose",
+            "oversized"
+          ]
+        },
+        "accessory": {
+          "label": "Main accessory",
+          "values": [
+            "no accessory",
+            "eyeglasses",
+            "sunglasses",
+            "scarf",
+            "necklace",
+            "earrings",
+            "hat",
+            "hair accessory",
+            "unknown",
+            "not applicable"
+          ]
+        }
+      },
+      "constraints": [
+        {
+          "if": {
+            "hair_length": [
+              "bald"
+            ]
+          },
+          "then": {
+            "hair_style": [
+              "unknown",
+              "not applicable"
+            ],
+            "hair_color": [
+              "unknown",
+              "not applicable"
+            ]
+          }
+        }
+      ]
+    },
+    "object": {
+      "label": "Object",
+      "summary_fields": [
+        "color",
+        "material",
+        "size",
+        "shape",
+        "pattern",
+        "surface_finish"
+      ],
+      "attributes": {
+        "color": {
+          "label": "Main object color",
+          "values": [
+            "black",
+            "white",
+            "gray",
+            "beige",
+            "brown",
+            "red",
+            "orange",
+            "yellow",
+            "green",
+            "cyan",
+            "blue",
+            "purple",
+            "pink",
+            "gold",
+            "silver",
+            "copper",
+            "colorless",
+            "multicolored",
+            "dark blue",
+            "light blue",
+            "dark green",
+            "light green",
+            "burgundy",
+            "khaki",
+            "off-white",
+            "neon green",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "color_lightness": {
+          "label": "Object color lightness",
+          "values": [
+            "very dark",
+            "somewhat dark",
+            "medium lightness",
+            "somewhat light",
+            "very light",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "very dark",
+            "somewhat dark",
+            "medium lightness",
+            "somewhat light",
+            "very light"
+          ]
+        },
+        "color_saturation": {
+          "label": "Object color saturation",
+          "values": [
+            "low saturation",
+            "medium saturation",
+            "high saturation",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "low saturation",
+            "medium saturation",
+            "high saturation"
+          ]
+        },
+        "size": {
+          "label": "Object size",
+          "values": [
+            "miniature",
+            "small",
+            "medium-sized",
+            "large",
+            "extra large",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "miniature",
+            "small",
+            "medium-sized",
+            "large",
+            "extra large"
+          ]
+        },
+        "shape": {
+          "label": "Object shape",
+          "values": [
+            "round",
+            "oval",
+            "square",
+            "rectangular",
+            "rounded rectangle",
+            "cylindrical",
+            "conical",
+            "spherical",
+            "hemispherical",
+            "elongated",
+            "streamlined",
+            "spindle-shaped",
+            "flat",
+            "irregular",
+            "unknown",
+            "not applicable"
+          ],
+          "variation_groups": [
+            [
+              "round",
+              "oval"
+            ],
+            [
+              "square",
+              "rectangular",
+              "rounded rectangle"
+            ],
+            [
+              "cylindrical",
+              "conical"
+            ],
+            [
+              "spherical",
+              "hemispherical"
+            ],
+            [
+              "elongated",
+              "streamlined",
+              "spindle-shaped"
+            ],
+            [
+              "flat",
+              "irregular"
+            ]
+          ]
+        },
+        "aspect_ratio": {
+          "label": "Object proportions",
+          "values": [
+            "long and narrow",
+            "balanced",
+            "wide and flat",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "long and narrow",
+            "balanced",
+            "wide and flat"
+          ]
+        },
+        "material": {
+          "label": "Main material",
+          "values": [
+            "canvas",
+            "cotton fabric",
+            "leather",
+            "faux leather",
+            "nylon",
+            "silk",
+            "felt",
+            "wood",
+            "bamboo",
+            "ceramic",
+            "glass",
+            "metal",
+            "plastic",
+            "rubber",
+            "stone",
+            "paper",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "surface_finish": {
+          "label": "Surface finish",
+          "values": [
+            "matte",
+            "semi-matte",
+            "glossy",
+            "mirror finish",
+            "frosted",
+            "brushed",
+            "glazed",
+            "satin finish",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "texture": {
+          "label": "Surface texture",
+          "values": [
+            "fine-textured",
+            "smooth",
+            "grainy",
+            "rough",
+            "woven",
+            "fuzzy",
+            "carved",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "pattern": {
+          "label": "Pattern",
+          "values": [
+            "plain",
+            "striped",
+            "checked",
+            "polka dots",
+            "geometric pattern",
+            "floral pattern",
+            "animal print",
+            "gradient",
+            "lettering",
+            "logo",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "decoration": {
+          "label": "Decoration",
+          "values": [
+            "undecorated",
+            "decals",
+            "relief",
+            "embroidery",
+            "metal accents",
+            "charms",
+            "inlay",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "condition": {
+          "label": "Condition",
+          "values": [
+            "brand new",
+            "lightly worn",
+            "visibly worn",
+            "distressed",
+            "damaged",
+            "visibly repaired",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "transparency": {
+          "label": "Transparency",
+          "values": [
+            "opaque",
+            "translucent",
+            "transparent",
+            "unknown",
+            "not applicable"
+          ]
+        }
+      },
+      "constraints": [
+        {
+          "if": {
+            "transparency": [
+              "transparent",
+              "translucent"
+            ]
+          },
+          "then": {
+            "material": [
+              "glass",
+              "plastic",
+              "unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "surface_finish": [
+              "brushed"
+            ]
+          },
+          "then": {
+            "material": [
+              "metal",
+              "unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "surface_finish": [
+              "glazed"
+            ]
+          },
+          "then": {
+            "material": [
+              "ceramic",
+              "unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "color": [
+              "black",
+              "white",
+              "gray",
+              "colorless"
+            ]
+          },
+          "then": {
+            "color_saturation": [
+              "unknown",
+              "not applicable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "material": [
+              "canvas",
+              "cotton fabric",
+              "nylon",
+              "felt",
+              "paper"
+            ]
+          },
+          "then": {
+            "surface_finish": [
+              "matte",
+              "semi-matte",
+              "unknown",
+              "not applicable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "color": [
+              "beige",
+              "brown",
+              "red",
+              "orange",
+              "yellow",
+              "green",
+              "cyan",
+              "blue",
+              "purple",
+              "pink",
+              "gold",
+              "silver",
+              "copper",
+              "multicolored",
+              "dark blue",
+              "light blue",
+              "dark green",
+              "light green",
+              "burgundy",
+              "khaki",
+              "off-white",
+              "neon green"
+            ]
+          },
+          "then": {
+            "color_saturation": [
+              "low saturation",
+              "medium saturation",
+              "high saturation",
+              "unknown"
+            ]
+          }
+        },
+        {
+          "if": {
+            "color": [
+              "colorless"
+            ]
+          },
+          "then": {
+            "transparency": [
+              "transparent",
+              "unknown"
+            ]
+          }
+        }
+      ]
+    },
+    "indoor_environment": {
+      "label": "Indoor environment",
+      "summary_fields": [
+        "room_type",
+        "interior_style",
+        "time_of_day",
+        "lighting_level",
+        "lighting_temperature",
+        "space_size"
+      ],
+      "attributes": {
+        "room_type": {
+          "label": "Room type",
+          "values": [
+            "coffee shop",
+            "restaurant",
+            "living room",
+            "bedroom",
+            "kitchen",
+            "bathroom",
+            "study",
+            "office",
+            "studio",
+            "gallery",
+            "shop",
+            "hotel lobby",
+            "hallway",
+            "vehicle interior",
+            "warehouse",
+            "classroom",
+            "stage",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "interior_style": {
+          "label": "Interior style",
+          "values": [
+            "modern minimalist",
+            "Scandinavian",
+            "Japanese",
+            "Chinese",
+            "industrial",
+            "retro",
+            "country",
+            "understated luxury",
+            "bohemian",
+            "futuristic",
+            "classical",
+            "Mediterranean",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "space_size": {
+          "label": "Room size",
+          "values": [
+            "cramped",
+            "compact",
+            "mid-sized",
+            "spacious",
+            "vast",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "cramped",
+            "compact",
+            "mid-sized",
+            "spacious",
+            "vast"
+          ]
+        },
+        "ceiling_height": {
+          "label": "Ceiling height",
+          "values": [
+            "low ceiling",
+            "standard ceiling",
+            "double-height ceiling",
+            "very high ceiling",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "low ceiling",
+            "standard ceiling",
+            "double-height ceiling",
+            "very high ceiling"
+          ]
+        },
+        "layout": {
+          "label": "Layout",
+          "values": [
+            "open-plan",
+            "semi-open",
+            "partitioned",
+            "long and narrow",
+            "symmetrical",
+            "circular",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "wall_material": {
+          "label": "Wall material",
+          "values": [
+            "latex paint",
+            "exposed brick",
+            "wood paneling",
+            "concrete",
+            "stone",
+            "glass",
+            "tile",
+            "wallpaper",
+            "metal",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "floor_material": {
+          "label": "Floor material",
+          "values": [
+            "wood flooring",
+            "tile",
+            "concrete",
+            "marble",
+            "carpet",
+            "stone slabs",
+            "metal",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "palette": {
+          "label": "Overall palette",
+          "values": [
+            "warm palette",
+            "cool palette",
+            "neutral palette",
+            "black and white",
+            "saturated colors",
+            "muted colors",
+            "natural wood tones",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "furniture_density": {
+          "label": "Furniture density",
+          "values": [
+            "sparsely furnished",
+            "moderately furnished",
+            "densely furnished",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "sparsely furnished",
+            "moderately furnished",
+            "densely furnished"
+          ]
+        },
+        "furniture_style": {
+          "label": "Furniture style",
+          "values": [
+            "minimalist",
+            "natural wood",
+            "modern metal",
+            "retro",
+            "classical",
+            "eclectic",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "window_type": {
+          "label": "Main window type",
+          "values": [
+            "no windows",
+            "small windows",
+            "standard windows",
+            "floor-to-ceiling windows",
+            "skylight",
+            "panoramic glazing",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "clutter": {
+          "label": "Clutter",
+          "values": [
+            "tidy",
+            "slightly cluttered",
+            "cluttered",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "tidy",
+            "slightly cluttered",
+            "cluttered"
+          ]
+        },
+        "background_crowd": {
+          "label": "Background crowd",
+          "values": [
+            "no people",
+            "sparse crowd",
+            "moderate crowd",
+            "crowded",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no people",
+            "sparse crowd",
+            "moderate crowd",
+            "crowded"
+          ]
+        },
+        "lighting_source": {
+          "label": "Main light source",
+          "values": [
+            "natural daylight",
+            "moonlight",
+            "light through windows",
+            "indoor lights",
+            "streetlights",
+            "neon lights",
+            "campfire",
+            "mixed light sources",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "lighting_level": {
+          "label": "Ambient light level",
+          "values": [
+            "dim",
+            "somewhat dim",
+            "moderate light",
+            "bright",
+            "very bright",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "dim",
+            "somewhat dim",
+            "moderate light",
+            "bright",
+            "very bright"
+          ]
+        },
+        "lighting_temperature": {
+          "label": "Lighting color temperature",
+          "values": [
+            "cool-toned",
+            "neutral-toned",
+            "warm-toned",
+            "colored lighting",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "lighting_softness": {
+          "label": "Light quality",
+          "values": [
+            "hard light",
+            "moderately soft light",
+            "soft light",
+            "diffuse light",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "time_of_day": {
+          "label": "Time of day",
+          "values": [
+            "dawn",
+            "early morning",
+            "morning",
+            "noon",
+            "afternoon",
+            "dusk",
+            "night",
+            "late night",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "camera_distance": {
+          "label": "Shot size",
+          "values": [
+            "long shot",
+            "wide shot",
+            "medium shot",
+            "close shot",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "long shot",
+            "wide shot",
+            "medium shot",
+            "close shot"
+          ]
+        }
+      },
+      "constraints": [
+        {
+          "if": {
+            "time_of_day": [
+              "night",
+              "late night"
+            ]
+          },
+          "then": {
+            "lighting_source": [
+              "moonlight",
+              "light through windows",
+              "indoor lights",
+              "streetlights",
+              "neon lights",
+              "campfire",
+              "mixed light sources",
+              "unknown",
+              "not applicable"
+            ]
+          }
+        }
+      ]
+    },
+    "outdoor_environment": {
+      "label": "Outdoor environment",
+      "summary_fields": [
+        "setting_type",
+        "geography",
+        "time_of_day",
+        "weather",
+        "season",
+        "lighting_level"
+      ],
+      "attributes": {
+        "setting_type": {
+          "label": "Setting type",
+          "values": [
+            "city street",
+            "alley",
+            "public square",
+            "park",
+            "garden",
+            "forest",
+            "grassland",
+            "mountains",
+            "lake",
+            "river",
+            "beach",
+            "open sea",
+            "desert",
+            "snowfield",
+            "countryside",
+            "field",
+            "campsite",
+            "unknown",
+            "not applicable"
+          ],
+          "variation_groups": [
+            [
+              "city street",
+              "alley",
+              "public square"
+            ],
+            [
+              "park",
+              "garden"
+            ],
+            [
+              "forest",
+              "grassland",
+              "field"
+            ],
+            [
+              "mountains",
+              "snowfield"
+            ],
+            [
+              "lake",
+              "river",
+              "open sea"
+            ],
+            [
+              "beach",
+              "desert"
+            ],
+            [
+              "countryside",
+              "campsite"
+            ]
+          ]
+        },
+        "geography": {
+          "label": "Terrain",
+          "values": [
+            "plain",
+            "hills",
+            "valley",
+            "alpine terrain",
+            "basin",
+            "coast",
+            "island",
+            "canyon",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "season": {
+          "label": "Season",
+          "values": [
+            "spring",
+            "summer",
+            "fall",
+            "winter",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "weather": {
+          "label": "Weather",
+          "values": [
+            "clear skies",
+            "partly cloudy",
+            "overcast",
+            "light rain",
+            "heavy rain",
+            "thunderstorm",
+            "light snow",
+            "heavy snow",
+            "foggy",
+            "blowing dust",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "surface_material": {
+          "label": "Main ground surface",
+          "values": [
+            "asphalt",
+            "stone slabs",
+            "gravel",
+            "sand",
+            "grass",
+            "wooden boardwalk",
+            "ice and snow",
+            "dirt",
+            "rock",
+            "water surface",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "surface_condition": {
+          "label": "Ground condition",
+          "values": [
+            "dry",
+            "wet",
+            "standing water",
+            "snow-covered",
+            "icy",
+            "muddy",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "vegetation_density": {
+          "label": "Vegetation density",
+          "values": [
+            "no vegetation",
+            "sparse vegetation",
+            "moderate vegetation",
+            "dense vegetation",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no vegetation",
+            "sparse vegetation",
+            "moderate vegetation",
+            "dense vegetation"
+          ]
+        },
+        "vegetation_color": {
+          "label": "Main vegetation color",
+          "values": [
+            "bright green",
+            "deep green",
+            "yellow-green",
+            "golden yellow",
+            "orange-red",
+            "brown",
+            "snow white",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "water_state": {
+          "label": "Water conditions",
+          "values": [
+            "calm",
+            "ripples",
+            "pronounced waves",
+            "fast current",
+            "frozen",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "water_color": {
+          "label": "Water color",
+          "values": [
+            "turquoise",
+            "teal",
+            "dark blue",
+            "light blue",
+            "gray-blue",
+            "brown",
+            "murky",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "background_density": {
+          "label": "Building density",
+          "values": [
+            "no buildings",
+            "scattered buildings",
+            "moderate building density",
+            "dense buildings",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no buildings",
+            "scattered buildings",
+            "moderate building density",
+            "dense buildings"
+          ]
+        },
+        "visibility": {
+          "label": "Visibility",
+          "values": [
+            "clear visibility",
+            "light haze",
+            "visible fog",
+            "low visibility",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "clear visibility",
+            "light haze",
+            "visible fog",
+            "low visibility"
+          ]
+        },
+        "wind_level": {
+          "label": "Visible wind strength",
+          "values": [
+            "no wind",
+            "light breeze",
+            "moderate wind",
+            "strong wind",
+            "very strong wind",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no wind",
+            "light breeze",
+            "moderate wind",
+            "strong wind",
+            "very strong wind"
+          ]
+        },
+        "background_crowd": {
+          "label": "Background crowd",
+          "values": [
+            "no people",
+            "sparse crowd",
+            "moderate crowd",
+            "crowded",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "no people",
+            "sparse crowd",
+            "moderate crowd",
+            "crowded"
+          ]
+        },
+        "lighting_source": {
+          "label": "Main light source",
+          "values": [
+            "natural daylight",
+            "moonlight",
+            "light through windows",
+            "indoor lights",
+            "streetlights",
+            "neon lights",
+            "campfire",
+            "mixed light sources",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "lighting_level": {
+          "label": "Ambient light level",
+          "values": [
+            "dim",
+            "somewhat dim",
+            "moderate light",
+            "bright",
+            "very bright",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "dim",
+            "somewhat dim",
+            "moderate light",
+            "bright",
+            "very bright"
+          ]
+        },
+        "lighting_temperature": {
+          "label": "Lighting color temperature",
+          "values": [
+            "cool-toned",
+            "neutral-toned",
+            "warm-toned",
+            "colored lighting",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "lighting_softness": {
+          "label": "Light quality",
+          "values": [
+            "hard light",
+            "moderately soft light",
+            "soft light",
+            "diffuse light",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "time_of_day": {
+          "label": "Time of day",
+          "values": [
+            "dawn",
+            "early morning",
+            "morning",
+            "noon",
+            "afternoon",
+            "dusk",
+            "night",
+            "late night",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "camera_distance": {
+          "label": "Shot size",
+          "values": [
+            "long shot",
+            "wide shot",
+            "medium shot",
+            "close shot",
+            "unknown",
+            "not applicable"
+          ],
+          "ordered_values": [
+            "long shot",
+            "wide shot",
+            "medium shot",
+            "close shot"
+          ]
+        }
+      },
+      "constraints": [
+        {
+          "if": {
+            "time_of_day": [
+              "night",
+              "late night"
+            ]
+          },
+          "then": {
+            "lighting_source": [
+              "moonlight",
+              "light through windows",
+              "indoor lights",
+              "streetlights",
+              "neon lights",
+              "campfire",
+              "mixed light sources",
+              "unknown",
+              "not applicable"
+            ]
+          }
+        },
+        {
+          "if": {
+            "vegetation_density": [
+              "no vegetation"
+            ]
+          },
+          "then": {
+            "vegetation_color": [
+              "unknown",
+              "not applicable"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

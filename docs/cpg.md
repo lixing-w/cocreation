@@ -1,3 +1,7 @@
+> Historical reference: `scripts/cpg` has been retired. The current target-video
+> conversation generator is documented in [dialogue_generation](../scripts/dialogue_generation/README.md).
+> The attribute definitions below still document the independent extraction tools.
+
 # Natural-language CPG pipeline (version 2)
 
 The pool is a list of `(description, artifact)` tuples. A description contains

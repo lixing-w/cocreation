@@ -1,0 +1,167 @@
+"""Finite observation vocabulary, actual version state, and rework scope."""
+from copy import deepcopy
+import json
+from pathlib import Path
+import random
+import re
+import unittest
+from unittest.mock import patch
+
+from scripts.dialogue_generation.asset_variations import (
+    CATALOG, CATEGORIES, POOLS, UNOBSERVED, AssetSpec, alternatives, alternate,
+    empty_attributes, validate_attributes, relative_variation, COMPARATIVES,
+)
+from scripts.dialogue_generation.observation_contract import input_schema, observation_prompt
+from scripts.dialogue_generation.planner import observation, build_plan, validate_plan
+from tools.dialogue_realizer import QwenRealizer
+
+ROOT = Path(__file__).resolve().parents[1] / 'scripts/dialogue_generation'
+
+
+class AttributeTests(unittest.TestCase):
+    def setUp(self):
+        self.source = json.loads((ROOT / 'examples/tokyo_vlog.json').read_text())
+
+    def test_catalog_and_generated_contract_are_in_sync(self):
+        self.assertEqual(set(CATEGORIES), {'person', 'object', 'indoor_environment', 'outdoor_environment'})
+        schema = input_schema()
+        self.assertEqual(schema, json.loads((ROOT / 'observation.schema.json').read_text()))
+        self.assertEqual(observation_prompt(), (ROOT / 'observation_prompt.md').read_text())
+        self.assertEqual(len(re.findall(r'^Example \d+\. Input', observation_prompt(), re.M)), 3)
+        examples = re.findall(r'```json\n(.*?)\n```', observation_prompt(), re.S)
+        self.assertEqual(len(examples), 3)
+        for example in examples:
+            observation(json.loads(example))
+        for category in CATEGORIES.values():
+            for field, spec in category['attributes'].items():
+                self.assertEqual(len(spec['values']), len(set(spec['values'])))
+                self.assertTrue(UNOBSERVED <= set(spec['values']))
+                self.assertGreater(len(set(spec['values']) - UNOBSERVED), 1)
+                if 'ordered_values' in spec:
+                    self.assertIn(field, COMPARATIVES)
+
+    def test_missing_extra_and_out_of_vocabulary_attributes_are_rejected(self):
+        for mode in ('missing', 'extra', 'bad_value', 'missing_map'):
+            source = deepcopy(self.source)
+            attrs = source['assets'][0]['attributes']
+            if mode == 'missing': attrs.pop('hair_length')
+            elif mode == 'extra': attrs['invented'] = 'invented'
+            elif mode == 'bad_value': attrs['hair_length'] = 'invented hairstyle'
+            else: source['assets'][0].pop('attributes')
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                observation(source)
+
+    def test_every_catalog_field_can_drive_a_real_single_field_variation(self):
+        for kind, category in CATEGORIES.items():
+            for field, spec in category['attributes'].items():
+                row = dict(id='asset', kind=kind, name='test subject', description='invariant details',
+                           attributes=empty_attributes(kind))
+                row['attributes'][field] = spec['values'][0]
+                before = AssetSpec(row)
+                varied = alternate(row, before, random.Random(4))
+                with self.subTest(kind=kind, field=field):
+                    self.assertEqual(varied.change['field'], field)
+                    changed = [key for key in before.attributes if before.attributes[key] != varied.attributes[key]]
+                    self.assertEqual(changed, [field])
+                    self.assertNotIn(varied.attributes[field], UNOBSERVED)
+                    self.assertTrue(validate_attributes(row, varied.attributes))
+                    self.assertIn(varied.attributes[field], str(varied))
+                    self.assertEqual(row['attributes'], before.attributes)
+
+    def test_relative_edits_are_adjacent_and_return_to_the_given_state(self):
+        for kind, category in CATEGORIES.items():
+            for field, spec in category['attributes'].items():
+                if 'ordered_values' not in spec: continue
+                row = dict(id='asset', kind=kind, name='test subject', description='invariant details',
+                           attributes=empty_attributes(kind))
+                row['attributes'][field] = spec['ordered_values'][1]
+                variation, earlier, request, question = relative_variation(row, AssetSpec(row), random.Random(2))
+                self.assertEqual(variation, field)
+                positions = spec['ordered_values']
+                self.assertEqual(abs(positions.index(earlier.attributes[field]) - positions.index(row['attributes'][field])), 1)
+                self.assertTrue(request and question)
+
+    def test_incompatible_values_and_shape_family_changes_are_filtered(self):
+        row = deepcopy(self.source['assets'][-1])
+        row['attributes']['transparency'] = 'transparent'
+        with self.assertRaisesRegex(ValueError, 'Incompatible'):
+            validate_attributes(row)
+        row['attributes'].update(material='glass', surface_finish='glossy')
+        choices = alternatives(row)
+        self.assertNotIn('wood', choices.get('material', []))
+        self.assertEqual(set(choices['shape']), {'conical'})
+        person = deepcopy(self.source['assets'][0])
+        person['attributes']['hair_length'] = 'bald'
+        with self.assertRaisesRegex(ValueError, 'Incompatible'):
+            validate_attributes(person)
+
+    def test_unknown_attributes_are_never_invented_for_sampling(self):
+        source = deepcopy(self.source)
+        source['constraints'] = []
+        for row in source['assets']:
+            row['attributes'] = empty_attributes(row['kind'])
+        result = build_plan(source, seed=4, reworks=2, modules=['relative_preview'])
+        self.assertTrue(validate_plan(result))
+        self.assertEqual({e['module'] for e in result['events']}, {'direct'})
+        self.assertTrue(all(not m.get('variation') for m in result['placeholders']))
+
+    def test_final_state_checks_attributes_not_only_a_goal_flag(self):
+        plan = build_plan(self.source, seed=5)
+        asset = next(m for m in plan['placeholders'] if m['purpose'] == 'asset' and m['goal_match'])
+        row = plan['target_assets'][asset['asset_ids'][0]]
+        edited = alternate(row, AssetSpec(row, asset['attributes']), random.Random(0))
+        asset['attributes'] = edited.attributes
+        with self.assertRaisesRegex(ValueError, 'different attributes'):
+            validate_plan(plan)
+
+    def test_rework_can_ask_to_update_two_existing_shots_or_only_one(self):
+        source = deepcopy(self.source)
+        source['constraints'] = []
+        for row in source['assets']:
+            attrs = empty_attributes(row['kind'])
+            if row['id'] == 'bag': attrs['color'] = 'blue'
+            row['attributes'] = attrs
+        scopes, multi_shot = set(), []
+        for seed in range(60):
+            plan = build_plan(source, seed=seed, modules=['direct'], reworks=1, p_compile=1)
+            event = next(e for e in plan['events'] if e['module'] == 'later_revision')
+            request = next(t for t in plan['turns'] if t['intent']['action'] == 'request_rework')
+            scopes.update(t['intent']['scope'] for t in plan['turns'] if t['intent']['action'] == 'choose_update_scope')
+            self.assertIn('main object color to blue', request['intent']['description'])
+            for shot in event['rendered_uses']:
+                self.assertTrue(any(t['intent']['action'] == 'deliver_shot' and shot in t['intent']['shot_ids']
+                                    for t in plan['turns'][:request['id'] - 1]))
+            if len(event['rendered_uses']) == 2:
+                multi_shot.append(plan)
+                question = next(t for t in plan['turns'] if t['intent']['action'] == 'clarify_update_scope')
+                self.assertIn('same tote bag', question['intent']['description'])
+                self.assertIn('carry over', question['intent']['description'])
+        self.assertTrue(multi_shot)
+        self.assertEqual(scopes, {'shot', 'all_uses'})
+
+    def test_locked_scene_attributes_cannot_leak_into_formal_shots(self):
+        for seed in range(20):
+            plan = build_plan(self.source, seed=seed, reworks=2, p_compile=1)
+            table = {m['placeholder']: m for m in plan['placeholders']}
+            for shot in (m for m in table.values() if m['purpose'] == 'shot'):
+                for asset, token in shot['bindings'].items():
+                    if asset in ('street', 'cafe'):
+                        self.assertEqual(table[token]['attributes']['time_of_day'], 'night')
+
+    def test_whole_environment_requirement_is_sent_to_semantic_verifier(self):
+        from unittest.mock import Mock
+        from tools.dialogue_verifier import CRITERIA
+        model = QwenRealizer(asset_names={'cafe': 'coffee shop'})
+        report = dict(dict.fromkeys(CRITERIA, 2), critique="")
+        model.verifier = Mock(return_value=report)
+        turn = dict(id=1, role='user', intent=dict(action='reject_and_edit',
+                    description='Make the entire coffee shop tidy.', asset_ids=['cafe'],
+                    asset_types={'cafe': 'indoor_environment'}))
+        with patch.object(model, '_request', return_value='Tidy the entire coffee shop.'):
+            self.assertEqual(model(turn, {}), 'Tidy the entire coffee shop.')
+        brief = model.verifier.call_args.args[1]
+        self.assertIn('Make the entire coffee shop tidy.', brief['draft_content_requirements'])
+
+
+if __name__ == '__main__':
+    unittest.main()

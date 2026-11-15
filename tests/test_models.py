@@ -36,6 +36,18 @@ class Contracts(unittest.TestCase):
             with self.subTest(options=options),self.assertRaises(ValueError):
                 model('hello',dry_run=True,**options)
 
+    def test_assistant_prefill_is_separate_from_system_and_user_prompt(self):
+        prefix = '<think>\nThe reply is decided.\n</think>\n\n'
+        request = Qwen()('hello', system_prompt='System rules.',
+                         assistant_prefill=prefix, dry_run=True)
+        messages = qwen_messages(request)
+        self.assertEqual([row['role'] for row in messages], ['system','user','assistant'])
+        self.assertEqual(messages[0]['content'], 'System rules.')
+        self.assertEqual(messages[1]['content'], [dict(type='text',text='hello')])
+        self.assertEqual(messages[2]['content'], prefix)
+        with self.assertRaises(TypeError):
+            Qwen()('hello', assistant_prefill=True, dry_run=True)
+
     def test_numbering_preserves_order_per_kind(self):
         refs = [Reference("v4", "4.mp4", "video"), Reference("i7", "7.png", "image"),
                 Reference("v5", "5.mp4", "video")]

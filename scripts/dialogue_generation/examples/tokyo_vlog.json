@@ -1,0 +1,201 @@
+{
+  "video": "fictional://tokyo-coffee-vlog.mp4",
+  "assets": [
+    {
+      "id": "woman",
+      "kind": "person",
+      "name": "lead traveler",
+      "description": "Traveler",
+      "frames": [
+        1.0,
+        9.0
+      ],
+      "attributes": {
+        "gender_presentation": "feminine",
+        "age_group": "young adult",
+        "hair_length": "short hair",
+        "hair_style": "sleek straight hair",
+        "hair_color": "black",
+        "face_shape": "unknown",
+        "eye_shape": "unknown",
+        "eyebrow_shape": "unknown",
+        "nose_shape": "unknown",
+        "lip_shape": "unknown",
+        "expression": "calm",
+        "makeup_intensity": "light makeup",
+        "facial_hair": "unknown",
+        "height": "unknown",
+        "body_build": "unknown",
+        "clothing_type": "coat",
+        "clothing_color": "beige",
+        "clothing_fit": "regular fit",
+        "accessory": "unknown"
+      }
+    },
+    {
+      "id": "bag",
+      "kind": "object",
+      "name": "tote bag",
+      "description": "Tote bag with a wide shoulder strap",
+      "attributes": {
+        "color": "blue",
+        "color_lightness": "medium lightness",
+        "color_saturation": "medium saturation",
+        "size": "medium-sized",
+        "shape": "rectangular",
+        "aspect_ratio": "balanced",
+        "material": "canvas",
+        "surface_finish": "matte",
+        "texture": "woven",
+        "pattern": "plain",
+        "decoration": "undecorated",
+        "condition": "brand new",
+        "transparency": "opaque"
+      },
+      "frames": [
+        1.5,
+        9.5
+      ]
+    },
+    {
+      "id": "street",
+      "kind": "outdoor_environment",
+      "name": "Tokyo street",
+      "description": "Shops line both sides of a street in Tokyo",
+      "frames": [
+        1.0
+      ],
+      "attributes": {
+        "setting_type": "city street",
+        "geography": "unknown",
+        "season": "unknown",
+        "weather": "clear skies",
+        "surface_material": "asphalt",
+        "surface_condition": "wet",
+        "vegetation_density": "unknown",
+        "vegetation_color": "unknown",
+        "water_state": "unknown",
+        "water_color": "unknown",
+        "background_density": "unknown",
+        "visibility": "clear visibility",
+        "wind_level": "unknown",
+        "background_crowd": "unknown",
+        "lighting_source": "mixed light sources",
+        "lighting_level": "somewhat dim",
+        "lighting_temperature": "warm-toned",
+        "lighting_softness": "unknown",
+        "time_of_day": "night",
+        "camera_distance": "medium shot"
+      }
+    },
+    {
+      "id": "cafe",
+      "kind": "indoor_environment",
+      "name": "coffee shop",
+      "description": "Wooden tables and a glass entrance in Tokyo",
+      "frames": [
+        5.5,
+        10.0
+      ],
+      "attributes": {
+        "room_type": "coffee shop",
+        "interior_style": "unknown",
+        "space_size": "mid-sized",
+        "ceiling_height": "unknown",
+        "layout": "unknown",
+        "wall_material": "unknown",
+        "floor_material": "unknown",
+        "palette": "unknown",
+        "furniture_density": "moderately furnished",
+        "furniture_style": "natural wood",
+        "window_type": "unknown",
+        "clutter": "tidy",
+        "background_crowd": "unknown",
+        "lighting_source": "indoor lights",
+        "lighting_level": "bright",
+        "lighting_temperature": "warm-toned",
+        "lighting_softness": "soft light",
+        "time_of_day": "night",
+        "camera_distance": "medium shot"
+      }
+    },
+    {
+      "id": "cup",
+      "kind": "object",
+      "name": "coffee cup",
+      "description": "Coffee cup with a little steam rising from the rim",
+      "frames": [
+        5.0
+      ],
+      "attributes": {
+        "color": "white",
+        "color_lightness": "medium lightness",
+        "color_saturation": "not applicable",
+        "size": "medium-sized",
+        "shape": "cylindrical",
+        "aspect_ratio": "balanced",
+        "material": "ceramic",
+        "surface_finish": "glazed",
+        "texture": "smooth",
+        "pattern": "plain",
+        "decoration": "undecorated",
+        "condition": "brand new",
+        "transparency": "opaque"
+      }
+    }
+  ],
+  "shots": [
+    {
+      "id": "S1",
+      "start": 0.0,
+      "end": 4.0,
+      "description": "Medium side-tracking shot of the traveler walking along a Tokyo street at night carrying the tote bag",
+      "assets": [
+        "woman",
+        "bag",
+        "street"
+      ]
+    },
+    {
+      "id": "S2",
+      "start": 4.0,
+      "end": 8.0,
+      "description": "Close-up of the coffee cup on a wooden table in the coffee shop, with a slow push-in",
+      "assets": [
+        "cafe",
+        "cup"
+      ]
+    },
+    {
+      "id": "S3",
+      "start": 8.0,
+      "end": 12.0,
+      "description": "Medium tracking shot from behind as the traveler carries the tote bag, pushes open the glass door, and enters the coffee shop",
+      "assets": [
+        "woman",
+        "bag",
+        "cafe"
+      ]
+    }
+  ],
+  "target_order": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "constraints": [
+    {
+      "text": "Set all vlog footage in Tokyo at night. Standalone character and prop references are exempt.",
+      "scope": "shots",
+      "asset_attributes": {
+        "street": {
+          "time_of_day": "night"
+        },
+        "cafe": {
+          "time_of_day": "night"
+        }
+      }
+    }
+  ],
+  "attribute_schema_version": 2
+}

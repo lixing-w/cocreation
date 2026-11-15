@@ -1,0 +1,248 @@
+{
+  "video": "fictional://alpine-lake-kayaking-vlog.mp4",
+  "assets": [
+    {
+      "id": "man",
+      "kind": "person",
+      "name": "lead traveler",
+      "description": "Traveler",
+      "frames": [
+        1.0,
+        13.5
+      ],
+      "attributes": {
+        "gender_presentation": "masculine",
+        "age_group": "young adult",
+        "hair_length": "short hair",
+        "hair_style": "slightly wavy hair",
+        "hair_color": "brown",
+        "face_shape": "unknown",
+        "eye_shape": "unknown",
+        "eyebrow_shape": "unknown",
+        "nose_shape": "unknown",
+        "lip_shape": "unknown",
+        "expression": "calm",
+        "makeup_intensity": "no makeup",
+        "facial_hair": "clean-shaven",
+        "height": "unknown",
+        "body_build": "unknown",
+        "clothing_type": "jacket",
+        "clothing_color": "dark green",
+        "clothing_fit": "regular fit",
+        "accessory": "unknown"
+      }
+    },
+    {
+      "id": "kayak",
+      "kind": "object",
+      "name": "kayak",
+      "description": "Single-seat kayak with a pointed bow",
+      "attributes": {
+        "color": "yellow",
+        "color_lightness": "medium lightness",
+        "color_saturation": "high saturation",
+        "size": "medium-sized",
+        "shape": "spindle-shaped",
+        "aspect_ratio": "long and narrow",
+        "material": "plastic",
+        "surface_finish": "semi-matte",
+        "texture": "smooth",
+        "pattern": "plain",
+        "decoration": "undecorated",
+        "condition": "brand new",
+        "transparency": "opaque"
+      },
+      "frames": [
+        5.0,
+        13.5
+      ]
+    },
+    {
+      "id": "paddle",
+      "kind": "object",
+      "name": "paddle",
+      "description": "Double-bladed paddle with oval blades",
+      "frames": [
+        5.5,
+        9.5
+      ],
+      "attributes": {
+        "color": "unknown",
+        "color_lightness": "unknown",
+        "color_saturation": "unknown",
+        "size": "unknown",
+        "shape": "elongated",
+        "aspect_ratio": "long and narrow",
+        "material": "wood",
+        "surface_finish": "matte",
+        "texture": "smooth",
+        "pattern": "plain",
+        "decoration": "undecorated",
+        "condition": "lightly worn",
+        "transparency": "opaque"
+      }
+    },
+    {
+      "id": "case",
+      "kind": "object",
+      "name": "waterproof case",
+      "description": "Waterproof case with two latches",
+      "frames": [
+        1.5,
+        9.5
+      ],
+      "attributes": {
+        "color": "red",
+        "color_lightness": "medium lightness",
+        "color_saturation": "high saturation",
+        "size": "small",
+        "shape": "rounded rectangle",
+        "aspect_ratio": "balanced",
+        "material": "plastic",
+        "surface_finish": "matte",
+        "texture": "smooth",
+        "pattern": "plain",
+        "decoration": "undecorated",
+        "condition": "brand new",
+        "transparency": "opaque"
+      }
+    },
+    {
+      "id": "shore",
+      "kind": "outdoor_environment",
+      "name": "gravel shore",
+      "description": "A lakeshore slopes down to clear water, with snow-covered peaks in the distance",
+      "frames": [
+        1.0,
+        9.0
+      ],
+      "attributes": {
+        "setting_type": "lake",
+        "geography": "alpine terrain",
+        "season": "unknown",
+        "weather": "clear skies",
+        "surface_material": "gravel",
+        "surface_condition": "dry",
+        "vegetation_density": "no vegetation",
+        "vegetation_color": "not applicable",
+        "water_state": "unknown",
+        "water_color": "unknown",
+        "background_density": "no buildings",
+        "visibility": "clear visibility",
+        "wind_level": "unknown",
+        "background_crowd": "unknown",
+        "lighting_source": "natural daylight",
+        "lighting_level": "bright",
+        "lighting_temperature": "neutral-toned",
+        "lighting_softness": "hard light",
+        "time_of_day": "morning",
+        "camera_distance": "medium shot"
+      }
+    },
+    {
+      "id": "lake",
+      "kind": "outdoor_environment",
+      "name": "alpine lake",
+      "description": "Distant snow-covered peaks reflect in the water",
+      "frames": [
+        5.5,
+        14.0
+      ],
+      "attributes": {
+        "setting_type": "lake",
+        "geography": "alpine terrain",
+        "season": "unknown",
+        "weather": "clear skies",
+        "surface_material": "water surface",
+        "surface_condition": "not applicable",
+        "vegetation_density": "no vegetation",
+        "vegetation_color": "not applicable",
+        "water_state": "calm",
+        "water_color": "turquoise",
+        "background_density": "no buildings",
+        "visibility": "clear visibility",
+        "wind_level": "unknown",
+        "background_crowd": "unknown",
+        "lighting_source": "natural daylight",
+        "lighting_level": "bright",
+        "lighting_temperature": "neutral-toned",
+        "lighting_softness": "hard light",
+        "time_of_day": "morning",
+        "camera_distance": "long shot"
+      }
+    }
+  ],
+  "shots": [
+    {
+      "id": "S1",
+      "start": 0.0,
+      "end": 4.0,
+      "description": "Medium side-tracking shot of the traveler carrying the waterproof case toward the water along the gravel shore",
+      "assets": [
+        "man",
+        "case",
+        "shore"
+      ]
+    },
+    {
+      "id": "S2",
+      "start": 4.0,
+      "end": 8.0,
+      "description": "Medium shot on the lake, tracking smoothly from the side as the traveler paddles the kayak slowly away from shore",
+      "assets": [
+        "man",
+        "kayak",
+        "paddle",
+        "lake"
+      ]
+    },
+    {
+      "id": "S3",
+      "start": 8.0,
+      "end": 12.0,
+      "description": "Low-angle close-up with a slow lateral move past the closed waterproof case and paddle lying side by side on the gravel shore",
+      "assets": [
+        "case",
+        "paddle",
+        "shore"
+      ]
+    },
+    {
+      "id": "S4",
+      "start": 12.0,
+      "end": 16.0,
+      "description": "The traveler paddles the kayak farther out while the camera slowly pulls back from behind to reveal the wide lake and the reflections of snowy peaks",
+      "assets": [
+        "man",
+        "kayak",
+        "paddle",
+        "lake"
+      ]
+    }
+  ],
+  "target_order": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
+  "constraints": [
+    {
+      "text": "Set all vlog footage at the alpine lake in clear daytime weather. Standalone character and prop references are exempt.",
+      "scope": "shots",
+      "asset_attributes": {
+        "lake": {
+          "time_of_day": "morning",
+          "weather": "clear skies",
+          "geography": "alpine terrain"
+        },
+        "shore": {
+          "time_of_day": "morning",
+          "weather": "clear skies",
+          "geography": "alpine terrain"
+        }
+      }
+    }
+  ],
+  "attribute_schema_version": 2
+}
