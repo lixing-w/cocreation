@@ -16,7 +16,7 @@ EXAMPLE = Path(__file__).resolve().parents[1] / 'scripts/dialogue_generation/exa
 class BatchRevisionTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads(EXAMPLE.read_text())
-        self.plan = build_plan(self.source, seed=1, reworks=2, p_compile=.5)
+        self.plan = build_plan(self.source, seed=54, reworks=2, p_compile=.5, cross_turn_rules=False)
         self.request = next(t for t in self.plan['turns'] if t['intent']['action'] == 'request_reworks')
         self.questions, self.answer, self.delivery = self.plan['turns'][self.request['id']:self.request['id'] + 3]
 
@@ -51,7 +51,8 @@ class BatchRevisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'before all'):
             validate_plan(broken)
         broken = deepcopy(self.plan)
-        broken['turns'][self.delivery['id'] - 1]['intent']['resolved_edits'][0]['scope'] = 'shot'
+        edit = broken['turns'][self.delivery['id'] - 1]['intent']['resolved_edits'][0]
+        edit['scope'] = 'shot' if edit['scope'] == 'all_uses' else 'all_uses'
         with self.assertRaisesRegex(ValueError, 'confirmed scope'):
             validate_plan(broken)
 

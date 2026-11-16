@@ -48,10 +48,21 @@ def input_schema():
                                                "start": {"type": "number", "minimum": 0},
                                                "end": {"type": "number", "minimum": 0}}}},
             "target_order": {"type": "array", "uniqueItems": True, "items": {"type": "string"}},
-            "constraints": {"type": "array", "items": {"type": "object", "required": ["text", "scope"],
-                "properties": {"text": {"type": "string"}, "scope": {"enum": ["shots", "all"]},
-                               "asset_attributes": {"type": "object", "additionalProperties": {
-                                   "type": "object", "additionalProperties": {"type": "string"}}}}}},
+            "constraints": {"type": "array", "items": {"type": "object", "required": ["scope", "effect"],
+                "properties": {
+                    "text": {"type": "string"}, "scope": {"enum": ["global", "partial"]},
+                    "selector": {"type": "object", "additionalProperties": False, "properties": {
+                        "roles": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"enum": ["asset_image", "asset_video", "trial_video", "shot", "compilation", "final_export"]}},
+                        "asset_ids": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"type": "string"}}}},
+                    "effect": {"type": "object", "minProperties": 1, "additionalProperties": False, "properties": {
+                        "color_mode": {"enum": ["black_and_white", "original_colors"]},
+                        "season": {"enum": ["spring", "summer", "fall", "winter"]},
+                        "asset_attributes": {"type": "object", "minProperties": 1, "additionalProperties": {
+                            "type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}}}}},
+                "allOf": [
+                    {"if": {"properties": {"scope": {"const": "global"}}}, "then": {"properties": {"selector": {"maxProperties": 0}}}},
+                    {"if": {"properties": {"scope": {"const": "partial"}}}, "then": {"required": ["selector"], "properties": {"selector": {"minProperties": 1}}}}
+                ]}},
         },
     }
 
@@ -75,7 +86,7 @@ def observation_prompt():
         "Write names, descriptions, and any constraint text in English. Use exact enum strings as printed below. Use short, version-neutral names, such as traveler or tote bag.",
         "Use unknown for details such as actual material, apparent height, wind strength, and season when the video cannot establish them. Use numbers only in numeric fields.",
         "Include constraints only when the input explicitly supplies lasting production requirements. A visible property alone does not establish a persistent user rule.",
-        "For lasting rules, constraints[].asset_attributes may map asset ids to locked attribute values. These must agree with the target observation.",
+        "For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify roles or asset_ids. Effects may specify color_mode (black_and_white or original_colors), season (spring, summer, fall, winter), or asset_attributes. Do not infer user rules from video appearance.",
         "Follow the compatibility rules below.", "",
         "## Attribute values", "",
     ]

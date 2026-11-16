@@ -87,6 +87,31 @@ def build_prompt(candidate, brief, *, generation_finish_reason=None):
     if brief.get("reference_requirements"):
         lines += ["", "Python-planned reference clarity requirements:"]
         lines += ["- " + requirement for requirement in brief["reference_requirements"]]
+    if brief.get('media_rule_context'):
+        lines += ['', 'Exact applicable rules for this particular output category (authoritative; rules limited to other categories do not apply):'] + brief['media_rule_context']
+        lines.append('Design color is distinct from output color processing. Rendering color mode is not a background season; confusing those properties is a fidelity error. Current rules override conflicting source-shot conditions. A delivery must stay brief and must not add unsupported appearance, processing or rule claims. Penalize a statement that extends a partial rule to another output category.')
+    if action in {"incompatible_requirements", "incompatible_framing"}:
+        lines += ["", "This user request is deliberately impossible. It must ask for BOTH incompatible requirements at the same time. The next assistant turn will explain the conflict and ask the user to choose.",
+                  "Judge whether BOTH requirements and the stated single-view/shot/file restrictions are expressed. The contradiction itself is correct for this turn: do not lower any score because the requested combination is impossible, and do not tell the writer to remove either requirement or make them compatible.",
+                  "Omitting either requirement, choosing one, or changing the requirements to make them compatible is a content_fidelity error. For example, if the plan asks for clearly visible background details AND background blur that hides those details, a candidate must request both; asking only for sharp details or only for blur is incomplete."]
+    if action == "clarify_conflict":
+        lines += ["", "The preceding user deliberately requested incompatible requirements. This assistant turn must explain the incompatibility and ask the specified choice. It must not claim it can satisfy both together."]
+    if action in {'request_rule_conflict', 'propose_rule'}:
+        lines += ['', 'This user turn deliberately conflicts with an earlier user rule. That is the intended training behavior, not a grounding or coherence error. The user may request a change. A later assistant turn will point out the conflict and ask for a decision. Do not require this user turn to resolve or acknowledge the conflict yet.']
+    if action == 'clarify_rule_conflict':
+        lines += ['', 'If the content requirements offer three decisions, the question must include all three: retain the earlier rule, allow this request only, or replace the rule going forward. Omitting the keep option is incomplete. The assistant must not announce an exception or replacement before the user has chosen it. Saying it will make an exception while asking about later outputs is a premature decision and must fail content_fidelity.']
+    if action in {'set_cross_turn_rule','confirm_cross_turn_rule','resolve_rule_conflict','confirm_rule_resolution'}:
+        lines += ['', 'Rule-scope fidelity is required. A rule for all trial clips must not become a rule only for the current kayak or person, and a global rule covers every generated image/video. Keep the full scope in the content requirements. A partial-rule confirmation must explicitly say other output types are outside this particular rule. Do not invent other rules when none are supplied.']
+    if action == 'resolve_rule_conflict':
+        lines += ['', 'The user is authorized to keep, make a one-request exception to, or replace their own earlier rule. Judge the specified decision, rather than treating a chosen override as disobedience.']
+    if facts.get("rule_decision") == "keep":
+        lines += ["", "Required user decision: keep the earlier rule and withdraw the conflicting change. The current request must follow the earlier rule as well. Saying 'keep the rule' while still requesting the rejected treatment, even as a test, contradicts this decision and must fail content_fidelity. No exception is authorized."]
+    if facts.get('requested_media_role'):
+        from scripts.dialogue_generation.cross_turn_rule import ROLE_NAMES
+        lines += ['', 'Required media category: ' + ROLE_NAMES[facts['requested_media_role']] + '.',
+                  'The request must make this category clear. A generic version or preview that could mean an asset image instead of a trial clip/formal shot loses the scope information.']
+    if action == 'request_rule_followup':
+        lines += ['', 'Any earlier one-request exception has expired. The exact applicable rules supplied for this request are now back in force. Repeating the exception is an incorrect new request, even if the recent history mentions it.']
     if subjects:
         lines += ["", "Established subject(s) for this turn: " + subject + ".",
                   "These subject names are supplied facts. Naming them is not inventing a new object."]

@@ -24,12 +24,12 @@ def h3_prompter(attributes, references=None, user_prompt='', *, seconds=15.0,
         output_dir: Run-log root for an internally created Qwen instance.
         use_system_cache: Reuse the dedicated H3 writing-system prefix.
         max_new_tokens: Qwen output budget for the complete H3 prompt.
-        video_fps: Qwen observation sampling rate, independent of target frame rate.
+        video_fps: Legacy transport option; no media is attached to the writer.
         video_max_frames: Maximum observed frames per source video.
         max_pixels: Qwen image/frame pixel budget.
 
     Pass the resulting text and SAME ordered references directly to VDNH3, using
-    the same seconds. This tool observes visual content only, not video audio.
+    the same seconds. This tool receives only selected reference text; no media is attached to Qwen.
     Rejected model outputs print diagnostics/raw text to stderr and, when output_dir
     is set, diagnostics.jsonl. Input/inference failures raise; an owned instance is closed on every exit.
     """

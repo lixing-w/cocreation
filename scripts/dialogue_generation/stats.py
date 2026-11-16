@@ -55,6 +55,13 @@ def collect_stats(result, observation, *, elapsed_seconds, generation):
         edited_attribute_counts=histogram(m["variation"]["type"] for m in media if m.get("variation")),
         requested_scope_counts=histogram(scopes),
         conflict_type_counts=histogram(t["intent"]["conflict_type"] for t in users if "conflict_type" in t["intent"]),
+        cross_turn_rules=dict(
+            introduced=sum(r['started_at'] <= len(turns) for r in result.get('rules', [])),
+            active=sum(r['started_at'] <= len(turns) and (r['ended_at'] is None or r['ended_at'] > len(turns)) for r in result.get('rules', [])),
+            scopes=histogram(r['scope'] for r in result.get('rules', []) if r['started_at'] <= len(turns)),
+            decisions=histogram(t['intent']['rule_event']['outcome'] for t in users if t['intent'].get('rule_event', {}).get('type') == 'resolve'),
+            cleanup_cancellations=sum(t['intent'].get('rule_event', {}).get('cleanup', False) for t in turns),
+        ),
         selection_decisions=histogram(s["decision"] for s in selections),
         selection_visibility=histogram("explicit" if s["explicit"] else "implicit" for s in selections),
         number_of_rollbacks=sum(s["rollback"] for s in selections),

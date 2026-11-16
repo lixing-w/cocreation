@@ -1,5 +1,6 @@
 """Actual media construction graph, independent of chronological dialogue inputs."""
 from collections import deque
+from scripts.dialogue_generation.cross_turn_rule import render_signature
 
 
 def assign_reference_materials(plan):
@@ -10,11 +11,11 @@ def assign_reference_materials(plan):
     for token, row in media.items():
         if token == root or row["purpose"] == "asset":
             continue
-        # Formal shots are extracted/edited from the truth, including earlier
-        # versions with provisional designs. Explorations and intermediate cuts
-        # are composed from their visible constituent assets/clips instead.
+        # Formal shots and coherent trials inherit the target video action.
+        # Trial design references add only their requested differences; intermediate
+        # cuts use their constituent clips in the requested order.
         row["reference_materials"] = ([root] if row["purpose"] == "shot"
-                                      else list(dict.fromkeys(row["inputs"])))
+                                      else list(dict.fromkeys(([root] if row['purpose'] == 'exploration' and row['kind'] == 'video' else []) + row["inputs"])))
     for asset, target in plan["target_assets"].items():
         versions = {p: row for p, row in media.items()
                     if row["purpose"] == "asset" and row["asset_ids"] == [asset]}
@@ -39,7 +40,7 @@ def assign_reference_materials(plan):
                 todo.extend(neighbors[p])
             remaining -= component
             anchors = sorted(p for p in component
-                             if versions[p]["attributes"] == target["attributes"])
+                             if versions[p]["attributes"] == target["attributes"] and not render_signature(versions[p], plan["target_assets"]))
             if anchors:
                 for p in anchors:
                     versions[p]["reference_materials"] = [root]
@@ -49,7 +50,7 @@ def assign_reference_materials(plan):
                 # asset, then follow its existing edit edges outwards.
                 anchor = min(component, key=lambda p: (
                     sum(value != target["attributes"][key]
-                        for key, value in versions[p]["attributes"].items()), p))
+                        for key, value in versions[p]["attributes"].items()) + len(render_signature(versions[p], plan['target_assets'])), p))
                 anchors = [anchor]
                 versions[anchor]["reference_materials"] = [canonical]
             visited, queue = set(anchors), deque(anchors)

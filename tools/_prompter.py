@@ -42,7 +42,7 @@ class PromptValidationError(ValueError):
         self.code = code
 
 
-def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=None):
+def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=None, source_attachment=True, error_callback=None):
     """Validate direct prompt text; report the rejection and raw response on stderr.
 
     JSONL diagnostics are local bookkeeping, never model input or model output.
@@ -75,7 +75,7 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
             if re.fullmatch(r'<Subject [1-9]\d*>', label) and target == 'h3' and catalog:
                 subjects.add(label)
             elif label in expected:
-                require(prompt[:match.start()].endswith('like in '), 'source_attachment',
+                require(not source_attachment or prompt[:match.start()].endswith('like in '), 'source_attachment',
                         f'Each media label must immediately follow like in: {label}')
                 found.add(label)
             else:
@@ -96,7 +96,7 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
         require(all(bodies.values()), 'empty_sections',
                 f'Empty H3 sections: {[key for key, body in bodies.items() if not body]}')
         if subjects:
-            defined = re.findall(r'(?m)^(<Subject [1-9]\d*>)\s+', bodies['subject_definitions'])
+            defined = re.findall(r'(?m)^(<Subject [1-9]\d*>)(?:\s+|:\s*)', bodies['subject_definitions'])
             require(set(defined) == subjects and len(defined) == len(subjects), 'subject_definitions',
                     f'Each subject needs one own-line definition; used {sorted(subjects)}, defined {defined}')
         body = bodies['detailed_description' if catalog else 'integrated_multimodal_description']
@@ -127,6 +127,8 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
             for key in ('job_dir', 'request_path'):
                 if isinstance(response.get(key), str):
                     diagnostic[key] = response[key]
+        if error_callback is not None:
+            error_callback(diagnostic)
         print('['+target+'_prompter] rejected response:\n'+json.dumps(diagnostic, ensure_ascii=False, indent=2),
               file=sys.stderr, flush=True)
         if diagnostic_path is not None:
@@ -150,6 +152,9 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     if target == 'h3' and (type(seconds) not in (int,float) or not math.isfinite(seconds) or not 5<=seconds<=15):
         raise ValueError('VDNH3 seconds must be between 5 and 15')
     rows, refs, catalog = prepare_inputs(attributes, references, target)
+    for row in catalog:
+        row['description'] = '\n'.join(line for line in rows.splitlines()
+                                       if row['observation_label'] in line)
     system = system_builder()
     user = user_builder(brief, rows, catalog, seconds) if target == 'h3' else user_builder(brief, rows, catalog)
     if output_dir is not None:
@@ -159,7 +164,7 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     owned = qwen is None
     model = factory(output_dir=output_dir) if owned else qwen
     try:
-        response = model(user, refs, system_prompt=system,
+        response = model(user, [], system_prompt=system,
                          system_cache_path=(scratch_root()/f'kvcache/{target}_prompter/system_prompt.kvcache'
                                             if use_system_cache else None),
                          max_new_tokens=max_new_tokens, video_fps=video_fps,

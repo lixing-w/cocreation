@@ -113,14 +113,15 @@ def run_qwen(request, directory, state=None):
 
 def run_flux(request, directory, state=None):
     import torch
-    from diffusers import Flux2KleinPipeline
+    from diffusers import Flux2KleinPipeline, Flux2Pipeline
     from PIL import Image, ImageOps
     job_start_time = time.perf_counter()
 
     rt, opts = request["runtime"], request["options"]
     state = {} if state is None else state
     if 'pipe' not in state:
-        pipe = Flux2KleinPipeline.from_pretrained(request['model_id'],
+        pipeline = Flux2Pipeline if request['model_id'] == 'black-forest-labs/FLUX.2-dev' else Flux2KleinPipeline
+        pipe = pipeline.from_pretrained(request['model_id'],
             torch_dtype=getattr(torch, rt['dtype']), **hf_options(rt))
         if rt['cpu_offload']:
             pipe.enable_model_cpu_offload(device=rt['device'])

@@ -163,7 +163,10 @@ class Flux(_System):
             raise ValueError("FLUX accepts image references; extract video frames before this call")
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
-                 width=1024, height=1024, steps=4, guidance_scale=1.0, seed=0, dry_run=False):
+                 width=1024, height=1024, steps=None, guidance_scale=None, seed=0, dry_run=False):
+        is_dev = self.model_id == 'black-forest-labs/FLUX.2-dev'
+        steps = (50 if is_dev else 4) if steps is None else steps
+        guidance_scale = (4.0 if is_dev else 1.0) if guidance_scale is None else guidance_scale
         if min(width, height) < 64 or width % 16 or height % 16 or steps < 1:
             raise ValueError("Image dimensions must be positive multiples of 16 (>=64); steps >=1")
         return self._invoke(prompt, references, dict(width=width, height=height, steps=steps,

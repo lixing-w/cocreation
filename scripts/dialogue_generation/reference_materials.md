@@ -8,10 +8,10 @@
 | 媒体类别 | 实际参考来源 | 规则 |
 | --- | --- | --- |
 | 最终 target video | 无 | `final.media` 是唯一根，`reference_materials=[]`、`reference_depth=0`；其 `source_video` 对应原始输入视频。它也是对话最后一个产生的媒体。 |
-| 与目标设计一致的人物、物体、室内/室外环境参考；图片或短视频候选 | target video | 完整 attributes 与目标一致的版本直接从原视频提取、分离或编辑。时间提示沿用 `source_frames`。 |
+| 与目标设计一致的人物、物体、室内/室外环境参考；图片或短视频候选 | target video | 完整 attributes 与目标一致、且有效画面处理没有改变目标外观的版本，直接从原视频提取、分离或编辑。时间提示沿用 `source_frames`。 |
 | 返工前版本、被否决候选、临时替代设计、多次编辑版本 | 相邻版本 | 把同一资产的 `edit_parent` 关系视为无向编辑图，从目标兼容版本向外定向。因此红色初稿可以引用后来出现的蓝色目标版本，且无需同时重复引用 target video。 |
-| 没有编辑路径连接目标的独立候选 | 该资产最终采用的目标版本 | 在该候选所在编辑分支中，选择与目标 attributes 差异最少的版本作为起点，再沿已有编辑关系向外派生；相同分数按占位符稳定排序。 |
-| 静态组合试拍、任务切换中的测试视频 | 对话前文已经准备的资产 | `purpose=exploration` 的测试视频保留前向组合，用其 `inputs` 作为实际参考。不会强行从目标里找一个根本不存在的试拍。 |
+| 没有编辑路径连接目标的独立候选 | 该资产最终采用的目标版本 | 在该候选所在编辑分支中，选择与目标 attributes 和有效画面处理差异最少的版本作为起点，再沿已有编辑关系向外派生；相同分数按占位符稳定排序。 |
+| 试拍、任务切换中的测试视频 | 隐藏 target video + 已准备资产 | 优先从覆盖这些资产的对应 target shot 继承动作、构图和关系，只改当前设计或规则差异；没有共同 shot 时才多参考合成。对白不会暴露 target 视频。 |
 | 黑白预览、一次性原色预览 | 原来的资产参考 | `purpose=exploration` 的预览图片从既有参考派生，不改采用版本。 |
 | 正式镜头，以及正式镜头返工前/后的版本 | target video | `purpose=shot` 的镜头具有目标的动作和构图结构（允许设计返工差异），直接提取/编辑目标视频。资产绑定仍由 `bindings` 约束；不依赖对话 `inputs` 重做整段。 |
 | 中间剪辑、重排和替换后的预览 | 组成它的镜头版本 | 组合 `inputs` 中的已有镜头；顺序由 `shot_ids` / `shot_versions` 保留。最终剪辑本身按根处理。 |
@@ -31,7 +31,7 @@
 - 最终 matte 包 `image_0007` 引用 target，深度 1。
 - semi-matte canvas 初稿 `image_0001` 引用 `image_0007`，深度 2。
 - semi-matte wood 变体 `image_0003` 引用 `image_0001`，深度 3。
-- 临时木包试拍 `video_0001` 引用 `image_0003` 和人物 `image_0002`，深度 4。
+- 临时木包试拍 `video_0001` 引用 target `video_0008`、`image_0003` 和人物 `image_0002`，深度 4。
 - 正式街头镜头 `video_0003` 直接引用 target，深度 1。
 
 杯子正好体现反向关系：对话 `image_0009.inputs=[image_0005]`，表示从渐变杯改到纯色杯；
@@ -41,9 +41,21 @@
 
 `plan.json` 和 `dialogue.json` 的每个完整 placeholder，以及 `placeholders.json` 的每个简化记录，都保存 `reference_materials` 和 `reference_depth`。
 简化记录中的根还保存 `source_video`，因此仅凭占位符列表也能解析回原始视频。
-Flux / H3 的 prompt writer 和正式调用应使用 `reference_materials` 解析的实际多模态材料，
-同时使用描述、完整 attributes、source_frames 和正式镜头 bindings 限定哪些内容需要保留或编辑。
-仅用简化记录时，完整属性/镜头绑定仍应从 plan 读取；本次生成器只规划引用，不执行真实图像或视频制作。
+prompt writer 只看描述、完整 attributes、source_frames、bindings 与引用的文字说明，不附加多模态材料。
+后处理生成 `generation.dependencies`、实际媒体槽位与 `generation_prompt`；执行阶段才准备相应帧/片段。
+新增的设计绑定可能扩展实际执行依赖；精简清单的 dependencies 若省略，则回退到 reference_materials，完整合约仍在 `generation_plan.json`。
+`placeholders.json` 顶层 prompt 保存原提示词，references 只列实际媒体槽位，不重复规则、属性快照和参考描述。详见 [generation prompts](../../docs/generation_prompts.md)。
 
 验证会检查引用存在、没有重复或环路、唯一根、每个深度、最后一个媒体与 target 一致，以及各类别的参考选择规则。
 对话时间线的因果检查继续独立执行；实际反向引用不放宽 `inputs` 的时间顺序约束。
+
+## 跨轮规则对实际画面的影响
+
+每个输出保留 `base_description`、`render_state`、`applied_rules` 和输入参考的画面状态快照。
+`description` 是实际制作指令，包含生成当时适用的黑白处理、季节或指定资产属性。
+资产还记录 `effective_attributes`；基础 `attributes` 可保留原始设计色，黑白处理属于整幅输出的呈现。
+
+规则取消不修改已经生成的媒体。需要恢复目标的资产会产生新的参考版本，镜头和拼接随后更新。
+比较是否能直接从 target 提取时，除了基础设计属性，还比较实际会改变目标外观的规则效果；
+与目标属性相同的冗余要求不会造成多余重做。合成新的试拍/镜头时不能继承已失效的参考图处理；
+单纯拼接或导出已有片段也不会自动取消片段已经带有的画面处理。

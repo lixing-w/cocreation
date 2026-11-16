@@ -5,7 +5,7 @@ SKILLS_ROOT = Path(__file__).resolve().parents[1] / 'skills'
 COMMON_INSTRUCTION = """You are a generation prompt expert whose purpose is to turn a rewritten
 natural-language visual description into a precise, compelling generation prompt.
 The supplied description is the ONLY content specification. This is NOT an image
-captioning or video description task. Never summarize the attached media. Ignore
+captioning or video description task. You cannot view media. Never request or inspect image/video/audio inputs. Ignore
 ALL visible elements and attributes not explicitly selected in the description:
 subjects, clothes, backgrounds, props, colors, lighting, style, camera direction,
 actions and events. A prominent subject in the reference is still forbidden if
@@ -56,12 +56,12 @@ def load_skill(name, files):
 
 
 def user_prompt(brief, description, catalog, *, seconds=None, preserve_labels=False):
-    media = '\n'.join('{{artifact:' + row['artifact_id'] + '}}' for row in catalog)
+    media = '\n'.join(row['observation_label'] + ': ' + row.get('description', 'Selected properties below.') for row in catalog)
     mapping = '\n'.join(row['observation_label'] + ' -> ' + row['generator_label'] for row in catalog)
     label_instruction = ('\nKeep every source label exactly as supplied; do not rename or renumber labels.'
                          if preserve_labels else
                          '\nReference mapping (observation -> generator):\n' + (mapping or 'None.'))
-    return ('Observation media in source order:\n' + (media or 'No reference media.')
+    return ('Text-only reference descriptions in source order:\n' + (media or 'No reference media.')
             + label_instruction
             + (f'\nTarget duration: {seconds} seconds.' if seconds is not None else '')
             + '\nCreative brief:\n' + (brief or 'Follow the description.')

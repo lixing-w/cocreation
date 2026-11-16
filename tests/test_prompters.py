@@ -61,19 +61,20 @@ class Prompters(unittest.TestCase):
                     self.assertIn('<Video 1> -> <Video 1>',user)
                     self.assertIn('<Image 1> -> <Picture 1>',user)
                 self.assertNotIn('"attributes"',user)
-                self.assertEqual(refs,self.refs)
+                self.assertEqual(refs,[])
                 self.assertTrue((self.root/target/'input.txt').is_file())
                 model.close.assert_not_called()
 
-    def test_media_inserted_once_in_observation_order_before_mapping(self):
+    def test_rewriter_receives_only_reference_text_in_source_order(self):
         model=Mock(return_value={'text':FLUX_PROMPT})
         flux_prompter(self.description,self.refs,qwen=model)
         user,refs=model.call_args.args
         request=prepare(user,refs)
         request['options']=dict(max_pixels=123,video_fps=2,video_max_frames=32)
         items=qwen_messages(request)[0]['content']
-        self.assertEqual([x['type'] for x in items if x['type']!='text'],['video','image'])
-        self.assertTrue(items[0]['text'].endswith('<Video 1>'))
+        self.assertEqual([x['type'] for x in items if x['type']!='text'],[])
+        self.assertIn('Text-only reference descriptions', items[0]['text'])
+        self.assertNotIn('{{artifact:', user)
 
     def test_source_free_generation_and_owned_lifecycle(self):
         for name,tool,prompt in [('flux',flux_prompter,'A luminous pearl sphere.'),('h3',h3_prompter,BASE_PROMPT)]:

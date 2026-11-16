@@ -16,7 +16,7 @@ Select the dominant value when several are visible. Use unknown when no value cl
 Write names, descriptions, and any constraint text in English. Use exact enum strings as printed below. Use short, version-neutral names, such as traveler or tote bag.
 Use unknown for details such as actual material, apparent height, wind strength, and season when the video cannot establish them. Use numbers only in numeric fields.
 Include constraints only when the input explicitly supplies lasting production requirements. A visible property alone does not establish a persistent user rule.
-For lasting rules, constraints[].asset_attributes may map asset ids to locked attribute values. These must agree with the target observation.
+For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify roles or asset_ids. Effects may specify color_mode (black_and_white or original_colors), season (spring, summer, fall, winter), or asset_attributes. Do not infer user rules from video appearance.
 Follow the compatibility rules below.
 
 ## Attribute values

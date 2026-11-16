@@ -2,7 +2,9 @@
 
 `flux_prompter` and `h3_prompter` consume a rewritten description (`str`) and ordered
 image/video references. They return the finished prompt as `str`, or `None` on an
-invalid/declined response. There is no VLM JSON envelope on either side.
+invalid/declined response. They send only selected reference descriptions to Qwen, never the media itself. There is no VLM JSON envelope on either side.
+
+For dialogue placeholder post-processing, use the operation-aware [generation pipeline](generation_prompts.md). It computes exact edits, defaults assets to three-view design sheets and anchors trial actions to hidden target shots. Its generation labels are already mapped to the prepared expert slots; the legacy source-label mapping below is only for these standalone wrappers.
 
 ```python
 from cocreation import Qwen, Reference
@@ -29,8 +31,7 @@ renumbered by `prune_references` before these tools run. This can yield no refer
 
 Both prompters use only the supplied description as content. This is not image or
 video captioning: every unselected subject, background, action, lighting detail,
-style or camera property in the reference must be ignored. Media may only clarify
-the selected property, not expand the scene. A brief guides wording, not additional
+style or camera property in the reference must be ignored. The selected text descriptions define the property; no media is attached to the writer. A brief guides wording, not additional
 content. Do not add guide-example details, camera brands, lenses or film stocks.
 Sparse input can yield a single short sentence; Flux has no minimum word count.
 

@@ -5,6 +5,7 @@ from copy import deepcopy
 import math
 import random
 from scripts.dialogue_generation.conflicts import CONFLICTS
+from scripts.dialogue_generation.cross_turn_rule import CrossTurnRules, normalize_rule, validate_rule_timeline, render_signature
 from scripts.dialogue_generation.references import assign_reference_materials, validate_reference_materials
 from scripts.dialogue_generation.asset_variations import (
     POOLS, CATALOG, AssetSpec, asset_type, alternate, relative_variation,
@@ -97,24 +98,13 @@ def observation(value):
     constraints = data.setdefault("constraints", [])
     if not isinstance(constraints, list):
         raise ValueError("constraints must be a list")
-    for rule in constraints:
-        if (not isinstance(rule, dict) or not isinstance(rule.get("text"), str)
-                or not rule["text"].strip() or rule.get("scope") not in ("shots", "all")):
-            raise ValueError("Constraint needs text and scope=shots/all")
-        locks = rule.get("asset_attributes", {})
-        if not isinstance(locks, dict):
-            raise ValueError("Constraint asset_attributes must map asset IDs to fixed attribute values")
-        for asset_id, attrs in locks.items():
-            row = next((a for a in assets if a["id"] == asset_id), None)
-            if row is None or not isinstance(attrs, dict) or any(
-                    key not in row["attributes"] or row["attributes"][key] != val for key, val in attrs.items()):
-                raise ValueError("Constraint attribute locks must match observed terminal attributes")
+    data['constraints'] = [normalize_rule(rule, {a['id']: a for a in assets}) for rule in constraints]
     return data
 
 
 class Planner:
     def __init__(self, value, *, seed=0, reworks=1, p_compile=0.65,
-                 modules=None, extra_behaviors=True):
+                 modules=None, extra_behaviors=True, cross_turn_rules=None):
         self.source = observation(value)
         if type(reworks) is not int or not 0 <= reworks <= 2:
             raise ValueError("reworks must be 0, 1 or 2")
@@ -141,19 +131,15 @@ class Planner:
         self.counts = {"image": 0, "video": 0}
         self.comp_order, self.comp_media, self.comp_snapshot = [], None, {}
         self.syncs = []
-        self.rule_demo_done, self.conflict_done = False, False
-        self.locked = {a: set().union(*(set(rule.get("asset_attributes", {}).get(a, {}))
-                                       for rule in self.source["constraints"])) for a in self.assets}
-        self.preview_locked = {a: set().union(*(set(rule.get("asset_attributes", {}).get(a, {}))
-                                               for rule in self.source["constraints"] if rule["scope"] == "all"))
-                               for a in self.assets}
-        candidates = [a for a, row in self.assets.items() if alternatives(row, locked=self.locked[a])]
+        self.conflict_done = False
+        self.rules = CrossTurnRules(self, enabled=extra_behaviors if cross_turn_rules is None else cross_turn_rules)
+        candidates = [a for a, row in self.assets.items() if alternatives(row)]
         # Every object now has color, even when unknown. Prefer editable objects
         # rather than testing merely whether that key exists.
         self.rng.shuffle(candidates)
         candidates.sort(key=lambda a: self.assets[a]["asset_type"] != "object")
         self.pending_reworks = set(candidates[:min(reworks, len(candidates))])
-        self.initial_specs = {a: alternate(row, AssetSpec(row), self.rng, locked=self.locked[a])
+        self.initial_specs = {a: alternate(row, AssetSpec(row), self.rng)
                               if a in self.pending_reworks else AssetSpec(row)
                               for a, row in self.assets.items()}
         self.rework_plan = [dict(asset_id=a, field=self.initial_specs[a].change["field"],
@@ -175,28 +161,36 @@ class Planner:
 
     def alternate(self, asset, base=None):
         row = self.assets[asset]
-        return alternate(row, base or AssetSpec(row), self.rng, locked=self.preview_locked[asset])
+        return alternate(row, base or AssetSpec(row), self.rng)
 
     def compatible(self, module, asset):
         if module in ("direct", "clarify"):
             return True
         return bool(alternatives(self.assets[asset], self.initial_specs[asset],
-                                 relative=module == "relative_preview", locked=self.preview_locked[asset]))
+                                 relative=module == "relative_preview"))
 
     def add_media(self, kind, description, *, assets=(), shots=(), inputs=(),
-                  parent=None, goal_match=False, purpose="asset", bindings=None):
+                  parent=None, goal_match=False, purpose="asset", bindings=None, rule_role=None):
         if parent is not None and parent not in self.visible:
             raise ValueError("Edit source has not been shown")
         depth = 0 if parent is None else self.media[parent]["edit_depth"] + 1
         if depth > 2:
             raise ValueError("At most two successive edits per reverse-derived root")
+        if not assets and purpose in ('compilation', 'final_export'):
+            assets = list(dict.fromkeys(a for source in inputs for a in self.media[source]['asset_ids']))
         self.counts[kind] += 1
         token = f"[[{kind}_{self.counts[kind]:04d}]]"
-        self.media[token] = dict(placeholder=token, kind=kind, description=str(description),
+        self.media[token] = dict(placeholder=token, kind=kind, description=str(description), base_description=str(description),
                                 asset_ids=list(assets), shot_ids=list(shots),
                                 inputs=list(inputs), edit_parent=parent, edit_depth=depth,
                                 goal_match=goal_match, purpose=purpose,
                                 source_frames={a: self.assets[a]["frames"] for a in assets})
+        if rule_role is not None:
+            self.media[token]['rule_role'] = rule_role
+        state, applied = self.rules.snapshot(self.media[token])
+        self.media[token].update(render_state=state, applied_rules=applied,
+            reference_render_states={p: deepcopy(self.media[p]['render_state'] or self.media[p].get('reference_render_states', {}))
+                                     for p in inputs if self.media[p]['render_state'] or self.media[p].get('reference_render_states')})
         if bindings is not None:
             self.media[token]["bindings"] = dict(bindings)
         return token
@@ -353,8 +347,7 @@ class Planner:
             raise ValueError(module)
 
     def relative_variation(self, asset, desired):
-        return relative_variation(self.assets[asset], desired, self.variation_rng,
-                                  locked=self.preview_locked[asset])
+        return relative_variation(self.assets[asset], desired, self.variation_rng)
 
     def cross(self, first, second, module):
         self.module = module
@@ -395,6 +388,7 @@ class Planner:
             revision = dict(field=field, label=label, value=after, alternative=before)
             base_spec = AssetSpec(self.assets[first], self.media[base]["attributes"], focus=[field])
             self.media[base]["description"] = str(base_spec)
+            self.media[base]["base_description"] = str(base_spec)
             self.turns[base_request]["intent"].update(
                 description=f"Request the assistant to make a reference image of the {self.label(first)}. {base_spec}.",
                 required_attribute=original,
@@ -410,10 +404,10 @@ class Planner:
                       inputs=[base], outputs=[alternative])
             self.turns[-1]["intent"]["required_attribute"] = revision
             refs = [alternative, self.ready[second]]
-            self.emit("user", "temporary_adoption_trial", f"Use the {after} version of the {self.label(first)} we just made for now. Put it together with the {self.label(second)} in a short test clip with a locked camera and no character action.",
+            self.emit("user", "temporary_adoption_trial", f"Use the {after} version of the {self.label(first)} we just made for now. Put it together with the {self.label(second)} in a short test clip showing a plausible action or interaction between them.",
                       assets=[first, second], inputs=refs, behaviors=[10, 15], decision="temporary")
             self.turns[-1]["intent"]["required_attribute"] = revision
-            trial = self.add_media("video", f"Static test clip with a locked camera: {self.media[alternative]['description']}; paired with the {self.label(second)}. No character action.",
+            trial = self.add_media("video", f"Short trial of a plausible action or relationship between {self.media[alternative]['description']} and the {self.label(second)}. Keep the selected designs consistent throughout the action.",
                                    assets=[first, second], inputs=refs, purpose="exploration")
             self.emit("assistant", "deliver_exploration", "Present the clip as a test.",
                       assets=[first, second], inputs=refs, outputs=[trial], behaviors=[15])
@@ -624,35 +618,23 @@ class Planner:
             self.ready[asset] = version
             self.apply_version(asset, version, uses)
 
-    def rule_demo(self):
-        self.rule_demo_done = True
-        self.module = "constraint_lifecycle"
-        candidates = [p for p in self.ready.values() if self.media[p]["edit_depth"] < 2]
-        if not candidates:
-            return
-        source = self.rng.choice(candidates)
-        asset = self.media[source]["asset_ids"][0]
-        self.emit("user", "set_persistent_rule", "From now on, show standalone previews in black and white. Keep the actual designs as they are.",
-                  assets=[asset], behaviors=[13], scope="asset_previews")
-        self.emit("assistant", "confirm_rule", "Confirm black-and-white previews and unchanged final footage.", behaviors=[13])
-        self.emit("user", "conflicting_request", "Can I see this preview in its original colors?",
-                  assets=[asset], inputs=[source], behaviors=[13, 14])
-        self.emit("assistant", "clarify_rule_override", "You asked for black-and-white previews. Is color a one-time exception, or should previews be in color from now on?",
-                  assets=[asset], behaviors=[13, 14])
-        self.emit("user", "one_time_exception", "Original colors just this once. Keep later previews in black and white.",
-                  assets=[asset], behaviors=[13], scope="one_preview")
-        color = self.add_media("image", self.media[source]["description"] + "; preview in original colors, with the adopted design unchanged",
-                               assets=[asset], inputs=[source], parent=source, purpose="exploration")
-        self.emit("assistant", "deliver_exception", "Show this preview in its original colors and keep the black-and-white default for later previews.",
-                  assets=[asset], inputs=[source], outputs=[color], behaviors=[13])
-        self.emit("user", "request_preview", "Can I see another preview?",
-                  assets=[asset], inputs=[source], behaviors=[13])
-        mono = self.add_media("image", self.media[source]["description"] + "; black-and-white preview, with the adopted design unchanged",
-                              assets=[asset], inputs=[source], parent=source, purpose="exploration")
-        self.emit("assistant", "restore_persistent_rule", "Show the black-and-white preview.",
-                  assets=[asset], inputs=[source], outputs=[mono], behaviors=[13])
-        self.emit("user", "override_rule", "Drop the black-and-white rule. Use the original colors for previews from now on.", behaviors=[13], scope="asset_previews")
-        self.emit("assistant", "confirm_override", "Confirm previews will use original colors by default from now on.", behaviors=[13])
+    def restore_rule_media(self):
+        """Explicit new versions; cancellation never edits existing placeholders."""
+        for aid, old in list(self.ready.items()):
+            if not render_signature(self.media[old], self.assets):
+                continue
+            self.module = 'rule_cleanup'
+            self.emit('user', 'restore_rule_asset',
+                      f'Regenerate the {self.label(aid)} reference without the canceled treatments. Restore its underlying design colors and original scene conditions; keep the agreed design.',
+                      assets=[aid], inputs=[old], behaviors=[13])
+            token = self.asset_media(aid, description=AssetSpec(self.assets[aid]))
+            self.emit('assistant', 'deliver_restored_rule_asset', 'Here is the regenerated reference without the canceled treatments.',
+                      assets=[aid], inputs=[old], outputs=[token], behaviors=[13])
+            self.ready[aid] = token
+            self.apply_version(aid, token, [sid for sid, shot in self.shots.items() if aid in shot['assets']])
+        for sid, token in self.rendered.items():
+            if render_signature(self.media[token], self.assets):
+                self.dirty.add(sid)
 
     def render_due(self):
         for shot, row in self.shots.items():
@@ -664,6 +646,10 @@ class Planner:
             new_shot = shot not in self.rendered
             binding = {a: self.overrides[shot].get(a, self.ready[a]) for a in row["assets"]}
             refs = list(binding.values())
+            appearance_update = (dict(before=self.media[self.rendered[shot]]['render_state'], after=self.rules.snapshot(dict(kind='video', purpose='shot', asset_ids=row['assets']))[0])
+                                 if not new_shot and self.media[self.rendered[shot]]['render_state'] else None)
+            if appearance_update and appearance_update['before'] == appearance_update['after']:
+                appearance_update = None
             descriptions = ", ".join(str(AssetSpec(self.assets[a], self.media[binding[a]]["attributes"], max_fields=2))
                                       for a in row["assets"])
             if self.extra and not self.conflict_done and self.rng.random() < 0.3:
@@ -697,8 +683,11 @@ class Planner:
                           (f"Request the assistant to make this video shot using the {descriptions} we made earlier: {row['description']}." if new_shot else
                            f"Request the assistant to update this existing clip using the revised {revised} reference: {row['description']}."),
                           assets=row["assets"], shots=[shot], inputs=refs, behaviors=[5, 10])
-                if updates:
+                if not new_shot:
                     self.turns[-1]["intent"]["reference_updates"] = updates
+                if appearance_update:
+                    self.turns[-1]['intent']['render_update'] = appearance_update
+                    self.turns[-1]['intent']['description'] = f'Regenerate the existing video shot without the canceled treatments, using the current agreed references. Preserve its action and composition: {row["description"]}.'
             self.turns[-1]["intent"]["shot_description"] = row["description"]
             target = all(self.media[p]["goal_match"] for p in refs)
             spec = row["description"] + ". References used: " + "; ".join(self.media[p]["description"] for p in refs)
@@ -805,10 +794,10 @@ class Planner:
         self.comp_media, self.comp_snapshot = token, dict(zip(order, refs))
 
     def run(self):
-        for rule in self.source["constraints"]:
-            self.emit("user", "set_project_rule", "Please keep this in mind: " + rule["text"], behaviors=[13], scope=rule["scope"])
-            self.emit("assistant", "confirm_project_rule", "Got it. " + rule["text"], behaviors=[13])
+        for rule in self.source['constraints']:
+            self.rules.start(rule)
         while len(self.ready) < len(self.assets):
+            self.rules.advance()
             missing = [a for a in self.assets if a not in self.ready]
             compatible = {m: [a for a in missing if self.compatible(m, a)] for m in self.modules}
             legal = [m for m in self.modules if compatible[m] and (m in SINGLE_MODULES or len(missing) >= 2)]
@@ -823,8 +812,7 @@ class Planner:
             else:
                 self.single(first, module)
             self.events.append(dict(module=module, asset_ids=selected))
-            if self.extra and not self.rule_demo_done and self.rng.random() < 0.2:
-                self.rule_demo()
+            self.rules.advance()
             self.render_due()
             possible = [a for a in self.assets if a in self.pending_reworks and a in self.ready
                         and any(a in self.shots[s]["assets"] for s in self.rendered)]
@@ -840,8 +828,9 @@ class Planner:
         self.render_due()
         self.synchronize_remaining()
         self.render_due()
-        if self.extra and not self.rule_demo_done and self.rng.random() < 0.3:
-            self.rule_demo()
+        self.rules.finish()
+        self.restore_rule_media()
+        self.render_due()
         goal = self.source["target_order"]
         if len(goal) == 1:
             final = self.rendered[goal[0]]
@@ -867,9 +856,10 @@ class Planner:
         # Add this after planning: some modules refine an earlier request's
         # description while constructing the version contrast.
         self.turns[0]["intent"]["description"] = "A fresh conversation starts. " + self.turns[0]["intent"]["description"]
-        result = dict(schema_version=3, attribute_schema_version=CATALOG["schema_version"],
+        self.rules.decorate()
+        result = dict(schema_version=4, rules=deepcopy(self.rules.records), attribute_schema_version=CATALOG["schema_version"],
                       rework_plan=self.rework_plan,
-                      target_assets={a: dict(id=a, kind=row["kind"], description=row["description"],
+                      target_assets={a: dict(id=a, name=row['name'], kind=row["kind"], description=row["description"],
                                               attributes=row["attributes"]) for a, row in self.assets.items()},
                       seed=self.seed, source_video=self.source.get("video", ""),
                       media_generated=False, target_order=goal, events=self.events,
@@ -964,7 +954,12 @@ def validate_plan(plan):
             before = latest_shots[shot_ids[0]]["bindings"]
             after = {a: token for token in intent["context_media"] for a in media[token]["asset_ids"]}
             expected = {a: dict(before=before[a], after=after[a]) for a in before if before[a] != after[a]}
-            if not expected or intent.get("reference_updates") != expected:
+            render_update = intent.get('render_update')
+            if render_update:
+                before_state = latest_shots[shot_ids[0]].get('render_state', {})
+                if render_update.get('before') != before_state or render_update.get('after') == before_state or not isinstance(render_update.get('after'), dict):
+                    raise ValueError('Incorrect render-state restoration')
+            if (not expected and not render_update) or intent.get("reference_updates") != expected:
                 raise ValueError("Shot update does not identify its revised references")
         if turn["intent"].get("target_media") is not None and turn["intent"]["target_media"] not in seen:
             raise ValueError("Future/unknown oracle referent")
@@ -1027,6 +1022,7 @@ def validate_plan(plan):
             raise ValueError("Final compilation order is stale")
         if artifact["shot_versions"] != {s: final["shots"][s]["media"] for s in final["order"]}:
             raise ValueError("Final compilation contains stale shot versions")
+    validate_rule_timeline(plan)
     validate_reference_materials(plan)
     return True
 

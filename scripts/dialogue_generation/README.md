@@ -4,7 +4,7 @@
 上游工具 `tools/video_observer.py` 负责从视频产生这个 JSON。
 Python 决定动作、对象、候选数量、采纳、回溯、任务切换、返工范围和拼接顺序。
 Qwen 将每条已确定的意图表达为自然英文，再由同一模型使用独立 SYSTEM 验证；失败时重写。
-不生成图片或视频；媒体全部是占位符。
+不生成图片或视频；媒体全部是占位符。主对话完成后自动调用纯文字 prompt rewriter，为每个生成任务写入 `generation_prompt` 和专家执行合约；纯提取/拼接记录为确定性操作。详见 [generation prompts](../../docs/generation_prompts.md)。
 
 ## 运行
 
@@ -176,15 +176,67 @@ python3 scripts/dialogue_generation/observation_contract.py
   看不清/无法推断选 `未知`，没有意义选 `不适用`；这两种值不参与变化采样，不从描述猜补。
 - 镜头 `description` 建议写动作、构图、环境关系，可变资产外观由 `assets` 的参考决定。
 - `target_order` 可省略，默认按 `shots` 列表顺序。
-- `constraints` 可选，例如 `[{"text":"正式镜头都在东京夜晚", "scope":"shots"}]`。
-  `scope` 为 `shots` 或 `all`；上游应只提供与目标视频兼容的规则。
-  需要机器保证属性不变时，显式补充 `asset_attributes`，如 `{"street":{"time_of_day":"夜晚"}}`。
-  `shots` 限制进入正式镜头的版本，探索图可以临时变化；`all` 同时限制所有资产探索。
-  程序不会把任意自然语言限制自动解析成属性锁。
+- `constraints` 可选，必须给出可执行的结构化规则。`scope` 是 `global` 或 `partial`；
+  global 覆盖全部新产生的图片和视频，partial 用 `selector.roles` 或 `selector.asset_ids` 指定范围。
+  `effect` 支持 `color_mode`、`season`、`asset_attributes`。它是用户规则，不是永久属性锁，允许冲突、例外和替换。
+  旧输入 `scope=all|shots` 与顶层 `asset_attributes` 仍会转换为新结构；不从纯文本猜测规则。
+  规则不需要与最终画面一致：探索期间的要求可以不同，最终会明确取消并恢复目标所需版本。
+
 - `video` 是来源标识，不要求文件存在；额外 VLM 字段会保留/忽略，不触发推理。
 - 每个管理资产必须至少被一个目标镜头使用。不需要把背景中的所有小物体拆出来。
 - 初版假设每个资产只有一个终态外观；若目标内同一个包本来就有不同设计，
   先以不同资产 ID 表示，避免将原片合法差异错误当成返工。
+
+## 并行规则层 cross_turn_rule
+
+`cross_turn_rule.py` 与单资产/双资产准备模块并行，不占它们的 `--modules` 抽选名额。
+默认随额外行为启用；`--no-cross-turn-rule` 只关闭随机规则事件，显式输入规则仍会建模。
+`--no-extra-behaviors` 同时关闭随机规则、指代歧义和单轮拍摄冲突。
+
+例如先加入全局秋天背景，再加入仅试拍黑白的规则：
+
+```json
+[
+  {"scope": "global", "effect": {"season": "fall"}},
+  {"scope": "partial", "selector": {"roles": ["trial_video"]},
+   "effect": {"color_mode": "black_and_white"}}
+]
+```
+
+可用角色是 `asset_image`、`asset_video`、`trial_video`、`shot`、`compilation`、`final_export`。
+资产图还包括独立资产预览图；双资产模块的静态测试视频是 trial_video。
+`asset_ids` 选择含有这些资产的输出画面；它不代表画面内部的局部像素遮罩。
+partial 的助手确认要明确其他类别不受**这条**规则限制，不影响其他已有规则。
+
+每条规则有独立 ID、生效消息和结束消息，多条规则可先后、重叠或包含。
+规则事件只插入完整工作段之间，不打断候选选择或尚未解决的澄清。
+冲突请求明确使用实际适用的媒体类别（如正式镜头），并只提出当前主体实际改变的字段。
+每类规则都可被挑战；提醒后随机选择保留原规则、仅本次请求例外或永久替换。
+一次例外对该生成请求的全部输出生效，之后继续原规则，并额外生成下一次预览验证恢复。
+同一范围的矛盾新规则需要先协商，不按“最近优先”默默覆盖。
+
+每个 placeholder 记录：
+
+- `base_description`：基础内容/设计，后续规则变动不会回写历史版本。
+- `render_state`、`applied_rules`：这个输出生成当时的有效要求和规则快照。
+- `effective_attributes`：资产在适用规则下的属性；`attributes` 保留基础设计属性。
+- `reference_render_states`：输入参考的既有处理，避免把参考图的局部处理误当成当前输出规则。
+- `description`：最终可交给媒体合成工具的完整指令，包含实际输出要求。
+
+黑白处理改变整个输出的呈现，不会把基础设计的蓝包颜色属性改成黑色。
+季节作为输出场景要求可作用于人物/物体的背景；环境资产的有效季节属性也会同步。
+规则取消不会让已有媒体自动变回原色。随机规划结束后会明确取消剩余探索规则，
+仅重做实际受到影响的目标资产/镜头，再更新拼接。已有版本始终保留。
+实际制作参考也比较画面处理状态，不把“设计属性相同但黑白/季节不同”的版本误当成目标兼容版本。
+
+输出的 `rules.json`、`plan.json.rules` 和 `dialogue.json.rules` 保存规则时间线；
+`dialogue.md` 附可读时间线。`stats.cross_turn_rules` 统计范围、保留/例外/替换和收尾取消数。
+所有时间线、输出快照、一次例外恢复及最终状态都由 Python 校验；VLM 只负责台词表达。
+writer/verifier 接收本次输出真正适用的规则，不会把全部有效 partial 规则当作每次输出的要求。
+
+人工复核用例：Tokyo seed 68、Alpine Kayak seed 26，均使用 `--reworks 2 --p-compile 0.5`。
+它们覆盖 global/partial、多个规则重叠，以及保留、一次例外和永久替换三个决定。
+旧 seed 产生的计划和消息位置已变化，旧输出目录不要用于新计划的 `--resume`。
 
 ## 采样与状态
 
@@ -353,7 +405,8 @@ output/
   plan.json           确定的动作轨迹，content 尚为空
   dialogue.json       每条自然对话、底层意图、媒体引用和最终状态
   dialogue.md         可读对话及完整占位符列表
-  placeholders.json  placeholder / kind / description / reference_materials / reference_depth 列表
+  placeholders.json   精简媒体清单：description / prompt / optional references / 深度 / 操作参数
+  generation_plan.json 完整专家执行合约及构建顺序
   qwen/calls.jsonl    台词候选、格式检查和 verifier 评分
   qwen/requests.jsonl Ollama 改写请求，含完整 SYSTEM 和 ChatML
   qwen/verifier/     评分器原始请求、四项评分和 critique

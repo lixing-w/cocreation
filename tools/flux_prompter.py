@@ -1,4 +1,4 @@
-"""Write a FLUX.2-klein prompt from selected attributes and image/video sources."""
+"""Write a text-only FLUX.2-dev prompt from selected attributes and image/video sources."""
 from pathlib import Path
 import sys
 
@@ -25,7 +25,7 @@ def flux_prompter(attributes, references=None, user_prompt='', *, qwen=None,
         output_dir: Qwen run-log root when this tool owns the instance.
         use_system_cache: Enable this tool's dedicated fixed-system KV cache.
         max_new_tokens: Qwen response budget (direct expert text).
-        video_fps: Sampling rate for Qwen's original-video observation.
+        video_fps: Legacy transport option; reference media is not attached.
         video_max_frames: Maximum sampled frames per source video.
         max_pixels: Observation image/frame pixel budget.
 

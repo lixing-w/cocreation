@@ -69,6 +69,30 @@ class ReportTests(unittest.TestCase):
 
 
 class EvaluationContextTests(unittest.TestCase):
+    def test_deliberate_same_turn_conflict_requires_both_halves_without_fixing_it(self):
+        for action in ("incompatible_requirements", "incompatible_framing"):
+            with self.subTest(action=action):
+                prompt = build_prompt("Make the background sharp and completely blurred.", dict(
+                    speaker="user", action=action,
+                    draft_content_requirements=["Make every background detail visible and blur away all background detail in one view."]))
+                self.assertIn("must ask for BOTH incompatible requirements", prompt)
+                self.assertIn("do not lower any score because", prompt)
+                self.assertIn("Omitting either requirement", prompt)
+                self.assertIn("single-view/shot/file restrictions", prompt)
+
+    def test_keep_decision_applies_to_current_request_without_an_exception(self):
+        prompt = build_prompt("Keep the rule but do the rejected treatment anyway.", dict(
+            speaker="user", action="resolve_rule_conflict", intent_facts=dict(rule_decision="keep")))
+        self.assertIn("current request must follow the earlier rule", prompt)
+        self.assertIn("must fail content_fidelity", prompt)
+        self.assertIn("No exception is authorized", prompt)
+
+    def test_conflict_allowance_does_not_apply_to_assistant_clarification(self):
+        prompt = build_prompt("Which do you prefer?", dict(speaker="assistant", action="clarify_conflict"))
+        self.assertIn("must explain the incompatibility", prompt)
+        self.assertIn("must not claim it can satisfy both", prompt)
+        self.assertNotIn("must ask for BOTH incompatible requirements", prompt)
+
     def test_older_version_binding_survives_flat_prompt_without_history(self):
         brief = dict(speaker="user", action="rollback", subjects=["tote bag"],
                      semantic_purpose="Return to the earlier version.",
@@ -187,6 +211,52 @@ class ReviewLoopTests(unittest.TestCase):
         # These need semantic judgment, not token/substring tests.
         for line in ["The draft says short hair.", "Here's the video.", "Make it brighter.", "Can we stop at the"]:
             self.assertEqual(_format_problems(line), [])
+
+    def test_followup_uses_current_rules_without_priming_expired_exception(self):
+        model = QwenRealizer(asset_names=dict(street="Tokyo street"))
+        model.verifier = Mock(return_value=review())
+        turn = dict(id=49, role="user", intent=dict(action="request_rule_followup",
+                    description="Make another trial clip under the continuing rules.",
+                    asset_ids=["street"], requested_media_role="trial_video",
+                    media_rule_context=["trial clips: fall as the background season"]))
+        previous = [dict(role="user", content="Allow one exception in spring.", intent={}),
+                    dict(role="assistant", content="Here is the spring clip.", intent={})]
+        with patch.object(model, "_request", return_value="Make another Tokyo street trial clip in fall.") as writer:
+            model(turn, {}, previous)
+        self.assertNotIn("spring", writer.call_args.args[0])
+        self.assertIn("fall as the background season", writer.call_args.args[0])
+        self.assertEqual(model.verifier.call_args.args[1]["previous_messages"], [])
+        self.assertEqual(model.verifier.call_args.args[1]["media_rule_context"], turn["intent"]["media_rule_context"])
+
+    def test_keep_rule_outcome_reaches_writer_and_verifier(self):
+        model = QwenRealizer()
+        model.verifier = Mock(return_value=review())
+        turn = dict(id=39, role="user", intent=dict(action="resolve_rule_conflict",
+                    description="Keep the original-color rule and make this trial in color.",
+                    rule_event=dict(type="resolve", outcome="keep", effect=dict(color_mode="black_and_white"))))
+        with patch.object(model, "_request", return_value="Keep the rule and make the trial in color."):
+            model(turn, {})
+        self.assertIn("withdraw the conflicting change", model._writer_control)
+        self.assertEqual(model.verifier.call_args.args[1]["intent_facts"]["rule_decision"], "keep")
+
+    def test_mixed_language_line_is_rewritten_before_semantic_review(self):
+        model = QwenRealizer()
+        model.verifier = Mock(return_value=review())
+        english = "The rule covers all images and videos—including assets and trials."
+        with patch.object(model, "_request", side_effect=[
+                "The rule covers all images and videos—包括 assets and trials.", english]) as writer:
+            self.assertEqual(model(self.turn(), {}), english)
+        self.assertEqual(writer.call_count, 2)
+        model.verifier.assert_called_once()
+        self.assertEqual(model.verifier.call_args.args[0], english)
+        self.assertEqual(model.metrics["format_rejections"], 1)
+        self.assertIn("entire spoken line in English", model._writer_control)
+
+    def test_language_check_allows_english_unicode_punctuation_and_latin_names(self):
+        self.assertEqual(_format_problems("Let’s film Zoë at the café—including the outdoor tables."), [])
+        for fragment in ("包括", "東京", "プレビュー", "미리보기", "𠀀"):
+            with self.subTest(fragment=fragment):
+                self.assertTrue(_format_problems("Here is the " + fragment + "."))
 
     def test_token_limit_is_evidence_for_verifier_not_automatic_semantic_rejection(self):
         model = QwenRealizer(); model.verifier = Mock(return_value=review())

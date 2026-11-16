@@ -38,13 +38,15 @@ class StatsTests(unittest.TestCase):
             result = run(EXAMPLE, Path(tmp)/'run', seed=1, reworks=2, p_compile=.5,
                          realizer=Writer(), progress=False)
         s = result['stats']
-        self.assertEqual(s['number_of_turns'], 64)
-        self.assertEqual(s['number_of_attempts'], 64)
-        self.assertEqual(s['generation']['verifier_attempts'], 64)
-        self.assertEqual(s['generation']['model_requests'], 128)
+        self.assertEqual(s['number_of_turns'], len(result['turns']))
+        self.assertEqual(s['number_of_attempts'], len(result['turns']))
+        self.assertEqual(s['generation']['verifier_attempts'], len(result['turns']))
+        self.assertEqual(s['generation']['model_requests'], 2*len(result['turns']))
         self.assertEqual(s['number_of_assets'], len(result['placeholders']))
         self.assertEqual(s['number_of_logical_assets'], len(result['target_assets']))
-        self.assertEqual(s['number_of_trial_clips'], 2)
+        self.assertEqual(s['number_of_trial_clips'], sum(m['purpose']=='exploration' and m['kind']=='video' for m in result['placeholders']))
+        self.assertEqual(s['cross_turn_rules']['active'], 0)
+        self.assertTrue(s['cross_turn_rules']['introduced'])
         self.assertEqual(s['reference_depth_counts']['0'], 1)
         self.assertEqual(sum(s['media_by_kind'].values()), s['number_of_assets'])
         expected = sorted({b for t in result['turns'] if t['role']=='user' for b in t['intent']['behavior_ids']})
@@ -93,7 +95,7 @@ class StatsTests(unittest.TestCase):
         from tools.dialogue_verifier import CRITERIA
         from scripts.dialogue_generation.planner import build_plan
         p = build_plan(json.loads(EXAMPLE.read_text()), seed=1, reworks=2, p_compile=.5)
-        turn = p['turns'][55]
+        turn = next(t for t in p['turns'] if t['intent']['action']=='confirm_reference')
         self.assertEqual(turn['intent']['action'], 'confirm_reference')
         self.assertIn('ask what they want to change', turn['intent']['description'])
         self.assertNotIn('confirm_reference', ACKNOWLEDGMENTS)

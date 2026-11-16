@@ -13,6 +13,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.dialogue_generation.planner import build_plan, validate_plan, MODULES
+from scripts.dialogue_generation.catalog import placeholder_catalog
 from tools.dialogue_realizer import QwenRealizer, DEFAULT_OLLAMA_MODEL, DEFAULT_LOCAL_MODEL, MAX_REWRITE_ATTEMPTS
 from tools.dialogue_personas import choose_personas, USER_PERSONAS
 from tools.dialogue_models import resolve_model
@@ -38,6 +39,13 @@ def markdown(result):
         lines += [f"**{turn['id']}. {role}**", "", turn["content"], "",
                   f"> Intent: {turn['intent']['description']}",
                   f"> Module: {turn['intent']['module']} | Behaviors: {labels or 'General interaction'}", ""]
+    if result.get('rules'):
+        from scripts.dialogue_generation.cross_turn_rule import scope_text, effect_text
+        lines += ['## Rule timeline', '', '| Rule | Scope | Requirement | Active messages |', '| --- | --- | --- | --- |']
+        names = {a: row.get('name', a) for a, row in result['target_assets'].items()}
+        for rule in result['rules']:
+            lines.append(f"| {rule['id']} | {rule['scope']}: {scope_text(rule, names)} | {effect_text(rule['effect'], names)} | {rule['started_at']}–{rule['ended_at']} |")
+        lines.append('')
     lines += ["## Media placeholders", ""]
     for media in result["placeholders"]:
         lines.append(f"- {media['placeholder']}: {media['description']}")
@@ -48,7 +56,17 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         modules=None, extra_behaviors=True, realizer=None, backend="ollama",
         model=None, base_url="http://127.0.0.1:11434", max_tokens=256,
         timeout=180, progress=True, user_persona=None, context_tokens=32768, resume=False,
-        temperature=0.9, top_p=0.95, top_k=50, rewrite_seed=None, model_mode=None):
+        temperature=0.9, top_p=0.95, top_k=50, rewrite_seed=None, model_mode=None, cross_turn_rules=None,
+        rewrite_prompts=None, prompt_rewriter=None):
+    from scripts.dialogue_generation.rewrite_prompts import rewrite_run
+    if rewrite_prompts is None:
+        rewrite_prompts = realizer is None or isinstance(realizer, QwenRealizer) or prompt_rewriter is not None
+    def finish_prompts(result, writer=None):
+        if rewrite_prompts:
+            rewrite_run(result, observation, output, writer=prompt_rewriter or writer,
+                        progress=progress, backend=backend, model=model, model_mode=model_mode,
+                        base_url=base_url, timeout=timeout, context_tokens=context_tokens)
+        return result
     started = time.perf_counter()
     sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
     sampling.pop("do_sample")  # Ollama samples with positive temperature; local Qwen sets do_sample itself.
@@ -58,7 +76,7 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
     observation = json.loads(source.read_text(encoding="utf-8"))
     # Plan/validate before opening a model or touching the output directory.
     plan = build_plan(observation, seed=seed, reworks=reworks,
-                      p_compile=p_compile, modules=modules, extra_behaviors=extra_behaviors)
+                      p_compile=p_compile, modules=modules, extra_behaviors=extra_behaviors, cross_turn_rules=cross_turn_rules)
     plan["personas"] = choose_personas(seed, user_persona)
     output = Path(output_dir).expanduser().resolve()
     completed_count = 0
@@ -77,13 +95,9 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
     else:
         output.mkdir(parents=True, exist_ok=False)
         save(output / "plan.json", plan)
+        save(output / 'rules.json', plan.get('rules', []))
         save(output / "observation.json", observation)
-        save(output / "placeholders.json", [dict(placeholder=m["placeholder"], kind=m["kind"],
-                                               description=m["description"],
-                                               reference_materials=m["reference_materials"],
-                                               reference_depth=m["reference_depth"],
-                                               **({"source_video": m["source_video"]} if "source_video" in m else {}))
-                                            for m in plan["placeholders"]])
+        save(output / "placeholders.json", placeholder_catalog(plan))
         result = deepcopy(plan)
     # Preserve the seed schedule of older checkpoints when resuming them.
     seed_stride = result.get("realization", {}).get("rewrite_seed_stride", 3) if resume else MAX_REWRITE_ATTEMPTS
@@ -109,7 +123,7 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         if (saved["backend"] != requested_backend or saved["model"] != requested_model
                 or saved.get("model_mode", requested_mode) != requested_mode):
             raise ValueError("Resume must use the same realization model/backend/mode")
-        return result
+        return finish_prompts(result, realizer if isinstance(realizer, QwenRealizer) else None)
     owned = realizer is None
     if owned:
         realizer = QwenRealizer(backend=backend, model=model, base_url=base_url,
@@ -176,9 +190,15 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         save(output / "dialogue.json", result)
         raise
     finally:
+        if owned and result['realization']['status'] != 'complete':
+            realizer.close()
+    # This independent stage cannot invalidate a completed dialogue. Reuse the
+    # resident model and always release owned weights, including on rewrite failure.
+    try:
+        return finish_prompts(result, realizer if isinstance(realizer, QwenRealizer) else None)
+    finally:
         if owned:
             realizer.close()
-    return result
 
 
 def main():
@@ -193,6 +213,7 @@ def main():
                         help="Limit preparation modules; a last single asset may fall back to direct")
     parser.add_argument("--no-extra-behaviors", action="store_true",
                         help="Disable optional ambiguity, constraint and shot-requirement conflict episodes")
+    parser.add_argument('--no-cross-turn-rule', action='store_true', help='Disable randomly sampled cross-turn rules; explicit input constraints remain modeled')
     parser.add_argument("--backend", choices=("ollama", "local"), default="ollama")
     parser.add_argument("--model", help=f"Default: {DEFAULT_OLLAMA_MODEL} (Ollama), {DEFAULT_LOCAL_MODEL} (local)")
     parser.add_argument("--model-mode", choices=("instruct", "thinking"),
@@ -210,6 +231,7 @@ def main():
                         help="Rewrite prompt budget; dialogue context contains the three most recent messages")
     parser.add_argument("--resume", action="store_true", help="Continue an intact prefix with identical planning options")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--skip-generation-prompts", action="store_true", help="Only synthesize dialogue; backfill prompts later with rewrite_prompts.py")
     args = parser.parse_args()
     try:
         result = run(args.observation, args.output_dir, seed=args.seed, reworks=args.reworks,
@@ -219,7 +241,8 @@ def main():
                      timeout=args.timeout, progress=not args.quiet,
                      user_persona=args.user_persona, context_tokens=args.context_tokens, resume=args.resume,
                      temperature=args.temperature, top_p=args.top_p, top_k=args.top_k,
-                     rewrite_seed=args.rewrite_seed)
+                     cross_turn_rules=False if args.no_cross_turn_rule else None,
+                     rewrite_seed=args.rewrite_seed, rewrite_prompts=not args.skip_generation_prompts)
     except (ValueError, OSError, RuntimeError) as exc:
         parser.exit(1, f"dialogue generation failed: {exc}\n")
     print(json.dumps(dict(output_dir=str(args.output_dir.resolve()), turns=len(result["turns"]),
