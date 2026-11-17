@@ -45,9 +45,9 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(s['number_of_assets'], len(result['placeholders']))
         self.assertEqual(s['number_of_logical_assets'], len(result['target_assets']))
         self.assertEqual(s['number_of_trial_clips'], sum(m['purpose']=='exploration' and m['kind']=='video' for m in result['placeholders']))
-        self.assertEqual(s['cross_turn_rules']['active'], 0)
+        self.assertEqual(s['cross_turn_rules']['active'], sum(r['ended_at'] is None for r in result['rules']))
         self.assertTrue(s['cross_turn_rules']['introduced'])
-        self.assertEqual(s['reference_depth_counts']['0'], 1)
+        self.assertEqual(s['reference_depth_counts']['0'], sum(not row['reference_materials'] for row in result['placeholders']))
         self.assertEqual(sum(s['media_by_kind'].values()), s['number_of_assets'])
         expected = sorted({b for t in result['turns'] if t['role']=='user' for b in t['intent']['behavior_ids']})
         self.assertEqual(s['user_behaviors_covered'], [BEHAVIORS[b] for b in expected])
@@ -85,7 +85,7 @@ class StatsTests(unittest.TestCase):
     def test_model_aliases_keep_thinking_separate_from_instruct(self):
         self.assertEqual(resolve_model('ollama'), (OLLAMA_INSTRUCT, 'instruct'))
         self.assertEqual(resolve_model('ollama', 'qwen3-vl-30b-thinking'), (OLLAMA_THINKING, 'thinking'))
-        self.assertEqual(resolve_model('local', 'qwen3-vl-30b-thinking'), (LOCAL_THINKING, 'thinking'))
+        self.assertEqual(resolve_model('local', 'qwen3.6-35b-a3b', 'thinking'), (LOCAL_THINKING, 'thinking'))
         self.assertEqual(resolve_model('ollama', 'qwen3-vl:30b'), ('qwen3-vl:30b', 'thinking'))
         self.assertEqual(resolve_model('ollama', 'custom', 'thinking'), ('custom', 'thinking'))
 

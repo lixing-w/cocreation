@@ -26,7 +26,7 @@ class SamplingTests(unittest.TestCase):
         self.addCleanup(mocked.stop)
 
     def test_ollama_receives_explicit_default_sampling(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         with patch('urllib.request.urlopen', return_value=Response()) as call:
             model._request('Only text', 123)
         options = json.loads(call.call_args.args[0].data)['options']
@@ -34,7 +34,7 @@ class SamplingTests(unittest.TestCase):
                          dict(temperature=.9,top_p=.95,top_k=50,seed=123))
 
     def test_custom_sampling_reaches_ollama_and_local_adapter(self):
-        model = QwenRealizer(temperature=1.1,top_p=.9,top_k=80)
+        model = QwenRealizer(backend="ollama", temperature=1.1,top_p=.9,top_k=80)
         with patch('urllib.request.urlopen', return_value=Response()) as call:
             model._request('Only text', 321)
         options = json.loads(call.call_args.args[0].data)['options']
@@ -47,15 +47,15 @@ class SamplingTests(unittest.TestCase):
 
     def test_local_uses_thinking_checkpoint_and_same_answer_prefill_as_ollama(self):
         prompt = "Speak as the User with this tone:\nCasual.\nDraft: Request an image of the bag."
-        model = QwenRealizer(model="qwen3-vl-30b-thinking")
+        model = QwenRealizer(backend="ollama", model="qwen3-vl-30b-thinking")
         with patch('urllib.request.urlopen', return_value=Response()) as call:
             model._request(prompt, 11)
         body = json.loads(call.call_args.args[0].data)
         with patch('cocreation.Qwen') as factory:
             factory.return_value.return_value = {'text':'ok'}
-            local = QwenRealizer(backend='local', model='qwen3-vl-30b-thinking')
+            local = QwenRealizer(backend='local', model='qwen3.6-35b-a3b', model_mode='thinking')
             self.assertEqual(local._request(prompt, 11), 'ok')
-            self.assertEqual(factory.call_args.kwargs['model_id'], 'Qwen/Qwen3-VL-30B-A3B-Thinking')
+            self.assertEqual(factory.call_args.kwargs['model_id'], 'Qwen/Qwen3.6-35B-A3B')
         prefix = local.local.call_args.kwargs['assistant_prefill']
         self.assertIn("dialogue act has been decided", prefix)
         self.assertTrue(prefix.endswith("</think>\n\n"))
@@ -71,7 +71,7 @@ class SamplingTests(unittest.TestCase):
     def test_direct_rewrites_draw_fresh_seeds_and_log_retry_sampling(self):
         turn=dict(id=1,role='assistant',intent=dict(action='confirm_selection',description='Confirm the choice.'))
         with tempfile.TemporaryDirectory() as tmp:
-            model=QwenRealizer(output_dir=tmp)
+            model=QwenRealizer(backend="ollama", output_dir=tmp)
             with patch('tools.dialogue_realizer.secrets.randbits',side_effect=[111,222]), patch.object(model,'_request',side_effect=['{}','Okay, we\'ll use that one.','Okay, we\'ll use that one.']) as call:
                 model(turn,{})
                 model(turn,{})

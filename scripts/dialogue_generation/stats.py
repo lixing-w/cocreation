@@ -65,7 +65,7 @@ def collect_stats(result, observation, *, elapsed_seconds, generation):
         selection_decisions=histogram(s["decision"] for s in selections),
         selection_visibility=histogram("explicit" if s["explicit"] else "implicit" for s in selections),
         number_of_rollbacks=sum(s["rollback"] for s in selections),
-        number_of_turns_with_media=sum(bool(t["reference_media"] or t["output_media"]) for t in turns),
+        number_of_turns_with_media=sum(bool(t["intent"].get("display_media", []) or t["output_media"]) for t in turns),
         number_of_multi_reference_turns=sum(len(t["input_media"]) > 1 for t in turns),
         personas={role: p["id"] for role, p in result["personas"].items()},
         planning_seed=result["seed"], generation=generation,

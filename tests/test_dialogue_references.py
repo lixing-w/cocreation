@@ -11,53 +11,43 @@ class ReferenceTests(unittest.TestCase):
     def plan(self, seed=1):
         return build_plan(json.loads((EXAMPLES / "tokyo_vlog.json").read_text()), seed=seed, reworks=2, p_compile=.5, cross_turn_rules=False)
 
-    def test_target_root_reverse_edits_and_forward_exploration(self):
+    def test_forward_inputs_and_shot_edits(self):
         plan = self.plan()
-        rows = {m["placeholder"]: m for m in plan["placeholders"]}
-        target = plan["final"]["media"]
-        self.assertEqual(target, plan["placeholders"][-1]["placeholder"])
-        self.assertEqual(rows[target]["reference_materials"], [])
-        self.assertEqual(rows[target]["reference_depth"], 0)
-        self.assertEqual(rows[target]["source_video"], plan["source_video"])
-        # The cup starts gradient and ends plain: construct plain from target,
-        # then gradient from plain, despite the dialogue's opposite chronology.
-        cup = [m for m in rows.values() if m["purpose"] == "asset" and m["asset_ids"] == ["cup"]]
-        before, after = cup[0], cup[-1]
-        self.assertEqual(after["reference_materials"], [target])
-        path = [before['placeholder']]
-        while path[-1] != after['placeholder']:
-            path.append(rows[path[-1]]['reference_materials'][0])
-            self.assertLessEqual(len(path), len(cup))
-        self.assertGreater(len(path), 1)
-        self.assertIn(after['inputs'][0], {m['placeholder'] for m in cup[:-1]})
-        self.assertEqual(after['reference_depth'], 1)
-        self.assertEqual(before['reference_depth'], len(path))
-        for row in rows.values():
-            if row["purpose"] == "shot" and row["placeholder"] != target:
-                self.assertEqual(row["reference_materials"], [target])
-            if row["purpose"] in {"exploration", "compilation"} and row["placeholder"] != target:
-                self.assertEqual(row["reference_materials"], ([target] if row["purpose"] == "exploration" and row["kind"] == "video" else []) + row["inputs"])
-        trial = next(m for m in rows.values() if m["purpose"] == "exploration" and m["kind"] == "video")
-        self.assertEqual(trial["reference_depth"], 1 + max(rows[p]["reference_depth"] for p in trial["inputs"]))
-        self.assertTrue(any(m["reference_depth"] >= 2 for m in rows.values() if m["purpose"] == "exploration"))
+        rows, latest = {}, {}
+        for row in plan['placeholders']:
+            refs = row['reference_materials']
+            self.assertTrue(all(ref in rows for ref in refs))
+            self.assertNotIn('source_video',row)
+            self.assertEqual(row['reference_depth'],max((rows[ref]['reference_depth']+1 for ref in refs),default=0))
+            if row['purpose']=='shot':
+                sid=row['shot_ids'][0]
+                if sid in latest:
+                    self.assertEqual(refs[0],latest[sid])
+                latest[sid]=row['placeholder']
+            rows[row['placeholder']]=row
+        for turn in plan['turns']:
+            self.assertNotIn('reference_media',turn)
+            if turn['output_media']:
+                expected=list(dict.fromkeys(ref for token in turn['output_media'] for ref in rows[token]['reference_materials'] if ref not in turn['output_media']))
+                self.assertEqual(turn['input_media'],expected)
+            for token in turn['intent'].get('display_media',[]):
+                self.assertIn(token,turn['input_media'])
 
-    def test_graph_closes_for_many_seeds_and_all_media_categories(self):
-        purposes = set()
-        for name in ("tokyo_vlog", "alpine_kayak_vlog"):
-            source = json.loads((EXAMPLES / (name + ".json")).read_text())
-            for seed in range(30):
-                plan = build_plan(source, seed=seed, reworks=2, p_compile=.5)
-                self.assertTrue(validate_plan(plan))
-                purposes.update(m["purpose"] for m in plan["placeholders"])
-        self.assertTrue({"asset", "shot", "exploration", "compilation"} <= purposes)
-        # Force a late standalone preview after the final one-shot render.
-        source = json.loads((EXAMPLES / "tokyo_vlog.json").read_text())
-        source["shots"] = source["shots"][:1]; source["target_order"] = ["S1"]
-        source["assets"] = [a for a in source["assets"] if a["id"] in source["shots"][0]["assets"]]
-        source["constraints"] = []
-        plan = build_plan(source, seed=12, reworks=0)
-        self.assertIn(plan["placeholders"][-1]["purpose"], ("shot", "final_export"))
-        self.assertEqual(plan["placeholders"][-1]["reference_depth"], 0)
+    def test_graph_closes_across_seeds_and_includes_video_to_image_edges(self):
+        purposes, crop_edges = set(), []
+        source=json.loads((EXAMPLES/'tokyo_vlog.json').read_text())
+        for seed in range(12):
+            plan=build_plan(source,seed=seed,reworks=2,p_compile=.5,modules=['candidates'])
+            self.assertTrue(validate_plan(plan))
+            rows={row['placeholder']:row for row in plan['placeholders']}
+            for row in rows.values():
+                purposes.add(row['purpose'])
+                for ref in row['reference_materials']:
+                    self.assertLessEqual(rows[ref]['introduced_at'],row['introduced_at'])
+                    if row['kind']=='image' and rows[ref]['kind']=='video':
+                        crop_edges.append((seed,ref,row['placeholder']))
+        self.assertTrue({'asset','shot','exploration','compilation'}<=purposes)
+        self.assertTrue(crop_edges)
 
     def test_invalid_cycle_missing_reference_wrong_depth_and_policy_rejected(self):
         for failure in ("cycle", "missing", "depth", "policy"):
@@ -76,10 +66,17 @@ class ReferenceTests(unittest.TestCase):
         plan = self.plan()
         turns = {t["id"]: t for t in plan["turns"]}
         variant = next(t for t in plan['turns'] if t['intent']['action']=='request_variant')
-        self.assertEqual(variant['intent']['required_attribute']['value'], 'wood')
-        scope = next(t for t in plan['turns'] if t['intent']['action']=='choose_update_scope')
+        required=variant['intent']['required_attribute']
+        delivered=next(t for t in plan['turns'][variant['id']:] if t['intent']['action']=='deliver_variant')
+        output=next(m for m in plan['placeholders'] if m['placeholder']==delivered['output_media'][0])
+        self.assertEqual(output['attributes'][required['field']],required['value'])
+        scope = next((t for t in plan['turns'] if t['intent']['action']=='choose_update_scope'),None)
+        for seed in range(12):
+            if scope:break
+            scope=next((t for t in self.plan(seed)['turns'] if t['intent']['action']=='choose_update_scope'),None)
+        self.assertIsNotNone(scope)
         self.assertIn(scope['intent']['scope'], ('shot', 'all_uses'))
-        self.assertTrue('future' in scope['intent']['description'] or 'going forward' in scope['intent']['description'])
+        self.assertNotIn('future',scope['intent']['description'])
 
 
 
@@ -101,9 +98,11 @@ class ReferenceTests(unittest.TestCase):
 
     def test_plan_validator_checks_exact_changed_references_per_clip(self):
         plan = self.plan()
-        turn = next(t for t in plan["turns"] if t["intent"]["action"] == "request_shot_update")
-        turn["intent"]["reference_updates"] = {}
-        with self.assertRaisesRegex(ValueError, "revised references"):
+        turn = next(t for t in plan['turns'] if t['intent']['action']=='deliver_reworked_clips')
+        edit=turn['intent']['resolved_edits'][0]
+        row=next(m for m in plan['placeholders'] if m['placeholder']==turn['intent']['updated_clips'][0])
+        row['bindings'][edit['asset_id']]=edit['target_media']
+        with self.assertRaisesRegex(ValueError, "confirmed revision"):
             validate_plan(plan)
 
 

@@ -16,7 +16,7 @@ EXAMPLE = Path(__file__).resolve().parents[1] / 'scripts/dialogue_generation/exa
 class BatchRevisionTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads(EXAMPLE.read_text())
-        self.plan = build_plan(self.source, seed=54, reworks=2, p_compile=.5, cross_turn_rules=False)
+        self.plan = build_plan(self.source, seed=0, reworks=2, p_compile=.5, cross_turn_rules=False)
         self.request = next(t for t in self.plan['turns'] if t['intent']['action'] == 'request_reworks')
         self.questions, self.answer, self.delivery = self.plan['turns'][self.request['id']:self.request['id'] + 3]
 
@@ -24,20 +24,21 @@ class BatchRevisionTests(unittest.TestCase):
         self.assertTrue(all(e['ambiguous'] for e in self.request['intent']['edits']))
         self.assertEqual(self.questions['intent']['action'], 'clarify_reworks')
         self.assertEqual(self.answer['intent']['action'], 'resolve_reworks')
-        self.assertEqual(self.delivery['intent']['action'], 'deliver_reworked_assets')
+        self.assertEqual(self.delivery['intent']['action'], 'deliver_reworked_clips')
         self.assertEqual({(q['edit_index'], q['kind']) for q in self.questions['intent']['clarifications']},
                          {(1, 'reference'), (2, 'reference'), (1, 'scope'), (2, 'scope')})
-        self.assertFalse(self.request['input_media'] or self.request['reference_media'])
-        self.assertTrue(self.questions['reference_media'])
-        self.assertEqual(len(self.delivery['output_media']), 2)
+        self.assertFalse(self.request['input_media'] or self.request['intent'].get('display_media', []))
+        self.assertTrue(self.questions['intent'].get('display_media', []))
+        self.assertEqual(len(self.delivery['intent']['preview_media']),2)
+        self.assertTrue(self.delivery['intent']['updated_clips'])
         self.assertTrue(validate_plan(self.plan))
 
     def test_overlapping_shots_update_once_after_both_edits(self):
         uses = [set(e['uses']) for e in self.request['intent']['edits']]
         self.assertTrue(uses[0] & uses[1])
         self.assertTrue(all(e['scope'] == 'all_uses' for e in self.answer['intent']['resolved_edits']))
-        updates = [t for t in self.plan['turns'][self.delivery['id']:] if t['intent']['action'] == 'deliver_shot']
-        changed = [s for t in updates for s in t['intent']['shot_ids']]
+        rows={m['placeholder']:m for m in self.plan['placeholders']}
+        changed=[s for token in self.delivery['intent']['updated_clips'] for s in rows[token]['shot_ids']]
         self.assertEqual(set(changed), uses[0] | uses[1])
         self.assertEqual(len(changed), len(set(changed)))
 
@@ -64,12 +65,11 @@ class BatchRevisionTests(unittest.TestCase):
             if reply and {e['scope'] for e in reply['intent']['resolved_edits']} == {'shot', 'all_uses'}:
                 self.assertTrue(validate_plan(plan))
                 local = next(e for e in reply['intent']['resolved_edits'] if e['scope'] == 'shot')
-                sync = next(t for t in plan['turns'][reply['id']:] if t['intent']['action'] == 'synchronize_revision')
-                for t in plan['turns'][reply['id']:sync['id'] - 1]:
-                    if t['intent']['action'] == 'deliver_shot' and local['asset_id'] in t['intent']['asset_ids']:
-                        media = next(m for m in plan['placeholders'] if m['placeholder'] == t['output_media'][0])
-                        if media['bindings'][local['asset_id']] != local['target_media']:
-                            self.assertEqual(t['intent']['shot_ids'], [local['target_shot']])
+                delivery=plan['turns'][reply['id']]
+                self.assertEqual(delivery['intent']['action'],'deliver_reworked_clips')
+                applied=next(e for e in delivery['intent']['resolved_edits'] if e['asset_id']==local['asset_id'])
+                self.assertEqual(applied['applied_shots'],[local['target_shot']])
+                self.assertFalse(any(t['intent']['action']=='synchronize_revision' for t in plan['turns'][reply['id']:]))
                 found = True
                 break
         self.assertTrue(found)
@@ -97,8 +97,8 @@ class BatchRevisionTests(unittest.TestCase):
 
     def test_default_ollama_model_is_30b_and_8b_remains_selectable(self):
         self.assertEqual(DEFAULT_OLLAMA_MODEL, 'qwen3-vl:30b-a3b-instruct-q4_K_M')
-        self.assertEqual(QwenRealizer().model, 'qwen3-vl:30b-a3b-instruct-q4_K_M')
-        self.assertEqual(QwenRealizer(model='qwen3-vl:8b').model, 'qwen3-vl:8b')
+        self.assertEqual(QwenRealizer(backend="ollama").model, 'qwen3-vl:30b-a3b-instruct-q4_K_M')
+        self.assertEqual(QwenRealizer(backend='ollama', model='qwen3-vl:8b').model, 'qwen3-vl:8b')
 
     def test_five_conflict_types_are_sampled_with_correct_reasons(self):
         found = set()

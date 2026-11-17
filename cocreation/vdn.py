@@ -59,7 +59,9 @@ def generation_command(request, job, installation):
         '--out', str(job / 'video.mp4'), '--width', str(opts['width']), '--height', str(opts['height']),
         '--frames', str(opts['frames']), '--seed', str(opts['seed']),
         '--two-pass' if opts['two_pass'] else '--no-two-pass',
-        '--base-steps', '8', '--refine-steps', '3', '--upscale-factor', '2',
+        '--base-steps', str(opts['base_steps']),
+        # Upstream validates the inactive refine argument too (must be >=1).
+        '--refine-steps', str(opts['refine_steps'] if opts['two_pass'] else 3), '--upscale-factor', '2',
         '--attention', rt['attention'], '--vram-gib', str(rt['vram_gib']),
         '--ram-gib', str(rt['ram_gib']), '--gpu-reserve-gib', str(rt['gpu_reserve_gib']),
         '--ram-reserve-gib', str(rt['ram_reserve_gib'])]

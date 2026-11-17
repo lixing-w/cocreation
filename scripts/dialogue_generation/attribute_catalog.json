@@ -468,6 +468,7 @@
           "values": [
             "round",
             "oval",
+            "triangular",
             "square",
             "rectangular",
             "rounded rectangle",
@@ -482,34 +483,6 @@
             "irregular",
             "unknown",
             "not applicable"
-          ],
-          "variation_groups": [
-            [
-              "round",
-              "oval"
-            ],
-            [
-              "square",
-              "rectangular",
-              "rounded rectangle"
-            ],
-            [
-              "cylindrical",
-              "conical"
-            ],
-            [
-              "spherical",
-              "hemispherical"
-            ],
-            [
-              "elongated",
-              "streamlined",
-              "spindle-shaped"
-            ],
-            [
-              "flat",
-              "irregular"
-            ]
           ]
         },
         "aspect_ratio": {

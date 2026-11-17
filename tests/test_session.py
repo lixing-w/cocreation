@@ -13,6 +13,15 @@ from cocreation.session import ProcessSession
 from cocreation.worker import run_qwen, run_flux
 
 
+class TokenRow(list):
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        return TokenRow(value) if isinstance(key, slice) else value
+
+    def tolist(self):
+        return list(self)
+
+
 # Real IPC/process lifecycle, no weights and no GPU. Each job sees an incrementing
 # state in the SAME OS process; stdout noise must not corrupt the reply channel.
 FAKE = '''
@@ -95,9 +104,10 @@ class SessionTests(unittest.TestCase):
                     model.close()
 
     def test_qwen_load_once_and_fresh_messages(self):
-        torch=MagicMock(); transformers=MagicMock(); utils=MagicMock()
-        model=transformers.Qwen3VLForConditionalGeneration.from_pretrained.return_value.eval.return_value
-        model.generate.return_value=[[1,2,3]]
+        torch=MagicMock(__version__='test'); transformers=MagicMock(); utils=MagicMock()
+        model=transformers.AutoModelForImageTextToText.from_pretrained.return_value.eval.return_value
+        model.generation_config.eos_token_id=99
+        model.generate.return_value=[TokenRow([1,2,3])]
         processor=transformers.AutoProcessor.from_pretrained.return_value
         inputs=MagicMock(); inputs.input_ids=MagicMock(); inputs.input_ids.shape=[1,2]
         inputs.input_ids.__iter__.side_effect=lambda: iter([[1,2]])
@@ -110,7 +120,7 @@ class SessionTests(unittest.TestCase):
             run_qwen(request, Path('/tmp'), state)
             request['prompt']='second'
             run_qwen(request, Path('/tmp'), state)
-        transformers.Qwen3VLForConditionalGeneration.from_pretrained.assert_called_once()
+        transformers.AutoModelForImageTextToText.from_pretrained.assert_called_once()
         transformers.AutoProcessor.from_pretrained.assert_called_once()
         messages=[c.args[0] for c in processor.apply_chat_template.call_args_list]
         self.assertEqual([len(m) for m in messages],[1,1])
@@ -118,23 +128,25 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn('first', str(messages[1]))
 
     def test_worker_routes_opt_in_prefix_cache(self):
-        torch=MagicMock(); transformers=MagicMock(); utils=MagicMock()
+        torch=MagicMock(__version__='test'); transformers=MagicMock(); utils=MagicMock()
+        model=transformers.AutoModelForImageTextToText.from_pretrained.return_value.eval.return_value
+        model.generation_config.eos_token_id=99
         processor=transformers.AutoProcessor.from_pretrained.return_value
         inputs=MagicMock(); inputs.input_ids=MagicMock(); inputs.input_ids.shape=[1,2]
         inputs.input_ids.__iter__.side_effect=lambda: iter([[1,2]])
         processor.return_value.to.return_value=inputs
         processor.batch_decode.return_value=['ok']
         utils.process_vision_info.return_value=(None,None,{})
-        request=Qwen()('user',system_prompt='rules',system_cache_path='/tmp/prefix',dry_run=True)
+        request=Qwen('Qwen/Qwen3-VL-8B-Instruct')('user',system_prompt='rules',system_cache_path='/tmp/prefix',dry_run=True)
         info={'status':'memory','prefix_tokens':1,'path':'/tmp/prefix'}
         with patch.dict(sys.modules, {'torch':torch,'transformers':transformers,'qwen_vl_utils':utils}), \
-             patch('cocreation.qwen_prefix_cache.generate_with_prefix',return_value=([[1,2,3]],info)) as generate:
+             patch('cocreation.qwen_prefix_cache.generate_with_prefix',return_value=([TokenRow([1,2,3])],info)) as generate:
             state={}
             result=run_qwen(request,Path('/tmp'),state)
             self.assertIs(generate.call_args.args[-1],state)
             self.assertEqual(result['system_cache'],info)
             self.assertEqual(result['output_tokens'],1)
-            transformers.Qwen3VLForConditionalGeneration.from_pretrained.return_value.eval.return_value.generate.assert_not_called()
+            transformers.AutoModelForImageTextToText.from_pretrained.return_value.eval.return_value.generate.assert_not_called()
 
     def test_flux_load_once(self):
         torch=MagicMock(); diffusers=MagicMock(); pil=MagicMock()
@@ -147,9 +159,10 @@ class SessionTests(unittest.TestCase):
     def test_official_video_metadata_forwarded_without_resampling(self):
         from cocreation import Reference
         from cocreation.worker import qwen_messages
-        torch=MagicMock(); transformers=MagicMock(); utils=MagicMock()
-        model=transformers.Qwen3VLForConditionalGeneration.from_pretrained.return_value.eval.return_value
-        model.generate.return_value=[[1,2,3]]
+        torch=MagicMock(__version__='test'); transformers=MagicMock(); utils=MagicMock()
+        model=transformers.AutoModelForImageTextToText.from_pretrained.return_value.eval.return_value
+        model.generation_config.eos_token_id=99
+        model.generate.return_value=[TokenRow([1,2,3])]
         processor=transformers.AutoProcessor.from_pretrained.return_value
         inputs=MagicMock(); inputs.input_ids=MagicMock(); inputs.input_ids.shape=[1,2]
         inputs.input_ids.__iter__.side_effect=lambda: iter([[1,2]])

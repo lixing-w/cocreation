@@ -107,13 +107,12 @@ class PlanningTests(unittest.TestCase):
         self.assertIsNotNone(local_example)
         result, scope = local_example
         shots = set(scope["intent"]["shot_ids"])
-        sync = next(t for t in result["turns"] if t["intent"]["action"] == "synchronize_revision")
-        self.assertTrue(any(t["intent"]["action"] == "deliver_shot" and shots.intersection(t["intent"]["shot_ids"])
-                            for t in result["turns"][:scope["id"] - 1]))
-        updates = [t for t in result["turns"][scope["id"]:sync["id"] - 1]
-                   if t["intent"]["module"] == "update_shot" and t["output_media"]]
-        self.assertTrue(updates)
-        self.assertTrue(all(set(t["intent"]["shot_ids"]) <= shots for t in updates))
+        self.assertFalse(any(t['intent']['action']=='synchronize_revision' for t in result['turns']))
+        self.assertTrue(any(t['intent']['action']=='deliver_shot' and shots.intersection(t['intent']['shot_ids']) for t in result['turns'][:scope['id']-1]))
+        delivery=result['turns'][scope['id']]
+        self.assertEqual(delivery['intent']['action'],'deliver_reworked_clips')
+        rows={m['placeholder']:m for m in result['placeholders']}
+        self.assertEqual({s for token in delivery['intent']['updated_clips'] for s in rows[token]['shot_ids']},shots)
 
     def test_unaffected_shot_not_regenerated_and_final_compilation_is_current(self):
         result = build_plan(self.source, seed=5, reworks=1, p_compile=1, cross_turn_rules=False)
@@ -150,7 +149,7 @@ class PlanningTests(unittest.TestCase):
             # fabricating ambiguity when both numbering systems mean the same.
             description = turn["intent"]["description"]
             table = {m["placeholder"]: m for m in result["placeholders"]}
-            current = table[turn["reference_media"][0]]["shot_ids"]
+            current = table[turn["intent"].get("display_media", [])[0]]["shot_ids"]
             original = []
             for media in result["placeholders"]:
                 if media["purpose"] == "shot":
@@ -178,14 +177,14 @@ class PlanningTests(unittest.TestCase):
         result = build_plan(self.source, seed=296, p_compile=1)
         for turn in result["turns"]:
             if not turn["output_media"]:
-                self.assertFalse(turn["input_media"])
+                self.assertEqual(turn["input_media"], turn["intent"].get("display_media", []))
             if turn["intent"]["action"] in ("adopt", "rollback", "confirm_selection", "correct_reference", "confirm_reference", "request_shot"):
-                self.assertFalse(turn["reference_media"])
+                self.assertFalse(turn["intent"].get("display_media", []))
             if turn["intent"]["action"] == "clarify_reference":
-                self.assertTrue(turn["reference_media"])
+                self.assertTrue(turn["intent"].get("display_media", []))
                 self.assertNotRegex(turn["intent"]["description"], "keep everything else|darken|will do")
         deliveries = [t for t in result["turns"] if t["intent"]["action"] == "deliver_shot"]
-        self.assertTrue(all(t["input_media"] and not t["reference_media"] for t in deliveries))
+        self.assertTrue(all(t["input_media"] and not t["intent"].get("display_media", []) for t in deliveries))
 
     def test_implicit_acceptance_keeps_state_without_dummy_messages(self):
         selections = []
@@ -262,7 +261,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(question["intent"]["action"], "clarify_shot_number")
         self.assertEqual(resolution["intent"]["numbering_basis"], "current")
         media = {m["placeholder"]: m for m in result["placeholders"]}
-        before = media[question["reference_media"][0]]["shot_ids"]
+        before = media[question["intent"].get("display_media", [])[0]]["shot_ids"]
         self.assertEqual(media[delivery["output_media"][0]]["shot_ids"],
                          apply_numbering(before, start["intent"]["numbering_operation"]))
 
@@ -278,13 +277,13 @@ class PlanningTests(unittest.TestCase):
         source = json.loads((EXAMPLE.parent / "alpine_kayak_vlog.json").read_text())
         # Previously the move named two unambiguous positions and crashed
         # while looking for a position to clarify.
-        result = build_plan(source, seed=159, reworks=1, p_compile=1)
+        result = build_plan(source, seed=3, reworks=1, p_compile=1)
         self.assertTrue(validate_plan(result))
         self.assertEqual(result["final"]["order"], source["target_order"])
         start = next(t for t in result["turns"] if t["intent"]["action"] == "ambiguous_shot_number")
         question = result["turns"][start["id"]]
         table = {m["placeholder"]: m for m in result["placeholders"]}
-        current = table[question["reference_media"][0]]["shot_ids"]
+        current = table[question["intent"].get("display_media", [])[0]]["shot_ids"]
         original = []
         for media in result["placeholders"]:
             if media["purpose"] == "shot":
@@ -306,7 +305,18 @@ class PlanningTests(unittest.TestCase):
             validate_plan(result)
 
     def test_tokyo_rollback_surfaces_its_sampled_framing_change(self):
-        result = build_plan(self.source, seed=197, reworks=2, p_compile=1)
+        from scripts.dialogue_generation.asset_variations import empty_attributes
+        source = deepcopy(self.source)
+        source['constraints'] = []
+        for asset in source['assets']:
+            distance = asset['attributes'].get('camera_distance')
+            asset['attributes'] = empty_attributes(asset['kind'])
+            if asset['id'] == 'street':
+                asset['attributes']['camera_distance'] = distance
+        from scripts.dialogue_generation.planner import Planner
+        planner = Planner(source, seed=197, reworks=0, p_compile=1, cross_turn_rules=False)
+        planner.cross('street', 'woman', 'temporary_rollback')
+        result = planner.run()
         turns = [turn for turn in result["turns"]
                  if turn["intent"]["asset_ids"] == ["street"] and "required_attribute" in turn["intent"]]
         self.assertEqual([turn["intent"]["action"] for turn in turns],
@@ -388,9 +398,9 @@ class RealizationTests(unittest.TestCase):
             self.assertIn("Media placeholders", (output / "dialogue.md").read_text())
             self.assertFalse(any(p.suffix in (".png", ".mp4") for p in output.rglob("*")))
             for turn in result["turns"]:
-                self.assertEqual("References: " in turn["content"], bool(turn["reference_media"]))
+                self.assertEqual("References: " in turn["content"], bool(turn["intent"].get("display_media", [])))
                 for p in turn["input_media"]:
-                    self.assertNotIn(p, turn["content"])
+                    self.assertEqual(p in turn["content"], p in turn["intent"].get("display_media", []))
 
     def test_failed_model_call_keeps_plan_and_explicit_failed_checkpoint(self):
         def broken(*args, **kwargs):

@@ -11,6 +11,7 @@ import time
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.dialogue_models import DEFAULT_BACKEND
 
 from scripts.dialogue_generation.planner import build_plan, validate_plan, MODULES
 from scripts.dialogue_generation.catalog import placeholder_catalog
@@ -53,8 +54,8 @@ def markdown(result):
 
 
 def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
-        modules=None, extra_behaviors=True, realizer=None, backend="ollama",
-        model=None, base_url="http://127.0.0.1:11434", max_tokens=256,
+        modules=None, extra_behaviors=True, realizer=None, backend=DEFAULT_BACKEND,
+        model=None, base_url=None, max_tokens=256,
         timeout=180, progress=True, user_persona=None, context_tokens=32768, resume=False,
         temperature=0.9, top_p=0.95, top_k=50, rewrite_seed=None, model_mode=None, cross_turn_rules=None,
         rewrite_prompts=None, prompt_rewriter=None):
@@ -81,10 +82,14 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
     output = Path(output_dir).expanduser().resolve()
     completed_count = 0
     if resume:
+        from scripts.dialogue_generation.generation_requirements import assign_generation_requirements
+        saved_plan = json.loads((output / 'plan.json').read_text())
+        assign_generation_requirements(saved_plan)
         if (json.loads((output / "observation.json").read_text()) != observation
-                or json.loads((output / "plan.json").read_text()) != plan):
+                or saved_plan != plan):
             raise ValueError("Resume requires the same observation, seed, modules and persona")
         result = json.loads((output / "dialogue.json").read_text())
+        assign_generation_requirements(result)
         validate_plan(result)
         completed_count = result["realization"]["completed_turns"]
         if len(result["turns"]) != len(plan["turns"]) or not 0 <= completed_count <= len(plan["turns"]):
@@ -92,6 +97,7 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         for i, turn in enumerate(result["turns"]):
             if {**turn, "content": None} != plan["turns"][i] or bool(turn["content"]) != (i < completed_count):
                 raise ValueError("Checkpoint is not an intact realized prefix of this plan")
+        save(output / 'plan.json', saved_plan)
     else:
         output.mkdir(parents=True, exist_ok=False)
         save(output / "plan.json", plan)
@@ -148,7 +154,7 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
                       for key in current.keys() | previous_generation.keys()}
         if not hasattr(realizer, "rewrite_attempts"):
             generation["rewrite_attempts"] = previous_generation.get("rewrite_attempts", 0) + injected_attempts
-        generation["token_counts_source"] = "ollama" if getattr(realizer, "backend", None) == "ollama" else "unavailable"
+        generation["token_counts_source"] = getattr(realizer, 'backend', 'unavailable') if getattr(realizer, 'backend', None) in ('ollama', 'vllm') else 'unavailable'
         # Only numeric counters take part in resume arithmetic.
         result["stats"] = collect_stats(result, observation,
             elapsed_seconds=previous_elapsed + time.perf_counter() - started, generation=generation)
@@ -169,7 +175,7 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
             text = realizer(turn, media, completed, seed=rewrite_seed + turn["id"] * seed_stride)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError("Realizer returned empty text")
-            refs = "\nReferences: " + " ".join(turn["reference_media"]) if turn["reference_media"] else ""
+            refs = "\nReferences: " + " ".join(turn["intent"].get("display_media", [])) if turn["intent"].get("display_media", []) else ""
             attachments = "\n" + " ".join(turn["output_media"]) if turn["output_media"] else ""
             turn["content"] = text.strip() + refs + attachments
             completed.append(turn)
@@ -214,11 +220,12 @@ def main():
     parser.add_argument("--no-extra-behaviors", action="store_true",
                         help="Disable optional ambiguity, constraint and shot-requirement conflict episodes")
     parser.add_argument('--no-cross-turn-rule', action='store_true', help='Disable randomly sampled cross-turn rules; explicit input constraints remain modeled')
-    parser.add_argument("--backend", choices=("ollama", "local"), default="ollama")
+    parser.add_argument("--backend", choices=("ollama", "local", "vllm"), default=DEFAULT_BACKEND)
     parser.add_argument("--model", help=f"Default: {DEFAULT_OLLAMA_MODEL} (Ollama), {DEFAULT_LOCAL_MODEL} (local)")
+    parser.add_argument("--enable-thinking", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--model-mode", choices=("instruct", "thinking"),
                         help="Override mode inference for custom model names; explicit instruct/thinking aliases are recommended")
-    parser.add_argument("--base-url", default="http://127.0.0.1:11434")
+    parser.add_argument("--base-url", help='Default: localhost:11434 (Ollama), localhost:8000 (vLLM)')
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--temperature", type=float, default=0.9, help="Positive Qwen sampling temperature; default 0.9")
@@ -237,7 +244,7 @@ def main():
         result = run(args.observation, args.output_dir, seed=args.seed, reworks=args.reworks,
                      p_compile=args.p_compile, modules=args.modules,
                      extra_behaviors=not args.no_extra_behaviors, backend=args.backend,
-                     model=args.model, model_mode=args.model_mode, base_url=args.base_url, max_tokens=args.max_tokens,
+                     model=args.model, model_mode=("thinking" if args.enable_thinking else "instruct") if args.enable_thinking is not None else args.model_mode, base_url=args.base_url, max_tokens=args.max_tokens,
                      timeout=args.timeout, progress=not args.quiet,
                      user_persona=args.user_persona, context_tokens=args.context_tokens, resume=args.resume,
                      temperature=args.temperature, top_p=args.top_p, top_k=args.top_k,

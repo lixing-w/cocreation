@@ -17,7 +17,9 @@ Use kind person for a human or humanlike character, object for an animal, prop, 
 Track a person and a carried object separately when both matter to the action. Do not list every background detail.
 Give each distinct subject or setting one id such as A1. The same subject seen in ten frames is ONE asset. Do not create an asset for each frame, pose, or viewpoint.
 Only create a separate version if the subject's design actually changes. Movement and camera changes do not change its identity.
-For each asset return id, kind, name, and frame_ids.
+Apply human-intuitive visual salience: manage only identities a viewer would independently ask to design or revise. Tiny, briefly visible, distant, decorative or incidental details are NOT separate assets, even if recognizable. A small bird-like shape on or beside a carried bag belongs in the bag description, not a separately managed animal. An animal large enough to carry a rider is a principal object. A carried bag is a principal object when its shape is clearly visible. Keep the principal person, mount, carried object and coherent setting when present; do not split their minor details into assets. Prefer sustained identities recurring across shots. A secondary prop revealed only briefly near the end is part of the action description, not a new managed identity, unless it is itself a dominant recurring subject. Use fewer assets rather than promoting every briefly held or emerging item.
+For each asset return id, kind, name, description, and frame_ids.
+Description is one or two concise English sentences recording distinctive visible construction, silhouette, markings, accessories and noteworthy details. Include minor attached/decorative elements here. Do not invent hidden details.
 Name is a short noun phrase identifying that asset. Omit color, material, clothing, weather, and lighting; these are recorded in a later step. Different assets need distinguishable names.
 frame_ids contains one or two REPRESENTATIVE frame numbers where the asset is clearly visible. It is NOT a complete list of its appearances. An asset can appear throughout the entire video while listing only two representative frames.
 List each main person, object, and setting once. Do not fill the asset limit with duplicates.
@@ -38,7 +40,7 @@ def attributes_prompt(asset, timestamps):
         f"Observe the {asset['name']} in these frames.",
         "The images are in this order: " + ", ".join(f"{t:.6f} seconds" for t in timestamps) + ".",
         f"Asset category: {asset['kind']}.",
-        "Return one JSON object with all the attribute fields below. For each field select exactly one listed value. Copy the value exactly.",
+        "Return one JSON object with all the attribute fields below. Prefer exactly one listed value per field, copied exactly. If the choices omit an important visibly supported property, you may add a concise snake_case attribute field or a new string value. These additions will be accepted and carried into planning.",
         *(note for note in CATALOG['notes'] if not note.startswith('Use description')),
         "Start with unknown for each field. Select a different value only when the named asset clearly shows it. Do not fill unclear fields with typical values.",
         "Observe only the named asset. Do not copy the appearance of a nearby subject. If the asset is absent from one frame, use the frame where it is visible.",
@@ -53,7 +55,7 @@ def attributes_prompt(asset, timestamps):
         condition = " and ".join(f"{key} is one of [{', '.join(vals)}]" for key, vals in rule['if'].items())
         result = " and ".join(f"{key} must be one of [{', '.join(vals)}]" for key, vals in rule['then'].items())
         lines.append(f"If {condition}, {result}.")
-    lines.append("Return the attribute object only. Do not return an asset name, description, confidence, or other fields.")
+    lines.append("Return the attribute object only. Do not repeat the asset name or description. Additional meaningful visual attribute fields are allowed.")
     return "\n".join(lines)
 
 

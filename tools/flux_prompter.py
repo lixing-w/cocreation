@@ -1,4 +1,4 @@
-"""Write a text-only FLUX.2-dev prompt from selected attributes and image/video sources."""
+"""Write a text-only FLUX.2-klein-4B prompt from selected attributes and image/video sources."""
 from pathlib import Path
 import sys
 

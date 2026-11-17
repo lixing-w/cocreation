@@ -166,7 +166,7 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     try:
         response = model(user, [], system_prompt=system,
                          system_cache_path=(scratch_root()/f'kvcache/{target}_prompter/system_prompt.kvcache'
-                                            if use_system_cache else None),
+                                            if use_system_cache and getattr(model, "supports_system_cache", True) else None),
                          max_new_tokens=max_new_tokens, video_fps=video_fps,
                          video_max_frames=video_max_frames, max_pixels=max_pixels, output_dir=output_dir)
         return parse_prompt(response, catalog, target, seconds,

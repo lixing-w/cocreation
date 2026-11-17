@@ -8,13 +8,13 @@ Qwen 将每条已确定的意图表达为自然英文，再由同一模型使用
 
 ## 运行
 
-默认使用 **Qwen3-VL-30B-A3B-Instruct**，不生成 thinking。两阶段共用 Ollama 已加载的同一模型权重，分别调用并使用不同 SYSTEM。
+Linux 默认通过 vLLM 使用 **Qwen3.6-35B-A3B NVFP4**，thinking 默认 false，可用 `--enable-thinking` 开启。视频观察、对话和 prompt 改写共用服务，支持并发 batching。Mac 仍默认使用下表中的 Ollama Instruct 模型。部署和新模型命令见 [服务器指南](../../docs/qwen_server.md)。
 模型别名与完整名称见 `tools/dialogue_models.py`：
 
 | 仓库别名 | Ollama 模型 | local checkpoint |
 | --- | --- | --- |
-| `qwen3-vl-30b-instruct`（默认） | `qwen3-vl:30b-a3b-instruct-q4_K_M` | `Qwen/Qwen3-VL-30B-A3B-Instruct` |
-| `qwen3-vl-30b-thinking` | `qwen3-vl:30b-a3b-thinking-q4_K_M` | `Qwen/Qwen3-VL-30B-A3B-Thinking` |
+| `qwen3-vl-30b-instruct`（默认） | `qwen3-vl:30b-a3b-instruct-q4_K_M` | `Qwen/Qwen3.6-35B-A3B` |
+| `qwen3-vl-30b-thinking` | `qwen3-vl:30b-a3b-thinking-q4_K_M` | `Qwen/Qwen3.6-35B-A3B`（enable_thinking=true） |
 
 首次安装：`ollama pull qwen3-vl:30b-a3b-instruct-q4_K_M`。示例：
 
@@ -171,8 +171,8 @@ python3 scripts/dialogue_generation/observation_contract.py
 - `kind` 必须是上述四种之一，不再根据名字或描述猜类型。
 - 每个资产给 1–2 个非负秒数，作为未来媒体反向提取的来源记录；本脚本不访问这些帧。
 - `description` 只补充枚举未覆盖的稳定内容，不能重复颜色、材质、发型等可变属性。
-  终态外观完全由 `attributes` 给出。`name` 应是不含版本颜色、材质等的短名称。
-- `attributes` 必填该类别的全部字段，每个字段只取一个枚举值。不接受未知字段或自由文本值。
+  基础设计由 `attributes` 给出，当前有效用户规则可覆盖其输出外观。`name` 应是不含版本颜色、材质等的短名称。
+- `attributes` 必填该类别的全部字段，每个字段只取一个枚举值。VLM 新增字段或枚举值会作为该 identity 的扩展保留并参与后续阶段。
   看不清/无法推断选 `未知`，没有意义选 `不适用`；这两种值不参与变化采样，不从描述猜补。
 - 镜头 `description` 建议写动作、构图、环境关系，可变资产外观由 `assets` 的参考决定。
 - `target_order` 可省略，默认按 `shots` 列表顺序。
@@ -180,7 +180,7 @@ python3 scripts/dialogue_generation/observation_contract.py
   global 覆盖全部新产生的图片和视频，partial 用 `selector.roles` 或 `selector.asset_ids` 指定范围。
   `effect` 支持 `color_mode`、`season`、`asset_attributes`。它是用户规则，不是永久属性锁，允许冲突、例外和替换。
   旧输入 `scope=all|shots` 与顶层 `asset_attributes` 仍会转换为新结构；不从纯文本猜测规则。
-  规则不需要与最终画面一致：探索期间的要求可以不同，最终会明确取消并恢复目标所需版本。
+  规则不需要与最终画面一致：当前接受的规则和设计可以保留至最终成片；只有明确的用户请求才会取消规则，不会为贴近 guide 自动恢复。
 
 - `video` 是来源标识，不要求文件存在；额外 VLM 字段会保留/忽略，不触发推理。
 - 每个管理资产必须至少被一个目标镜头使用。不需要把背景中的所有小物体拆出来。
@@ -258,28 +258,14 @@ writer/verifier 接收本次输出真正适用的规则，不会把全部有效 
 用户请求及镜头交付。用户可能在多轮资产探索之后才组合镜头，或先拼接已完成片段。
 未指定拼接顺序时按生成顺序/当前拼接后追加；指定时由 Python 抽取排列。
 
-“已准备”不等于最终定稿。预留返工的资产先生成与终态不同的初版，至少出镜一次后
-才能返工到目标版本。共享资产先询问同步范围。若只改一个镜头，就固定该镜头的新
-版本，其他镜头继续使用旧版；随后有一条预留的同步事件完成收束。
-返工仅更新绑定发生变化的镜头，已有拼接显式替换相应片段，保持旧视频历史不变。
-结尾完成剩余返工、同步、拼接和顺序调整；单镜头无需拼接。
+“已准备”不等于最终定稿。预留返工的资产先生成不同初版，至少出镜一次后才提出修改。
+资产明确时，assistant 在询问范围的同一轮附上新版参考图预览，并说明视频仍未更新；只问“当前提到的镜头”或“所有已经生成且使用它的镜头”。不询问未来镜头。
+用户确认后，assistant 一次附上全部受影响的更新 clips；若已有拼接成片，同一回复也提供自动换好片段的成片，不要求用户逐镜头重复发指令。
+只改单镜头时，其他现有镜头与未来新镜头默认保持旧资产；全改时，全部现有相关镜头更新，未来新镜头默认使用新资产。具体镜头的版本绑定仍可显式选择。
+局部选择不会在收尾时被强制同步到其他镜头，最终可以保留用户接受的混合版本。
 
-返工触发时机不是“首个镜头一出就立即返工”：
-
-1. 开始前从有已知、可编辑属性的资产抽取 `--reworks` 个，优先物品，提前构造偏离终态的初版。
-2. 每个准备模块结束后，先生成所有依赖已齐备的镜头，并按概率拼接。
-3. 此时若存在预留返工且已出镜的资产，以 60% 概率抽其中一个返工；未触发则继续准备其他资产。
-4. 主循环结束后，剩余返工必须执行，以保证回到目标视频。若剩余两项，合并成同一条用户请求。
-
-集中返工使用 `batch_revision`，依次为 `request_reworks`、可选的 `clarify_reworks` 和
-`resolve_reworks`、`deliver_reworked_assets`。`intent.edits` 逐项记录历史目标、目标镜头及属性改值。
-每项独立采样是否模糊指代、只改本镜头还是全部同步；助手在同一条回复里问完所有指代和范围问题，
-用户在同一条回复里分别回答，不能漏问、提前生成或串换范围。
-澄清可集中展示历史候选，但用户不重新上传参考。模糊用户请求不会被额外提供隐藏的真实对象绑定。
-确认全部问题后，一次交付各项新参考，再更新受影响镜头；两个修改若影响同一镜头，只更新一次。
-若结尾还有多个局部版本待同步，也合并为一次用户确认，再统一更新。只有一项未完成时沿用单资产返工。
-
-例如高山湖输入 `--seed 1 --reworks 2 --p-compile 0.5` 会产生两项都含模糊指代的集中返工。
+若剩余两项返工，合并为一条用户请求。只有指代已经明确时才生成预览；有指代歧义时先一次问清对象和范围，再在同一 assistant 交付中提供新版资产与全部更新 clips。
+多个 edits 涉及同一镜头时只重做一次。返工后按照既有 shot_versions 重新拼接，未受影响的片段保持原文件。
 
 `rework_plan` 记录提前选中的资产、字段与初版差异；返工事件的 `rendered_uses` 记录当时已经
 生成的引用镜头。一个共享资产若当时只出现在一个已生成镜头里，只询问当前/后续的作用范围；
@@ -300,7 +286,7 @@ writer/verifier 接收本次输出真正适用的规则，不会把全部有效 
 直接更新选中状态；`selections` 记录隐式/显式采纳及发生位置。否决、暂用、回溯和多候选选择
 仍需表达决定，避免省略实际必要的信息。多候选用语言指出第几个，不重复上传媒体。
 
-所有准备模块和返工现在共用同一份属性枚举：先等概率选一个有合法替代值的已知字段，再等概率
+所有准备模块和返工现在共用同一份属性枚举：先按视觉显著性加权抽样有合法替代值的字段，再从明显不同的合法值中
 选另一个合法值，一次只改变一个字段。不会用字段候选值多少来隐式增加该字段被选中的概率。
 `未知` / `不适用` 不作为被修改的原值，也不作为新值。无合法变化时，只能直接制作或澄清；
 若用户限定的模块都不合法，回退到直接制作，不编造属性。
@@ -413,28 +399,19 @@ output/
 ```
 
 `dialogue.json.turns[]` 中的 `intent` 记录操作、模块、用户行为标签、目标资产/镜头、
-采纳态度或更新范围。schema version 3 区分三种媒体字段：
+采纳态度或更新范围。媒体字段为：
 
-- `input_media`：本条在对话时间线中看起来采用的已有媒体，只记录生成交付消息的依赖；不代表聊天附件，不追加到正文。离线实际制作使用 `reference_materials`。
-- `reference_media`：助手本轮重新展示的历史参考，例如“是这张吗”；程序将其追加到正文。
-- `output_media`：本条新生成的媒体占位符，追加到正文。
+- `input_media`：生成交付的实际正向依赖，或澄清时重新展示的既有媒体。
+- `output_media`：本轮新生成的媒体占位符。
 
-其他历史指向保存在 `intent.context_media`，供后续执行和评测，不代表用户二次上传。
-镜头更新还记录 `intent.reference_updates`（逐资产的 before/after 引用），草稿直接点名修订的是哪个主体，
-避免连续更新时套用上一镜头，或把一件物体误说成另一件物体的替代品。该字段仍属于对话时间线，
-不是实际制作时的 `reference_materials`。
-`content` 是 Qwen 生成的文字及按上述规则附加的占位符。对话和计划 JSON 由 Python 写入；独立 verifier 的评分使用 JSON 输出协议。
-模糊指代的真实目标单独保存在 `intent.target_media` 监督标签中，不附到用户台词上。
-训练/评测时，用户的 `intent` 是标注信息，不应作为主 agent 可见的输入。
+`intent.display_media` 指定追加到正文的历史附件；`intent.context_media` 保留非附件的历史语义指针。镜头更新的 `intent.reference_updates` 记录每个身份的 before/after 版本。
 
-目标视频在这里提供的是合成监督和终态约束。`goal_match` 是程序构造标签，
-不是模型对实际媒体的视觉验证结果；`media_generated` 始终为 false。
-本脚本不声称这些 placeholder 已被真实图像/视频生成器实现。
+原视频是剧本和身份设计 guide；专家合同仅引用对话中更早生成的媒体。首次资产文生图/视频，后续自然编辑和组装，最终镜头不复制原视频。实际一致性过滤属于后续管线。`goal_match` 仍是计划状态标签，不是对实际媒体的视觉评分。
 
-实际制作媒体时，使用 `reference_materials`，不能把对话时间线中的 `inputs` 当成制作参考。
-完整分类、反向版本派生和深度定义见 [reference_materials.md](reference_materials.md)。
-这些字段由 Python 在完整计划形成后确定，保存在 `plan.json`、`dialogue.json` 和 `placeholders.json`；
-不会作为额外历史或未来目标传给台词改写模型。
+`generation_requirements` 仅记录明确的 `composition` / `pose`，修改继承它。人物图采用自然角色呈现，物品图采用独立产品照，环境为连贯场景。
+
+完整正向依赖、视频裁剪、模型生命周期和运行方式见 [reference_materials.md](reference_materials.md)。
+
 版本选择和回退明确写为选择动作；只有纠正错误指代时才使用 “I meant”。连续讨论同一对象的变体请求使用 `the same ...`；切换过对象后，使用 `the previous ...` 重新点名。每轮 `intent.reference_policy` 标记清晰指代、刻意模糊物体、刻意模糊镜头编号或逐项修改的策略。
 Verifier 同时收到原始 `intent.description` 和自然语言指代要求。没有计划歧义时，严格根据可见会话检查听话人能否识别对象，不能用 planner-only 的资产绑定替台词补全；计划了歧义时，仅对相应维度放宽，批量修改逐项采用 `edits[].ambiguous`。明确代词指代时不强迫重复名词。`wood texture design` 可以作为 wood 变体的普通视觉表达，不要求材料工程式措辞。
 `long shot` 在台词草稿中注明 `(wide shot)`，模型优先用 `wide shot`，不改为延长时长。
@@ -448,7 +425,7 @@ python -m unittest discover -s tests -p 'test_dialogue*.py' -v
 
 检查 200 个种子的终态收束、全部 15 类行为的总体覆盖、1–4 镜头、局部更新范围、
 不重做无关镜头、拼接版本新鲜度、媒体因果关系、编辑深度、媒体展示规则、隐式采纳、
-相对变化类型、固定人设、最近三条消息上下文、排除更早媒体目录、不泄露未来目标，以及实际制作参考图的反向依赖、无环性和深度。
+相对变化类型、固定人设、最近三条消息上下文、排除更早媒体目录、不泄露未来目标，以及实际制作媒体的正向因果依赖、无环性和深度。
 测试中的措辞替身只用于离线回归；实际 CLI 默认真实调用 Ollama。
 
 ## Stats 与行为名称
@@ -486,3 +463,80 @@ python -m unittest discover -s tests -p 'test_dialogue*.py' -v
 这些都是结构化计划标签的覆盖，不能当作独立的语义正确率或自然度人工评估。
 
 改写输入按动作裁剪：交付只提供媒介类型与交付状态；编辑只提供对象、目标变化及必要范围；拼接明确列出现有视频 clip 的顺序。Verifier 另用清楚的自然语言列出本轮必要的对象、版本和参考关系，不发送无关的完整媒体描述或未来监督状态。
+
+## 实际媒体生成：materialize
+
+在 GPU interactive session 中运行。输入为一个已经完成对话及 generation prompt
+rewrite 的 run dir；执行依据是其中的 placeholders.json，而不是对话时间线的 inputs。
+需要同目录的 dialogue.md，以及涉及 shot 裁剪时的 observation.json。FLUX.2-klein-4B
+和 VDN-H3 的环境、权重须已安装；执行器使用已有离线 runtime，不进行自动安装。
+开跑前会检查合同指定的模型缓存，缺失会直接报告模型名称；FLUX 加载固定到已检查的缓存 revision。
+新合同默认使用 Klein 4B（4 steps，guidance 1.0），也尊重旧合同显式指定的 model_id。
+
+在 vLLM 还运行时，可先按原视频资产的语言描述精确选择 target reference frames：
+
+    python scripts/dialogue_generation/materialize.py "$RUN" --prepare-frames
+
+此步骤调用 tools/find_video_frame.py，保存 frame_selections.json、选中的 PNG 和请求记录。
+它只检索 target video 中实际存在的原始身份；修改版本的外观仍由后面的 FLUX 编辑实现。
+选帧结果按原视频哈希和 query 校验，可重复运行并复用已有结果。如果不运行此准备步骤，
+执行器使用 placeholders.json 已记录的 observation frame_seconds。中间 asset reference
+clip 始终按合同中的 frame_seconds（当前为 0 秒）确定性抽帧，无需 VLM。
+
+随后在同一 GPU 节点关闭 vLLM，并运行：
+
+    bash scripts/vllm/stop.sh
+    python scripts/dialogue_generation/materialize.py "$RUN" --resume
+
+使用 cocreation conda 环境运行，确保其 bin 目录在 PATH 中以提供 ffmpeg/ffprobe。
+materialize 自动按需加载 Flux/VDNH3，切换 backend 时释放前一个 worker，结束时关闭模型。
+普通执行阶段不会调用 vLLM、改写 prompt 或重新规划。--dry-run 仅校验输入并打印构建顺序。
+--seed 控制每个 placeholder 的稳定生成 seed。--source-video 可显式指定搬迁后的真实源文件；
+fictional:// 虚拟示例没有可执行的真实媒体，必须先提供内容对应的实际 target video。
+
+输出全部位于输入 run dir：
+
+    media/image_NNNN.png
+    media/video_NNNN.mp4
+    media_manifest.json
+    dialogue.md
+    dialogue.placeholders.md
+    _inputs/target_frames/       # 可选的前阶段语言选帧结果
+    generation_records/          # 每次生成的参数、耗时和精简运行记录
+    _work/materialize/           # 临时文件；每个资产完成后清理，全部成功后删除 _work
+
+target video 按原字节复制，保留原始容器扩展名；copy 也保留来源扩展名。其他操作调用
+确定性的裁剪、抽帧和拼接工具，或向相应模型提交保存的 prompt 与严格有序的参考槽位。
+shot 边界按 observation 在源视频中细化。VDN 输入不足一秒的参考会明确延长为末帧停留，
+生成结果再裁至实际镜头时长；生成视频适配 target 分辨率以便和原始 shot 拼接。
+视觉 video_edit 复用源参考视频音轨，reference_generation 保留模型生成的音轨。
+
+每个节点写入状态、文件 SHA256、输入指纹、seed 和生成参数；--resume 检查文件及输入，
+跳过仍有效的节点，重建缺失、损坏或输入改变的输出。不覆盖未被 manifest 管理的同名文件。
+失败保留已完成节点，并保持 dialogue.md 原样；所有节点完成后才把其中的占位符替换成
+相对路径的 HTML img / video 标签（video 带 controls），同时首次保存 dialogue.placeholders.md。
+dialogue.json 的 media_generated 随全部成功变为 true；对话正文与 placeholders.json 合同保持不变。
+
+
+选帧检索使用和 video observer 相同的实际图片帧读取方式与 768px / JPEG quality 90
+预处理。优先检查 observation.assets[].frames，随后以默认 4 FPS、至少 32 个样本覆盖全片，
+每次最多提交 16 张图片。粗采样全部未命中时，默认继续分批检查剩余原始帧；局部细化未命中
+不会丢弃已确认的候选。导出的 selected.png 始终是原始分辨率帧。此流程不受 vLLM 原生 MP4
+输入的 1 FPS / 16 帧上限影响。检索结果记录实际检查的帧索引、时间、批次和覆盖数量。
+
+
+### Forward asset appearance policy
+
+Object size and person height remain observation metadata, but are not sampled as variations. Prefer strong color/silhouette changes and visually distinct material families; triangular object silhouettes are supported. Closely related soft materials (including paper and leather) are not sampled against one another. Current generated reference attributes override guide appearance in expert contracts.
+
+Final acceptance preserves active user constraints and the current generated designs. There is no automatic cancellation, asset restoration or shot regeneration to match the guide. Explicit rule conflicts/cancellations, combined edit requests, and deterministic final shot reordering remain available.
+
+Isolated object and character images keep a minimal neutral studio setup, including local edits. Seasons add sparse dressing: spring blossoms/leaves, one small lush tree and sunlight for summer, fallen leaves around the base for autumn, snow around the base and on the subject for winter. Environment assets retain their actual setting. The current image presentation contract is always passed to the rewriter.
+
+Materialization defaults to single-pass H3 at 16 steps. The story sample is sampled and delivered at 1280×736, with no enlargement. Each new synthetic clip requests four seconds; H3's 17n+5 frame grid samples 107 frames (4.4583 s at 24 fps), then the delivered clip is trimmed to exactly four seconds. Guide shot lengths no longer lengthen synthetic clips. `--video-steps`, `--video-width`, `--video-height`, `--output-width`, and `--output-height` can override the defaults.
+
+The expert receives only an existing clip and the revised identities needed for that edit. Full source binding tables stay in planning metadata. Revisions after concatenation reuse individual clip files, render only affected clips, then concatenate them back in order. If an assembled output needs a new appearance treatment, `clip_edits` holds independent short expert requests; the whole cut is never submitted to H3.
+
+Current output rules outrank explicit edits that conflict with them, design metadata, reference preservation and descriptive prose. Monochrome writer inputs omit source hues/saturation, and rewritten prompts are checked for colored exceptions. The executor also applies the requested monochrome rendering deterministically. Saturation, lightness, absolute size, subtle facial details and other weak contrasts remain metadata, not sampled variations; color, silhouette, distinct material families and conspicuous patterns receive higher weights. Hue variations are excluded where monochrome or an explicit property rule would make them invisible.
+
+`media_manifest.json` records each asset's `generation_seconds` (actual model call) and `elapsed_seconds` (complete asset operation). Compact receipts remain under `generation_records/`. Successful request files are removed after the final media is saved. Failed work is retained for diagnosis/resume; once the run succeeds, all `_work` is removed after model workers close. The run lock lives outside `_work`.

@@ -66,8 +66,9 @@ class CrossTurnRuleTests(unittest.TestCase):
             self.assertEqual(table[both]['render_state'], dict(season='fall', color_mode='black_and_white'))
             self.assertIn('Output requirements:', table[both]['description'])
             self.assertTrue(validate_plan(result))
-            self.assertTrue(all(not table[t]['render_state'] for t in result['final']['assets'].values()))
-            self.assertTrue(any(t['intent']['action'] == 'restore_rule_asset' for t in result['turns']))
+            self.assertEqual(result['final']['assets']['woman'], both)
+            self.assertEqual(sum(r['ended_at'] is None for r in result['rules']), 1)
+            self.assertFalse(any(t['intent']['action'] == 'restore_rule_asset' for t in result['turns']))
 
     def test_once_is_one_request_and_does_not_leak_to_next_request(self):
         p = self.planner()
@@ -109,7 +110,7 @@ class CrossTurnRuleTests(unittest.TestCase):
                 self.assertEqual(rule['ended_at'], replacement['started_at'])
             self.assertTrue(validate_plan(p.run()))
 
-    def test_canceled_treatment_is_not_a_target_compatible_reference(self):
+    def test_accepted_global_treatment_persists_without_terminal_restoration(self):
         p = self.planner()
         p.rules.start(spec(dict(color_mode='black_and_white')))
         p.single('bag', 'direct')
@@ -117,17 +118,17 @@ class CrossTurnRuleTests(unittest.TestCase):
         result = p.run()
         table = {m['placeholder']:m for m in result['placeholders']}
         after = result['final']['assets']['bag']
-        self.assertNotEqual(before, after)
-        self.assertEqual(table[before]['attributes'], table[after]['attributes'])
-        self.assertNotEqual(table[before]['render_state'], table[after]['render_state'])
-        self.assertEqual(table[after]['reference_materials'], [result['final']['media']])
-        self.assertEqual(table[before]['reference_materials'], [after])
+        self.assertEqual(before, after)
+        self.assertEqual(table[after]['render_state'], dict(color_mode='black_and_white'))
+        self.assertIsNone(result['rules'][0]['ended_at'])
+        self.assertEqual(table[before]['reference_materials'], [])
 
     def test_rules_are_reflected_in_exported_descriptions_and_resist_tampering(self):
         p = self.planner()
         rule = p.rules.start(spec(dict(color_mode='black_and_white')))
         p.single('bag', 'direct')
         p.rules.challenge(rule, outcome='once')
+        p.rules.end(rule)
         result = p.run()
         for mode in ('reminder', 'resolution', 'state', 'description', 'cancellation', 'history', 'effective_attributes'):
             broken = deepcopy(result)
@@ -245,8 +246,8 @@ class CrossTurnRuleTests(unittest.TestCase):
                 for a in rules:
                     for b in rules:
                         if a['started_at'] < b['started_at']:
-                            relations.add('disjoint' if a['ended_at'] < b['started_at'] else
-                                          'nested' if b['ended_at'] < a['ended_at'] else 'overlap')
+                            relations.add('disjoint' if (a['ended_at'] or float('inf')) < b['started_at'] else
+                                          'nested' if (b['ended_at'] or float('inf')) < (a['ended_at'] or float('inf')) else 'overlap')
         self.assertEqual(scopes, {'global', 'partial'})
         self.assertEqual(outcomes, {'keep', 'once', 'override'})
         self.assertTrue({'disjoint', 'nested', 'overlap'} <= relations)

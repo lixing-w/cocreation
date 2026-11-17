@@ -3,5 +3,6 @@ from .models import Flux, MiniMaxH3, Qwen, Runtime, VDNH3
 from .h3 import H3Runtime
 from .vdn import VDNRuntime
 from .references import Reference
+from .qwen_client import VLLMQwen
 
-__all__ = ["Flux", "MiniMaxH3", "Qwen", "Runtime", "H3Runtime", "Reference", "VDNH3", "VDNRuntime"]
+__all__ = ["Flux", "MiniMaxH3", "Qwen", "VLLMQwen", "Runtime", "H3Runtime", "Reference", "VDNH3", "VDNRuntime"]

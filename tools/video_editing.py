@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 
-from tools.find_video_frame import frame_timestamps
+from tools.video_frames import frame_timestamps
 
 
 def probe(path):
@@ -139,7 +139,7 @@ def concatenate(clips, destination):
     return dest
 
 
-def prepare_inputs(task, resolved, observation, output_dir, *, shot_map=None):
+def prepare_inputs(task, resolved, observation, output_dir, *, shot_map=None, crop_resolver=None):
     """Materialize the SAME ordered slots whose labels appear in generation_prompt.
 
     Accepts a compact placeholders.json entry or a full generation task.
@@ -155,7 +155,12 @@ def prepare_inputs(task, resolved, observation, output_dir, *, shot_map=None):
             path = concatenate([resolved[c['placeholder']] for c in task['clips']],directory/f'assembly-{i}.mp4')
         else:
             path = Path(resolved[ref['placeholder']])
-            if 'frame_seconds' in ref:
+            if 'crop_query' in ref:
+                if crop_resolver is None:
+                    from tools.find_crop_in_video import find_crop_in_video
+                    crop_resolver = lambda source, query, output: find_crop_in_video(source, query, crop_output=output)['crop_path']
+                path = Path(crop_resolver(path, ref['crop_query'], directory/f'crop-{i}.png'))
+            elif 'frame_seconds' in ref:
                 path = extract_frame(path,ref['frame_seconds'],directory/f'frame-{i}.png')
             elif 'shot_id' in ref:
                 mapping = shot_map or refine_shots(path,observation)

@@ -110,7 +110,8 @@ class VDNSession:
                 self.installation = prepare_assets(root, python, rt, env)
             env['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent) + os.pathsep + env['PYTHONPATH']
             env['FREEVIDEO_KEEP_MODELS'] = 'on'
-            self.session = ProcessSession('vdn_native', python, env, job / 'vdn_session')
+            session_root = Path(os.environ.get('COCREATION_SESSION_DIR', str(job / 'vdn_session')))
+            self.session = ProcessSession('vdn_native', python, env, session_root / 'native')
             self.runtime = dict(rt)
         (job / 'installation.json').write_text(json.dumps(self.installation))
         self.session.call(job, rt['timeout'])
@@ -160,7 +161,7 @@ class NativeVDNSession:
             raise RuntimeError('FreeVideo did not produce a nonempty video.mp4')
         return dict(status='ok', kind='video', path=str(output), model_id=request['model_id'],
             model_revision=installation['model_revision'], freevideo_revision=FREEVIDEO_REVISION,
-            torch=TORCH_VERSION, precision='fp8', base_steps=8,
+            torch=TORCH_VERSION, precision='fp8', base_steps=request['options']['base_steps'],
             refine_steps=request['options']['refine_steps'], two_pass=request['options']['two_pass'],
             fps=24, frames=request['options']['frames'], seconds=request['options']['frames']/24,
             reference_media=metadata, time_elapsed=time.perf_counter()-started,

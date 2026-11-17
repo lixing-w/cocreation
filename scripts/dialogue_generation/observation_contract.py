@@ -16,8 +16,8 @@ from scripts.dialogue_generation.asset_variations import CATALOG, CATEGORIES, em
 def input_schema():
     variants = []
     for kind, category in CATEGORIES.items():
-        attrs = dict(type="object", required=list(category["attributes"]), additionalProperties=False,
-                     properties={key: dict(type="string", enum=spec["values"])
+        attrs = dict(type="object", required=list(category["attributes"]), additionalProperties=dict(type="string", minLength=1),
+                     properties={key: dict(type="string", minLength=1)
                                  for key, spec in category["attributes"].items()})
         if category.get("constraints"):
             attrs["allOf"] = [
@@ -80,7 +80,7 @@ def observation_prompt():
         "For each asset include id, kind, name, description, frames (one or two timestamps in seconds where it is visible), and attributes.",
         "Choose kind from person, object, indoor_environment, outdoor_environment. Track people and objects separately.",
         "Reuse an id for the same person, object, or environment across shots. If the final video has distinct visible versions, use a separate id for each version.",
-        "Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).",
+        "Track only human-intuitive salient identities. Tiny incidental objects and decorative details belong in the owning asset description, not standalone assets. Describe distinctive details concisely. Additional supported attribute fields or values are legal per-identity extensions; prefer the listed choices for existing fields. Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).",
         "List ids in final playback order in target_order. Every asset must appear in at least one shot.",
         *CATALOG["notes"],
         "Write names, descriptions, and any constraint text in English. Use exact enum strings as printed below. Use short, version-neutral names, such as traveler or tote bag.",

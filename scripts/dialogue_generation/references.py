@@ -1,114 +1,50 @@
-"""Actual media construction graph, independent of chronological dialogue inputs."""
-from collections import deque
-from scripts.dialogue_generation.cross_turn_rule import render_signature
+"""Causal media dependencies: every reference already exists in the dialogue."""
+from copy import deepcopy
 
 
 def assign_reference_materials(plan):
-    media = {row["placeholder"]: row for row in plan["placeholders"]}
-    root = plan["final"]["media"]
-    media[root]["source_video"] = plan["source_video"]
-    media[root]["reference_materials"] = []
-    for token, row in media.items():
-        if token == root or row["purpose"] == "asset":
-            continue
-        # Formal shots and coherent trials inherit the target video action.
-        # Trial design references add only their requested differences; intermediate
-        # cuts use their constituent clips in the requested order.
-        row["reference_materials"] = ([root] if row["purpose"] == "shot"
-                                      else list(dict.fromkeys(([root] if row['purpose'] == 'exploration' and row['kind'] == 'video' else []) + row["inputs"])))
-    for asset, target in plan["target_assets"].items():
-        versions = {p: row for p, row in media.items()
-                    if row["purpose"] == "asset" and row["asset_ids"] == [asset]}
-        canonical = plan["final"]["assets"][asset]
-        neighbors = {p: [] for p in versions}
-        for p, row in versions.items():
-            parent = row["edit_parent"]
-            if parent in versions:
-                neighbors[p].append(parent)
-                neighbors[parent].append(p)
-        # Orient each edit component from its target-compatible versions, so
-        # the actual construction can run backwards relative to the dialogue.
-        remaining = set(versions)
-        while remaining:
-            start = min(remaining)
-            component, todo = set(), [start]
-            while todo:
-                p = todo.pop()
-                if p in component:
-                    continue
-                component.add(p)
-                todo.extend(neighbors[p])
-            remaining -= component
-            anchors = sorted(p for p in component
-                             if versions[p]["attributes"] == target["attributes"] and not render_signature(versions[p], plan["target_assets"]))
-            if anchors:
-                for p in anchors:
-                    versions[p]["reference_materials"] = [root]
-            else:
-                # An independently proposed candidate has no edit path to the
-                # target version. Derive its closest version from the canonical
-                # asset, then follow its existing edit edges outwards.
-                anchor = min(component, key=lambda p: (
-                    sum(value != target["attributes"][key]
-                        for key, value in versions[p]["attributes"].items()) + len(render_signature(versions[p], plan['target_assets'])), p))
-                anchors = [anchor]
-                versions[anchor]["reference_materials"] = [canonical]
-            visited, queue = set(anchors), deque(anchors)
-            while queue:
-                parent = queue.popleft()
-                for p in sorted(neighbors[parent]):
-                    if p not in visited:
-                        versions[p]["reference_materials"] = [parent]
-                        visited.add(p)
-                        queue.append(p)
-    depths, active = {}, set()
-    def depth(p):
-        if p in active:
-            raise ValueError("Cyclic construction references")
-        if p not in depths:
-            active.add(p)
-            refs = media[p]["reference_materials"]
-            depths[p] = 0 if p == root else 1 + max(depth(ref) for ref in refs)
-            active.remove(p)
-        return depths[p]
-    for p, row in media.items():
-        row["reference_depth"] = depth(p)
+    media, latest_shots = {}, {}
+    deliveries = {token: turn for turn in plan['turns'] for token in turn['output_media']}
+    for row in plan['placeholders']:
+        refs = list(row['inputs'])
+        if row['purpose'] == 'asset' and not refs:
+            turn = deliveries[row['placeholder']]
+            # Rule cleanup regenerates the agreed identity from its last visible
+            # version, even when the planner resets its bounded edit ancestry.
+            refs = [ref for ref in turn['intent'].get('context_media', [])
+                    if ref in media and set(row['asset_ids']) <= set(media[ref]['asset_ids'])]
+        if row['purpose'] == 'shot':
+            sid = row['shot_ids'][0]
+            if sid in latest_shots:
+                previous = media[latest_shots[sid]]
+                refs = [latest_shots[sid]] + [token for aid, token in row.get('bindings', {}).items()
+                    if previous.get('bindings', {}).get(aid) != token]
+            latest_shots[sid] = row['placeholder']
+        row.pop('source_video', None)
+        row['reference_materials'] = list(dict.fromkeys(refs))
+        if any(ref not in media for ref in row['reference_materials']):
+            raise ValueError('Construction references must precede their output')
+        row['reference_depth'] = max((media[ref]['reference_depth'] + 1 for ref in refs), default=0)
+        media[row['placeholder']] = row
+    for turn in plan['turns']:
+        if turn['output_media']:
+            turn['input_media'] = list(dict.fromkeys(ref for token in turn['output_media']
+                for ref in media[token]['reference_materials'] if ref not in turn['output_media']))
+        else:
+            turn['input_media'] = list(turn['intent'].get('display_media', []))
+    return plan
 
 
 def validate_reference_materials(plan):
-    media = {row["placeholder"]: row for row in plan["placeholders"]}
-    root = plan["final"]["media"]
-    active, depths = set(), {}
-    def visit(p):
-        if p in active:
-            raise ValueError("Cyclic construction references")
-        if p in depths:
-            return depths[p]
-        row = media[p]
-        refs = row.get("reference_materials")
-        if (not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in media for ref in refs)
-                or len(refs) != len(set(refs))):
-            raise ValueError("Invalid reference_materials")
-        if (p == root) != (not refs):
-            raise ValueError("Only the target video may be a construction root")
-        active.add(p)
-        expected = 0 if p == root else 1 + max(visit(ref) for ref in refs)
-        active.remove(p)
-        if type(row.get("reference_depth")) is not int or row["reference_depth"] != expected:
-            raise ValueError("Incorrect reference_depth")
-        depths[p] = expected
-        return expected
-    if media[root].get("source_video") != plan["source_video"]:
-        raise ValueError("Construction root must be the source target video")
-    if root != plan["placeholders"][-1]["placeholder"]:
-        raise ValueError("Target video must be the last generated media")
-    for p in media:
-        visit(p)
-    # Also enforce the reference selection policy, not just a well-formed DAG.
-    from copy import deepcopy
     expected = deepcopy(plan)
     assign_reference_materials(expected)
-    for row in expected["placeholders"]:
-        if row["reference_materials"] != media[row["placeholder"]]["reference_materials"]:
-            raise ValueError("Construction references do not follow the asset/shot policy")
+    for actual, wanted in zip(plan['placeholders'], expected['placeholders']):
+        for key in ('reference_materials', 'reference_depth'):
+            if actual.get(key) != wanted[key]:
+                raise ValueError('Incorrect forward construction ' + key)
+        if 'source_video' in actual:
+            raise ValueError('Guide video must not be a construction source')
+    for actual, wanted in zip(plan['turns'], expected['turns']):
+        if actual['input_media'] != wanted['input_media']:
+            raise ValueError('Delivery input_media must equal actual construction inputs')
     return True

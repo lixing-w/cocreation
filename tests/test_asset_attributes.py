@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.dialogue_generation.asset_variations import (
-    CATALOG, CATEGORIES, POOLS, UNOBSERVED, AssetSpec, alternatives, alternate,
+    CATALOG, CATEGORIES, POOLS, UNOBSERVED, DISABLED_VARIATIONS, VISIBLE_FIELDS, AssetSpec, alternatives, alternate,
     empty_attributes, validate_attributes, relative_variation, COMPARATIVES,
 )
 from scripts.dialogue_generation.observation_contract import input_schema, observation_prompt
@@ -40,20 +40,25 @@ class AttributeTests(unittest.TestCase):
                 if 'ordered_values' in spec:
                     self.assertIn(field, COMPARATIVES)
 
-    def test_missing_extra_and_out_of_vocabulary_attributes_are_rejected(self):
-        for mode in ('missing', 'extra', 'bad_value', 'missing_map'):
-            source = deepcopy(self.source)
-            attrs = source['assets'][0]['attributes']
-            if mode == 'missing': attrs.pop('hair_length')
-            elif mode == 'extra': attrs['invented'] = 'invented'
-            elif mode == 'bad_value': attrs['hair_length'] = 'invented hairstyle'
+    def test_missing_fields_fail_but_observed_extensions_are_accepted(self):
+        for mode in ('missing','missing_map'):
+            source=deepcopy(self.source)
+            if mode=='missing': source['assets'][0]['attributes'].pop('hair_length')
             else: source['assets'][0].pop('attributes')
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 observation(source)
+        source=deepcopy(self.source)
+        source['assets'][0]['attributes']['distinctive_motif']='bird-shaped pin'
+        source['assets'][0]['attributes']['hair_color']='iridescent silver'
+        asset=observation(source)['assets'][0]
+        self.assertTrue(validate_attributes(asset))
+        self.assertIn('distinctive_motif',asset['attribute_extensions'])
+        self.assertIn('iridescent silver',asset['attribute_extensions']['hair_color']['values'])
 
     def test_every_catalog_field_can_drive_a_real_single_field_variation(self):
         for kind, category in CATEGORIES.items():
             for field, spec in category['attributes'].items():
+                if field not in VISIBLE_FIELDS[kind] or field in DISABLED_VARIATIONS.get(kind, ()): continue
                 row = dict(id='asset', kind=kind, name='test subject', description='invariant details',
                            attributes=empty_attributes(kind))
                 row['attributes'][field] = spec['values'][0]
@@ -71,7 +76,7 @@ class AttributeTests(unittest.TestCase):
     def test_relative_edits_are_adjacent_and_return_to_the_given_state(self):
         for kind, category in CATEGORIES.items():
             for field, spec in category['attributes'].items():
-                if 'ordered_values' not in spec: continue
+                if 'ordered_values' not in spec or field not in VISIBLE_FIELDS[kind] or field in DISABLED_VARIATIONS.get(kind, ()): continue
                 row = dict(id='asset', kind=kind, name='test subject', description='invariant details',
                            attributes=empty_attributes(kind))
                 row['attributes'][field] = spec['ordered_values'][1]
@@ -89,7 +94,7 @@ class AttributeTests(unittest.TestCase):
         row['attributes'].update(material='glass', surface_finish='glossy')
         choices = alternatives(row)
         self.assertNotIn('wood', choices.get('material', []))
-        self.assertEqual(set(choices['shape']), {'conical'})
+        self.assertTrue({'triangular', 'square', 'conical'} <= set(choices['shape']))
         person = deepcopy(self.source['assets'][0])
         person['attributes']['hair_length'] = 'bald'
         with self.assertRaisesRegex(ValueError, 'Incompatible'):
@@ -123,7 +128,7 @@ class AttributeTests(unittest.TestCase):
             row['attributes'] = attrs
         scopes, multi_shot = set(), []
         for seed in range(60):
-            plan = build_plan(source, seed=seed, modules=['direct'], reworks=1, p_compile=1)
+            plan = build_plan(source, seed=seed, modules=['direct'], reworks=1, p_compile=1, cross_turn_rules=False)
             event = next(e for e in plan['events'] if e['module'] == 'later_revision')
             request = next(t for t in plan['turns'] if t['intent']['action'] == 'request_rework')
             scopes.update(t['intent']['scope'] for t in plan['turns'] if t['intent']['action'] == 'choose_update_scope')
@@ -135,7 +140,7 @@ class AttributeTests(unittest.TestCase):
                 multi_shot.append(plan)
                 question = next(t for t in plan['turns'] if t['intent']['action'] == 'clarify_update_scope')
                 self.assertIn('same tote bag', question['intent']['description'])
-                self.assertIn('carry over', question['intent']['description'])
+                self.assertIn('all existing shots', question['intent']['description'])
         self.assertTrue(multi_shot)
         self.assertEqual(scopes, {'shot', 'all_uses'})
 

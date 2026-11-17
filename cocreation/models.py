@@ -66,7 +66,9 @@ class _System:
             env = runtime_environment()
             package_root = str(Path(__file__).resolve().parent.parent)
             env['PYTHONPATH'] = os.pathsep.join(filter(None, [package_root, env.get('PYTHONPATH')]))
-            session = ProcessSession(self.backend, self.runtime.python, env, job_dir / 'session')
+            directory = Path(getattr(self, 'session_dir', job_dir / 'session'))
+            env['COCREATION_SESSION_DIR'] = str(directory)
+            session = ProcessSession(self.backend, self.runtime.python, env, directory)
             self._session = session
         (job_dir / 'runtime.log').write_text('Persistent worker log: ' + str(session.directory / 'session.log') + '\n')
         try:
@@ -75,10 +77,11 @@ class _System:
             self.close()
             raise
 
-    def _invoke(self, prompt, references, options, dry_run, *, output_dir=None):
+    def _invoke(self, prompt, references, options, dry_run, *, output_dir=None, extra_request=None):
         request = prepare(prompt, list(references or []))
         request.update(backend=self.backend, model_id=self.model_id,
                        runtime=asdict(self.runtime), options=options)
+        request.update(extra_request or {})
         self._validate(request)
         if dry_run:
             return dict(status="planned", **request)
@@ -114,8 +117,21 @@ class _System:
 class Qwen(_System):
     backend = "qwen"
 
-    def __init__(self, model_id="Qwen/Qwen3-VL-8B-Instruct", *, runtime=None, output_dir=None):
-        self.model_id = model_id
+    def __init__(self, model_id=None, *, runtime=None, output_dir=None):
+        self.model_id = model_id or os.environ.get('COCREATION_QWEN_MODEL') or (
+            'Qwen/Qwen3.6-35B-A3B' if sys.platform.startswith('linux')
+            else 'Qwen/Qwen3-VL-8B-Instruct')
+        self.supports_system_cache = 'Qwen3-VL' in self.model_id
+        deployment = scratch_root()/'runtime/qwen3.6-35b-a3b'
+        native_python = deployment/'vllm/bin/python'
+        if runtime is None and sys.platform.startswith('linux'):
+            options = {'python': str(native_python)} if native_python.is_file() else {}
+            manifest = deployment/'model.json'
+            if manifest.is_file():
+                checkpoint = json.loads(manifest.read_text())
+                if checkpoint.get('model_id') == self.model_id:
+                    options.update(revision=checkpoint['revision'], local_files_only=True)
+            runtime = Runtime(**options)
         self.runtime = runtime or Runtime()
         if self.runtime.cpu_offload:
             raise ValueError("Qwen wrapper does not support cpu_offload; use a smaller model or FP8 checkpoint")
@@ -125,10 +141,13 @@ class Qwen(_System):
         if any(r["kind"] == "audio" for r in request["references"]):
             raise ValueError("Qwen wrapper accepts images and videos, not audio")
 
-    def __call__(self, prompt: str, references: list[Reference] | None = None, *,
+    def __call__(self, prompt: str | None = None, references: list[Reference] | None = None, *,
                  max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
                  max_pixels=512 * 512, seed=None, dry_run=False, system_prompt=None,
-                 assistant_prefill=None, system_cache_path=None, output_dir=None, temperature=0.8, top_p=0.95, top_k=50):
+                 assistant_prefill=None, system_cache_path=None, output_dir=None, temperature=0.8, top_p=0.95, top_k=50,
+                 messages=None, response_schema=None, enable_thinking=False, _conversations=None):
+        if type(enable_thinking) is not bool:
+            raise TypeError("enable_thinking must be bool")
         sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
         if seed is None:
             seed = secrets.randbits(63)
@@ -139,15 +158,50 @@ class Qwen(_System):
         if assistant_prefill is not None and not isinstance(assistant_prefill, str):
             raise TypeError("assistant_prefill must be a string or None")
         if system_cache_path is not None:
+            if "Qwen3-VL" not in self.model_id:
+                raise ValueError("Custom prefix cache supports legacy native Qwen3-VL only; Qwen3.6 uses vLLM caching")
             if not system_prompt:
                 raise ValueError("system_cache_path requires a nonempty system_prompt")
             system_cache_path = str(Path(system_cache_path).expanduser().resolve())
+        if response_schema is not None:
+            if not isinstance(response_schema, dict):
+                raise TypeError('response_schema must be a JSON Schema dictionary')
+            json.dumps(response_schema)
+            if system_cache_path or assistant_prefill is not None:
+                raise ValueError('Schema decoding uses standard generate without a custom cache or assistant prefill')
         if max_new_tokens < 1 or video_fps <= 0 or video_max_frames < 2 or max_pixels < 1024:
             raise ValueError("Invalid Qwen token/frame/pixel budget")
+        extra = None
+        if messages is not None or _conversations is not None:
+            if messages is not None and _conversations is not None:
+                raise ValueError('Supply a single conversation or a batch, not both')
+            if prompt is not None or references or system_prompt is not None or assistant_prefill is not None:
+                raise ValueError('Structured messages cannot be combined with prompt/references/system_prompt/assistant_prefill')
+            if system_cache_path:
+                raise ValueError('Structured messages and batching use the official uncached generation path')
+            from .qwen_inputs import normalize_messages
+            conversations = [messages] if messages is not None else _conversations
+            if not isinstance(conversations, (list, tuple)) or not conversations:
+                raise ValueError('Batch must contain at least one conversation')
+            normalized = [normalize_messages(m, check_files=not dry_run, max_pixels=max_pixels,
+                video_fps=video_fps, video_max_frames=video_max_frames) for m in conversations]
+            extra = dict(conversations=normalized, batched=messages is None)
+            prompt = ''
+        if prompt is None:
+            raise ValueError('Supply prompt or messages')
         return self._invoke(prompt, references, dict(max_new_tokens=max_new_tokens,
             video_fps=video_fps, video_max_frames=video_max_frames,
             max_pixels=max_pixels, seed=seed, system_prompt=system_prompt,
-            assistant_prefill=assistant_prefill, system_cache_path=system_cache_path, **sampling), dry_run, output_dir=output_dir)
+            assistant_prefill=assistant_prefill, system_cache_path=system_cache_path,
+            response_schema=response_schema, enable_thinking=enable_thinking, **sampling), dry_run,
+            output_dir=output_dir, extra_request=extra)
+
+    def chat(self, messages, **options):
+        return self(messages=messages, **options)
+
+    def generate_batch(self, conversations, **options):
+        """One official padded generate call; decoding options/seed apply to this batch."""
+        return self(_conversations=conversations, **options)
 
 
 class Flux(_System):
@@ -224,20 +278,23 @@ class VDNH3(_System):
         self.runtime = runtime or VDNRuntime()
         self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / 'runs').expanduser().resolve()
 
-    def __call__(self, prompt, references=None, *, seconds=5.0, width=768, height=512,
-                 seed=0, two_pass=True, dry_run=False):
+    def __call__(self, prompt, references=None, *, seconds=4.0, width=1280, height=736,
+                 seed=0, steps=None, two_pass=False, dry_run=False):
         import math
-        if isinstance(seconds, bool) or not math.isfinite(seconds) or not 5 <= seconds <= 15:
-            raise ValueError('VDN duration must be 5–15 seconds')
-        if any(type(v) is not int or v < (512 if two_pass else 256) or v % 64 for v in (width, height)):
-            raise ValueError('VDN dimensions must be multiples of 64, >=512 for two-pass or >=256 for single-pass')
+        if isinstance(seconds, bool) or not math.isfinite(seconds) or not 1.625 <= seconds <= 15:
+            raise ValueError('VDN duration must be 1.625–15 seconds')
+        if any(type(v) is not int or v < (512 if two_pass else 256) or v % 32 for v in (width, height)):
+            raise ValueError('VDN dimensions must be multiples of 32, >=512 for two-pass or >=256 for single-pass')
         if type(seed) is not int or not 0 <= seed < 2**63 or type(two_pass) is not bool:
             raise ValueError('Invalid seed or two_pass')
+        steps = (8 if two_pass else 16) if steps is None else steps
+        if type(steps) is not int or not 1 <= steps <= 32 or (two_pass and steps != 8):
+            raise ValueError('VDN steps must be 1–32; two-pass requires 8 base steps')
         refs = list(references or [])
         if len(refs) > 32:
             raise ValueError('VDN supports at most 32 reference items')
         return self._invoke(prompt, refs, dict(seconds=seconds, frames=frame_count(seconds),
-            width=width, height=height, seed=seed, two_pass=two_pass, base_steps=8,
+            width=width, height=height, seed=seed, two_pass=two_pass, base_steps=steps,
             refine_steps=3 if two_pass else 0, precision='fp8',
             task='ref2va' if refs else 't2va'), dry_run)
 

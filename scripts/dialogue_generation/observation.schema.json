@@ -76,303 +76,86 @@
                   "clothing_fit",
                   "accessory"
                 ],
-                "additionalProperties": false,
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "properties": {
                   "gender_presentation": {
                     "type": "string",
-                    "enum": [
-                      "feminine",
-                      "masculine",
-                      "androgynous",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "age_group": {
                     "type": "string",
-                    "enum": [
-                      "young child",
-                      "school-age child",
-                      "teenager",
-                      "young adult",
-                      "middle-aged adult",
-                      "older adult",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "hair_length": {
                     "type": "string",
-                    "enum": [
-                      "bald",
-                      "buzz-length hair",
-                      "short hair",
-                      "shoulder-length hair",
-                      "long hair",
-                      "waist-length hair",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "hair_style": {
                     "type": "string",
-                    "enum": [
-                      "sleek straight hair",
-                      "voluminous straight hair",
-                      "slightly wavy hair",
-                      "wavy hair",
-                      "tight curls",
-                      "side part",
-                      "center part",
-                      "blunt bangs",
-                      "wispy bangs",
-                      "choppy bangs",
-                      "slicked back",
-                      "tousled hair",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "hair_color": {
                     "type": "string",
-                    "enum": [
-                      "black",
-                      "white",
-                      "gray",
-                      "beige",
-                      "brown",
-                      "red",
-                      "orange",
-                      "yellow",
-                      "green",
-                      "cyan",
-                      "blue",
-                      "purple",
-                      "pink",
-                      "gold",
-                      "silver",
-                      "copper",
-                      "multicolored",
-                      "gray-white",
-                      "silver-white",
-                      "two-tone hair",
-                      "highlights",
-                      "dark blue",
-                      "light blue",
-                      "dark green",
-                      "light green",
-                      "burgundy",
-                      "khaki",
-                      "off-white",
-                      "neon green",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "face_shape": {
                     "type": "string",
-                    "enum": [
-                      "round face",
-                      "oval face",
-                      "square face",
-                      "long face",
-                      "heart-shaped face",
-                      "diamond-shaped face",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "eye_shape": {
                     "type": "string",
-                    "enum": [
-                      "round eyes",
-                      "almond-shaped eyes",
-                      "narrow eyes",
-                      "upturned eyes",
-                      "downturned eyes",
-                      "deep-set eyes",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "eyebrow_shape": {
                     "type": "string",
-                    "enum": [
-                      "straight brows",
-                      "arched brows",
-                      "upturned brows",
-                      "thick brows",
-                      "thin brows",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "nose_shape": {
                     "type": "string",
-                    "enum": [
-                      "small nose",
-                      "straight nose",
-                      "rounded nose",
-                      "wide nose",
-                      "aquiline nose",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lip_shape": {
                     "type": "string",
-                    "enum": [
-                      "thin lips",
-                      "medium lips",
-                      "full lips",
-                      "bow-shaped lips",
-                      "rounded lips",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "expression": {
                     "type": "string",
-                    "enum": [
-                      "serious",
-                      "calm",
-                      "gentle",
-                      "smiling",
-                      "laughing",
-                      "thoughtful",
-                      "surprised",
-                      "sad",
-                      "confident",
-                      "tired",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "makeup_intensity": {
                     "type": "string",
-                    "enum": [
-                      "no makeup",
-                      "light makeup",
-                      "moderate makeup",
-                      "heavy makeup",
-                      "stage makeup",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "facial_hair": {
                     "type": "string",
-                    "enum": [
-                      "clean-shaven",
-                      "stubble",
-                      "mustache",
-                      "goatee",
-                      "full beard",
-                      "long beard",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "height": {
                     "type": "string",
-                    "enum": [
-                      "short",
-                      "average height",
-                      "tall",
-                      "very tall",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "body_build": {
                     "type": "string",
-                    "enum": [
-                      "slim",
-                      "proportionate",
-                      "athletic",
-                      "stocky",
-                      "full-figured",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "clothing_type": {
                     "type": "string",
-                    "enum": [
-                      "coat",
-                      "jacket",
-                      "trench coat",
-                      "down jacket",
-                      "suit",
-                      "button-up shirt",
-                      "T-shirt",
-                      "knit sweater",
-                      "sweatshirt",
-                      "sportswear",
-                      "dress",
-                      "workwear",
-                      "traditional clothing",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "clothing_color": {
                     "type": "string",
-                    "enum": [
-                      "black",
-                      "white",
-                      "gray",
-                      "beige",
-                      "brown",
-                      "red",
-                      "orange",
-                      "yellow",
-                      "green",
-                      "cyan",
-                      "blue",
-                      "purple",
-                      "pink",
-                      "gold",
-                      "silver",
-                      "copper",
-                      "multicolored",
-                      "dark blue",
-                      "light blue",
-                      "dark green",
-                      "light green",
-                      "burgundy",
-                      "khaki",
-                      "off-white",
-                      "neon green",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "clothing_fit": {
                     "type": "string",
-                    "enum": [
-                      "fitted",
-                      "regular fit",
-                      "loose",
-                      "oversized",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "accessory": {
                     "type": "string",
-                    "enum": [
-                      "no accessory",
-                      "eyeglasses",
-                      "sunglasses",
-                      "scarf",
-                      "necklace",
-                      "earrings",
-                      "hat",
-                      "hair accessory",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   }
                 },
                 "allOf": [
@@ -459,211 +242,62 @@
                   "condition",
                   "transparency"
                 ],
-                "additionalProperties": false,
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "properties": {
                   "color": {
                     "type": "string",
-                    "enum": [
-                      "black",
-                      "white",
-                      "gray",
-                      "beige",
-                      "brown",
-                      "red",
-                      "orange",
-                      "yellow",
-                      "green",
-                      "cyan",
-                      "blue",
-                      "purple",
-                      "pink",
-                      "gold",
-                      "silver",
-                      "copper",
-                      "colorless",
-                      "multicolored",
-                      "dark blue",
-                      "light blue",
-                      "dark green",
-                      "light green",
-                      "burgundy",
-                      "khaki",
-                      "off-white",
-                      "neon green",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "color_lightness": {
                     "type": "string",
-                    "enum": [
-                      "very dark",
-                      "somewhat dark",
-                      "medium lightness",
-                      "somewhat light",
-                      "very light",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "color_saturation": {
                     "type": "string",
-                    "enum": [
-                      "low saturation",
-                      "medium saturation",
-                      "high saturation",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "size": {
                     "type": "string",
-                    "enum": [
-                      "miniature",
-                      "small",
-                      "medium-sized",
-                      "large",
-                      "extra large",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "shape": {
                     "type": "string",
-                    "enum": [
-                      "round",
-                      "oval",
-                      "square",
-                      "rectangular",
-                      "rounded rectangle",
-                      "cylindrical",
-                      "conical",
-                      "spherical",
-                      "hemispherical",
-                      "elongated",
-                      "streamlined",
-                      "spindle-shaped",
-                      "flat",
-                      "irregular",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "aspect_ratio": {
                     "type": "string",
-                    "enum": [
-                      "long and narrow",
-                      "balanced",
-                      "wide and flat",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "material": {
                     "type": "string",
-                    "enum": [
-                      "canvas",
-                      "cotton fabric",
-                      "leather",
-                      "faux leather",
-                      "nylon",
-                      "silk",
-                      "felt",
-                      "wood",
-                      "bamboo",
-                      "ceramic",
-                      "glass",
-                      "metal",
-                      "plastic",
-                      "rubber",
-                      "stone",
-                      "paper",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "surface_finish": {
                     "type": "string",
-                    "enum": [
-                      "matte",
-                      "semi-matte",
-                      "glossy",
-                      "mirror finish",
-                      "frosted",
-                      "brushed",
-                      "glazed",
-                      "satin finish",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "texture": {
                     "type": "string",
-                    "enum": [
-                      "fine-textured",
-                      "smooth",
-                      "grainy",
-                      "rough",
-                      "woven",
-                      "fuzzy",
-                      "carved",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "pattern": {
                     "type": "string",
-                    "enum": [
-                      "plain",
-                      "striped",
-                      "checked",
-                      "polka dots",
-                      "geometric pattern",
-                      "floral pattern",
-                      "animal print",
-                      "gradient",
-                      "lettering",
-                      "logo",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "decoration": {
                     "type": "string",
-                    "enum": [
-                      "undecorated",
-                      "decals",
-                      "relief",
-                      "embroidery",
-                      "metal accents",
-                      "charms",
-                      "inlay",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "condition": {
                     "type": "string",
-                    "enum": [
-                      "brand new",
-                      "lightly worn",
-                      "visibly worn",
-                      "distressed",
-                      "damaged",
-                      "visibly repaired",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "transparency": {
                     "type": "string",
-                    "enum": [
-                      "opaque",
-                      "translucent",
-                      "transparent",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   }
                 },
                 "allOf": [
@@ -910,262 +544,86 @@
                   "time_of_day",
                   "camera_distance"
                 ],
-                "additionalProperties": false,
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "properties": {
                   "room_type": {
                     "type": "string",
-                    "enum": [
-                      "coffee shop",
-                      "restaurant",
-                      "living room",
-                      "bedroom",
-                      "kitchen",
-                      "bathroom",
-                      "study",
-                      "office",
-                      "studio",
-                      "gallery",
-                      "shop",
-                      "hotel lobby",
-                      "hallway",
-                      "vehicle interior",
-                      "warehouse",
-                      "classroom",
-                      "stage",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "interior_style": {
                     "type": "string",
-                    "enum": [
-                      "modern minimalist",
-                      "Scandinavian",
-                      "Japanese",
-                      "Chinese",
-                      "industrial",
-                      "retro",
-                      "country",
-                      "understated luxury",
-                      "bohemian",
-                      "futuristic",
-                      "classical",
-                      "Mediterranean",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "space_size": {
                     "type": "string",
-                    "enum": [
-                      "cramped",
-                      "compact",
-                      "mid-sized",
-                      "spacious",
-                      "vast",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "ceiling_height": {
                     "type": "string",
-                    "enum": [
-                      "low ceiling",
-                      "standard ceiling",
-                      "double-height ceiling",
-                      "very high ceiling",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "layout": {
                     "type": "string",
-                    "enum": [
-                      "open-plan",
-                      "semi-open",
-                      "partitioned",
-                      "long and narrow",
-                      "symmetrical",
-                      "circular",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "wall_material": {
                     "type": "string",
-                    "enum": [
-                      "latex paint",
-                      "exposed brick",
-                      "wood paneling",
-                      "concrete",
-                      "stone",
-                      "glass",
-                      "tile",
-                      "wallpaper",
-                      "metal",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "floor_material": {
                     "type": "string",
-                    "enum": [
-                      "wood flooring",
-                      "tile",
-                      "concrete",
-                      "marble",
-                      "carpet",
-                      "stone slabs",
-                      "metal",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "palette": {
                     "type": "string",
-                    "enum": [
-                      "warm palette",
-                      "cool palette",
-                      "neutral palette",
-                      "black and white",
-                      "saturated colors",
-                      "muted colors",
-                      "natural wood tones",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "furniture_density": {
                     "type": "string",
-                    "enum": [
-                      "sparsely furnished",
-                      "moderately furnished",
-                      "densely furnished",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "furniture_style": {
                     "type": "string",
-                    "enum": [
-                      "minimalist",
-                      "natural wood",
-                      "modern metal",
-                      "retro",
-                      "classical",
-                      "eclectic",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "window_type": {
                     "type": "string",
-                    "enum": [
-                      "no windows",
-                      "small windows",
-                      "standard windows",
-                      "floor-to-ceiling windows",
-                      "skylight",
-                      "panoramic glazing",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "clutter": {
                     "type": "string",
-                    "enum": [
-                      "tidy",
-                      "slightly cluttered",
-                      "cluttered",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "background_crowd": {
                     "type": "string",
-                    "enum": [
-                      "no people",
-                      "sparse crowd",
-                      "moderate crowd",
-                      "crowded",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_source": {
                     "type": "string",
-                    "enum": [
-                      "natural daylight",
-                      "moonlight",
-                      "light through windows",
-                      "indoor lights",
-                      "streetlights",
-                      "neon lights",
-                      "campfire",
-                      "mixed light sources",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_level": {
                     "type": "string",
-                    "enum": [
-                      "dim",
-                      "somewhat dim",
-                      "moderate light",
-                      "bright",
-                      "very bright",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_temperature": {
                     "type": "string",
-                    "enum": [
-                      "cool-toned",
-                      "neutral-toned",
-                      "warm-toned",
-                      "colored lighting",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_softness": {
                     "type": "string",
-                    "enum": [
-                      "hard light",
-                      "moderately soft light",
-                      "soft light",
-                      "diffuse light",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "time_of_day": {
                     "type": "string",
-                    "enum": [
-                      "dawn",
-                      "early morning",
-                      "morning",
-                      "noon",
-                      "afternoon",
-                      "dusk",
-                      "night",
-                      "late night",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "camera_distance": {
                     "type": "string",
-                    "enum": [
-                      "long shot",
-                      "wide shot",
-                      "medium shot",
-                      "close shot",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   }
                 },
                 "allOf": [
@@ -1261,275 +719,90 @@
                   "time_of_day",
                   "camera_distance"
                 ],
-                "additionalProperties": false,
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "properties": {
                   "setting_type": {
                     "type": "string",
-                    "enum": [
-                      "city street",
-                      "alley",
-                      "public square",
-                      "park",
-                      "garden",
-                      "forest",
-                      "grassland",
-                      "mountains",
-                      "lake",
-                      "river",
-                      "beach",
-                      "open sea",
-                      "desert",
-                      "snowfield",
-                      "countryside",
-                      "field",
-                      "campsite",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "geography": {
                     "type": "string",
-                    "enum": [
-                      "plain",
-                      "hills",
-                      "valley",
-                      "alpine terrain",
-                      "basin",
-                      "coast",
-                      "island",
-                      "canyon",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "season": {
                     "type": "string",
-                    "enum": [
-                      "spring",
-                      "summer",
-                      "fall",
-                      "winter",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "weather": {
                     "type": "string",
-                    "enum": [
-                      "clear skies",
-                      "partly cloudy",
-                      "overcast",
-                      "light rain",
-                      "heavy rain",
-                      "thunderstorm",
-                      "light snow",
-                      "heavy snow",
-                      "foggy",
-                      "blowing dust",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "surface_material": {
                     "type": "string",
-                    "enum": [
-                      "asphalt",
-                      "stone slabs",
-                      "gravel",
-                      "sand",
-                      "grass",
-                      "wooden boardwalk",
-                      "ice and snow",
-                      "dirt",
-                      "rock",
-                      "water surface",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "surface_condition": {
                     "type": "string",
-                    "enum": [
-                      "dry",
-                      "wet",
-                      "standing water",
-                      "snow-covered",
-                      "icy",
-                      "muddy",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "vegetation_density": {
                     "type": "string",
-                    "enum": [
-                      "no vegetation",
-                      "sparse vegetation",
-                      "moderate vegetation",
-                      "dense vegetation",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "vegetation_color": {
                     "type": "string",
-                    "enum": [
-                      "bright green",
-                      "deep green",
-                      "yellow-green",
-                      "golden yellow",
-                      "orange-red",
-                      "brown",
-                      "snow white",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "water_state": {
                     "type": "string",
-                    "enum": [
-                      "calm",
-                      "ripples",
-                      "pronounced waves",
-                      "fast current",
-                      "frozen",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "water_color": {
                     "type": "string",
-                    "enum": [
-                      "turquoise",
-                      "teal",
-                      "dark blue",
-                      "light blue",
-                      "gray-blue",
-                      "brown",
-                      "murky",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "background_density": {
                     "type": "string",
-                    "enum": [
-                      "no buildings",
-                      "scattered buildings",
-                      "moderate building density",
-                      "dense buildings",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "visibility": {
                     "type": "string",
-                    "enum": [
-                      "clear visibility",
-                      "light haze",
-                      "visible fog",
-                      "low visibility",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "wind_level": {
                     "type": "string",
-                    "enum": [
-                      "no wind",
-                      "light breeze",
-                      "moderate wind",
-                      "strong wind",
-                      "very strong wind",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "background_crowd": {
                     "type": "string",
-                    "enum": [
-                      "no people",
-                      "sparse crowd",
-                      "moderate crowd",
-                      "crowded",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_source": {
                     "type": "string",
-                    "enum": [
-                      "natural daylight",
-                      "moonlight",
-                      "light through windows",
-                      "indoor lights",
-                      "streetlights",
-                      "neon lights",
-                      "campfire",
-                      "mixed light sources",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_level": {
                     "type": "string",
-                    "enum": [
-                      "dim",
-                      "somewhat dim",
-                      "moderate light",
-                      "bright",
-                      "very bright",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_temperature": {
                     "type": "string",
-                    "enum": [
-                      "cool-toned",
-                      "neutral-toned",
-                      "warm-toned",
-                      "colored lighting",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "lighting_softness": {
                     "type": "string",
-                    "enum": [
-                      "hard light",
-                      "moderately soft light",
-                      "soft light",
-                      "diffuse light",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "time_of_day": {
                     "type": "string",
-                    "enum": [
-                      "dawn",
-                      "early morning",
-                      "morning",
-                      "noon",
-                      "afternoon",
-                      "dusk",
-                      "night",
-                      "late night",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   },
                   "camera_distance": {
                     "type": "string",
-                    "enum": [
-                      "long shot",
-                      "wide shot",
-                      "medium shot",
-                      "close shot",
-                      "unknown",
-                      "not applicable"
-                    ]
+                    "minLength": 1
                   }
                 },
                 "allOf": [

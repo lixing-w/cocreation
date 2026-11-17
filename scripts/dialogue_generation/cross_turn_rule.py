@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 import random
 
-from scripts.dialogue_generation.asset_variations import CATEGORIES, AssetSpec, validate_attributes
+from scripts.dialogue_generation.asset_variations import CATEGORIES, AssetSpec, validate_attributes, fields
 
 ROLES = ('asset_image', 'asset_video', 'trial_video', 'shot', 'compilation', 'final_export')
 EFFECTS = {'color_mode': ('black_and_white', 'original_colors'),
@@ -293,7 +293,7 @@ class CrossTurnRules:
             aid = self.rng.choice(list(effect[key]))
             field = self.rng.choice(list(effect[key][aid]))
             row = self.p.assets[aid]
-            choices = CATEGORIES[row['kind']]['attributes'][field]['values']
+            choices = fields(row)[field]['values']
             allowed = []
             for value in choices:
                 if value in ('unknown', 'not applicable', effect[key][aid][field]):
@@ -433,8 +433,8 @@ class CrossTurnRules:
 
     def finish(self):
         self.closed = True
-        for rule in list(self.active.values()):
-            self.end(rule, cleanup=True)
+        # Accepted global constraints persist into the final cut. Explicit
+        # user cancellations during the conversation remain prospective.
 
     def decorate(self):
         for row in self.p.media.values():
@@ -463,12 +463,16 @@ class CrossTurnRules:
                 if context not in contexts:
                     contexts.append(context)
             turn['intent']['media_rule_context'] = contexts
+            states=[self.p.media[t]['render_state'] for t in turn['output_media']]
+            rendering={'color_mode':'black_and_white'} if all(s.get('color_mode')=='black_and_white' for s in states) else {}
+            turn['intent']['output_render_state']=rendering
             # Attach the exact operation scope to its request, never an unrelated adoption.
             for previous in reversed(self.p.turns[:index]):
                 if previous['output_media']:
                     break
                 if previous['role'] == 'user' and previous['intent']['action'] in requests:
                     previous['intent']['media_rule_context'] = contexts
+                    previous['intent']['output_render_state'] = rendering
                     break
 
 
@@ -570,10 +574,6 @@ def validate_rule_timeline(plan):
                 raise ValueError('Placeholder description disagrees with its effective rules')
         if turn['output_media']:
             once = {}
-    if pending or once or active or (resolution and resolution['outcome']=='override') or list(records.values()) != plan['rules']:
+    if pending or once or (resolution and resolution['outcome']=='override') or list(records.values()) != plan['rules']:
         raise ValueError('Unfinished rule lifecycle or inconsistent rule history')
-    final = plan['final']
-    tokens = [final['media'], *final['assets'].values(), *(s['media'] for s in final['shots'].values())]
-    if any(render_signature(media[t], plan['target_assets']) for t in tokens):
-        raise ValueError('Final media still carries a canceled exploratory rule')
     return True

@@ -22,7 +22,7 @@ class VDNTests(unittest.TestCase):
         r = VDNH3()('{{artifact:i2}} follows {{artifact:v}} with {{artifact:a}}', refs, dry_run=True)
         self.assertEqual(r['prompt'], '<Picture 2> follows <Video 1> with <Audio 1>')
         self.assertEqual([r['options'][k] for k in ('precision', 'two_pass', 'base_steps', 'refine_steps')],
-                         ['fp8', True, 8, 3])
+                         ['fp8', False, 16, 0])
         media = media_request(r)
         self.assertEqual(media['references'][0]['sound'], True)
         self.assertEqual([v['kind'] for v in media['references']], ['video', 'audio', 'image', 'image'])
@@ -30,7 +30,8 @@ class VDNTests(unittest.TestCase):
                             comfy_root='comfy', model_paths='paths')
         command = generation_command(r, Path('/tmp/job with spaces'), installation)
         self.assertEqual(command[:4], ['python', '-m', 'freevideo_engine', 'generate'])
-        self.assertIn('--two-pass', command)
+        self.assertIn('--no-two-pass', command)
+        self.assertEqual(command[command.index('--base-steps') + 1], '16')
         self.assertEqual(command[command.index('--refine-steps') + 1], '3')
         self.assertEqual(command[command.index('--prompt-file') + 1], '/tmp/job with spaces/prompt.txt')
 
@@ -61,7 +62,7 @@ class VDNTests(unittest.TestCase):
             validate_media(request)
 
     def test_contract_validation_and_imports(self):
-        for kwargs in ({'seconds': float('nan')}, {'width': 256}, {'two_pass': 'yes'}, {'seed': -1}):
+        for kwargs in ({'seconds': float('nan')}, {'width': 192}, {'two_pass': 'yes'}, {'seed': -1}):
             with self.assertRaises(ValueError):
                 VDNH3()('x', dry_run=True, **kwargs)
         for kwargs in ({'attention': 'fa4'}, {'ram_gib': float('inf')}, {'ram_gib': 4}):

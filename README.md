@@ -6,9 +6,11 @@ Multimodal co-creation with evolving intent: synthesizing interleaved creative s
 
 | 接口 | 后端 | 输入 → 输出 |
 |---|---|---|
-| `Qwen()` | Qwen3-VL-8B | 文字、图片、视频 → 文字 |
+| `Qwen()` | Linux 原生可选: Qwen3.6-35B-A3B；Mac: 原有 8B 默认值 | 文字、图片、视频 → 文字 |
 | `Flux()` | FLUX.2-klein-4B | 文字、图片 → PNG |
 | `MiniMaxH3()` | 本地 ComfyUI / MiniMax-H3 pruned FP8 | 文字、图片／视频／音频参考 → 带生成音轨的 MP4 |
+
+服务器端 Qwen3.6-35B-A3B NVFP4、交错 messages/batching、默认关闭 thinking 的共享 vLLM 服务和并发造数据见 [Qwen server guide](docs/qwen_server.md)。Mac 的 Ollama 默认入口保持不变。
 
 CPG、属性来源、素材版本与复杂创作意图由上层维护。封装只执行单次请求，不隐式改写 prompt，不调用官方 Context-IR 或其他云端生成服务。
 
@@ -167,7 +169,7 @@ python3 examples/plan.py
 
 ## VDN-H3 (FreeVideo CLI, FP8)
 
-`VDNH3` adds mixed image/video/audio references with two-pass **8+3** generation.
+`VDNH3` adds mixed image/video/audio references. It defaults to **single-pass 16 steps**; `steps=` changes the actual FreeVideo sampler. Its default request is 4 seconds at 1280×736; the VAE frame grid rounds up internally. Legacy `two_pass=True` uses 8+3 steps.
 It uses an isolated Python 3.12 runtime constrained to **torch 2.10.0+cu128**;
 no ComfyUI web server or automatic cu130 upgrade. See [VDN setup and GPU testing](docs/vdn.md).
 
@@ -226,7 +228,7 @@ python scripts/dialogue_generation/generate.py \
   --output-dir scratch/runs/dialogue-demo --seed 5 --reworks 1
 ```
 
-The default text backend is local Ollama (`qwen3-vl:8b`). `--backend local`
+Linux defaults to Qwen3.6 NVFP4 through vLLM; Mac defaults to local Ollama (`qwen3-vl:30b-a3b-instruct-q4_K_M`). `--backend local`
 reuses the persistent CUDA Qwen adapter with empty media references. Each Qwen
 prompt has exactly three input/output examples, the complete preceding dialogue,
 the fixed speaker persona, and a short draft for the current act. Five user styles

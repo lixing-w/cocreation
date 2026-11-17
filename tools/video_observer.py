@@ -19,10 +19,10 @@ import urllib.request
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.dialogue_generation.asset_variations import CATALOG, CATEGORIES, validate_attributes
+from scripts.dialogue_generation.asset_variations import CATALOG, CATEGORIES, validate_attributes, fields, register_attributes
 from scripts.dialogue_generation.planner import observation as validate_observation
-from tools.dialogue_models import DEFAULT_OLLAMA_MODEL, resolve_model
-from tools.find_video_frame import frame_timestamps, sample_indices, extract_frames
+from tools.dialogue_models import DEFAULT_OLLAMA_MODEL, DEFAULT_BACKEND, resolve_model
+from tools.video_frames import frame_timestamps, sample_indices, extract_frames
 from tools.video_observer_prompts import SYSTEM, inventory_prompt, attributes_prompt, review_prompt
 
 
@@ -33,7 +33,7 @@ def _object(properties):
 def inventory_schema(frame_count, max_assets):
     text = dict(type='string', minLength=1)
     frame = dict(type='integer', minimum=1, maximum=frame_count)
-    asset = _object(dict(id=text, kind=dict(type='string', enum=list(CATEGORIES)), name=text,
+    asset = _object(dict(id=text, kind=dict(type='string', enum=list(CATEGORIES)), name=text, description=text,
                          frame_ids=dict(type='array', minItems=1, maxItems=2,
                                                           uniqueItems=True, items=frame)))
     shot = _object(dict(first_frame=frame, last_frame=frame, description=text,
@@ -44,9 +44,12 @@ def inventory_schema(frame_count, max_assets):
 
 
 def attribute_schema(kind):
-    # Cross-field compatibility is checked by validate_attributes after decoding.
-    return _object({key: dict(type='string', enum=[CATALOG['unknown_value']] + [v for v in spec['values'] if v != CATALOG['unknown_value']])
-                    for key, spec in CATEGORIES[kind]['attributes'].items()})
+    # Prefer catalog choices, but allow the observer to extend an identity's
+    # vocabulary. Python persists these additions in attribute_extensions.
+    props = {key: dict(type='string', minLength=1)
+             for key in CATEGORIES[kind]['attributes']}
+    return dict(type='object', properties=props, required=list(props),
+                additionalProperties=dict(type='string', minLength=1))
 
 
 def review_schema(attributes):
@@ -79,8 +82,8 @@ def validate_inventory(value, frame_count, max_assets):
         raise ValueError('Expected 1–4 shots')
     ids, names = set(), set()
     for asset in assets:
-        _keys(asset, ['id', 'kind', 'name', 'frame_ids'], 'Asset')
-        if not all(_text(asset[k]) for k in ('id', 'kind', 'name')):
+        _keys(asset, ['id', 'kind', 'name', 'description', 'frame_ids'], 'Asset')
+        if not all(_text(asset[k]) for k in ('id', 'kind', 'name', 'description')):
             raise ValueError('Asset id, kind and name must be nonempty strings')
         if asset['id'] in ids or asset['kind'] not in CATEGORIES:
             raise ValueError('Use unique asset ids and a listed asset kind')
@@ -133,6 +136,87 @@ def _save(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n', encoding='utf-8')
 
 
+def _decoder_schema(value):
+    """Leave unsupported uniqueness checks to repair and Python validation."""
+    if isinstance(value, dict):
+        return {key: _decoder_schema(item) for key, item in value.items() if key != 'uniqueItems'}
+    if isinstance(value, list):
+        return [_decoder_schema(item) for item in value]
+    return value
+
+
+def repair_inventory(value, frame_count=None):
+    """Remove repeated references without inventing subjects or frame numbers."""
+    result, repairs = deepcopy(value), []
+    if not isinstance(result, dict):
+        return result, repairs
+    for section, key, expected in (('assets', 'frame_ids', int), ('shots', 'assets', str)):
+        rows = result.get(section)
+        for index, row in enumerate(rows if isinstance(rows, list) else []):
+            items = row.get(key) if isinstance(row, dict) else None
+            if isinstance(items, list) and all(type(item) is expected for item in items):
+                unique = list(dict.fromkeys(items))
+                if unique != items:
+                    repairs.append(dict(path=f'{section}[{index}].{key}', operation='deduplicate',
+                                        before=items, after=unique))
+                    row[key] = unique
+    shots = result.get('shots')
+    assets = result.get('assets')
+    if isinstance(assets, list) and isinstance(shots, list):
+        used = {aid for shot in shots if isinstance(shot, dict) and isinstance(shot.get('assets'), list)
+                for aid in shot['assets'] if isinstance(aid, str)}
+        if used and all(isinstance(asset, dict) and isinstance(asset.get('id'), str) for asset in assets):
+            kept = []
+            for asset in assets:
+                if asset['id'] in used:
+                    kept.append(asset)
+                else:
+                    repairs.append(dict(path='assets', operation='drop_unused_asset', before=asset))
+            result['assets'] = kept
+    if isinstance(shots, list) and shots and frame_count is not None:
+        # A one-sample endpoint omission is repairable; uncertain internal cuts
+        # and larger gaps still need another observation from the model.
+        for shot, key, before, after in ((shots[0], 'first_frame', 2, 1),
+                                        (shots[-1], 'last_frame', frame_count-1, frame_count)):
+            if isinstance(shot, dict) and type(shot.get(key)) is int and shot[key] == before:
+                repairs.append(dict(path='shots.'+key, operation='cover_endpoint_sample', before=before, after=after))
+                shot[key] = after
+    return result, repairs
+
+
+def repair_attributes(asset, value, proposed=None):
+    """Keep supported evidence; use unknown for missing/invalid/conflicting fields."""
+    if not isinstance(value, dict):
+        return value, []
+    category = CATEGORIES[asset['kind']]
+    result, repairs = deepcopy(value), []
+    def replace(key, after, reason):
+        if key not in result or result[key] != after:
+            repairs.append(dict(path=key, operation=reason, before=result.get(key), after=after))
+            result[key] = after
+    old_extensions = deepcopy(asset.get('attribute_extensions', {}))
+    register_attributes(asset, result)
+    if old_extensions != asset.get('attribute_extensions', {}):
+        repairs.append(dict(path='attribute_extensions', operation='accept_attribute_extension',
+            before=old_extensions, after=deepcopy(asset['attribute_extensions'])))
+    for key, spec in fields(asset).items():
+        if key not in result:
+            replace(key, CATALOG['unknown_value'], 'unknown_missing_value')
+        if proposed is not None and result[key] not in (proposed.get(key), CATALOG['unknown_value']):
+            replace(key, CATALOG['unknown_value'], 'unknown_unsupported_review_change')
+    # Changes are monotonic (known -> unknown), so dependent rules terminate.
+    for _ in range(len(result) + 1):
+        count = len(repairs)
+        for rule in category.get('constraints', []):
+            if all(result[key] in values for key, values in rule['if'].items()):
+                for key, values in rule['then'].items():
+                    if result[key] not in values and CATALOG['unknown_value'] in values:
+                        replace(key, CATALOG['unknown_value'], 'unknown_incompatible_value')
+        if len(repairs) == count:
+            break
+    return result, repairs
+
+
 class VideoObserver:
     """Reuse one stateless Qwen transport across assets and videos.
 
@@ -141,11 +225,11 @@ class VideoObserver:
     Qwen, never an injected instance or the Ollama server.
     """
     def __init__(self, *, backend=None, qwen=None, model=None,
-                 base_url='http://127.0.0.1:11434', timeout=600,
-                 max_tokens=4096, context_tokens=32768, seed=0, retries=1):
-        self.backend = backend or ('local' if qwen is not None else 'ollama')
-        if self.backend not in ('ollama', 'local'):
-            raise ValueError('backend must be ollama or local')
+                 base_url=None, timeout=600,
+                 max_tokens=4096, context_tokens=32768, seed=0, retries=1, enable_thinking=False):
+        self.backend = backend or ('local' if qwen is not None else DEFAULT_BACKEND)
+        if self.backend not in ('ollama', 'local', 'vllm'):
+            raise ValueError('backend must be ollama, local or vllm')
         if qwen is not None and (self.backend != 'local' or model is not None):
             raise ValueError('An injected qwen selects its own local model; omit model')
         if (not math.isfinite(timeout) or timeout <= 0 or max_tokens < 128 or context_tokens < 2048
@@ -158,7 +242,11 @@ class VideoObserver:
         elif mode != 'instruct':
             raise ValueError('Use an explicit Instruct model for this observation tool')
         self.qwen, self.owned = qwen, False
-        self.base_url, self.timeout = base_url.rstrip('/'), timeout
+        if type(enable_thinking) is not bool:
+            raise TypeError("enable_thinking must be bool")
+        self.enable_thinking = enable_thinking
+        self.base_url = (base_url or ('http://127.0.0.1:8000' if self.backend == 'vllm' else 'http://127.0.0.1:11434')).rstrip('/')
+        self.timeout = timeout
         self.max_tokens, self.context_tokens = max_tokens, context_tokens
         self.seed, self.retries = seed, retries
 
@@ -175,16 +263,25 @@ class VideoObserver:
         self.close()
 
     def _request(self, prompt, images, schema, directory):
-        if self.backend == 'local':
+        if self.backend in ('local', 'vllm'):
             from cocreation import Qwen, Reference
             if self.qwen is None:
-                self.qwen = Qwen(model_id=self.model)
+                if self.backend == 'vllm':
+                    from cocreation import VLLMQwen
+                    self.qwen = VLLMQwen(model_id=self.model, base_url=self.base_url, timeout=self.timeout, enable_thinking=self.enable_thinking)
+                else:
+                    self.qwen = Qwen(model_id=self.model)
                 self.owned = True
             refs = [Reference(f'frame_{i}', str(path), 'image') for i, path in enumerate(images, 1)]
             media = '\n'.join('{{artifact:' + r.artifact_id + '}}' for r in refs)
+            if self.backend == 'local':
+                # Unlike the serving APIs, native generate has no format/schema
+                # field. Supply the actual contract in its text context.
+                prompt += '\n\nJSON Schema (use integer frame numbers, and return JSON without code fences):\n' + json.dumps(schema)
             result = self.qwen(media + '\n' + prompt, refs, system_prompt=SYSTEM,
                 max_new_tokens=self.max_tokens, max_pixels=768*768, seed=self.seed,
-                output_dir=directory / 'runtime', temperature=0.1, top_p=0.95, top_k=50)
+                output_dir=directory / 'runtime', temperature=0.1, top_p=0.95, top_k=50,
+                response_schema=_decoder_schema(schema))
             return result.get('text', '')
         # Reject clearly undersized contexts before Ollama can truncate a frame
         # sequence. Qwen's Ollama vision encoder reserves at least 1024 tokens
@@ -214,7 +311,7 @@ class VideoObserver:
             raise ValueError('Response hit the token limit; increase --max-tokens')
         return result.get('message', {}).get('content', '')
 
-    def _ask(self, prompt, images, schema, validator, directory):
+    def _ask(self, prompt, images, schema, validator, directory, *, repair=None):
         directory.mkdir()
         _save(directory / 'schema.json', schema)
         _save(directory / 'images.json', [str(p) for p in images])
@@ -224,15 +321,34 @@ class VideoObserver:
             current = directory / f'attempt_{attempt + 1}'
             current.mkdir()
             (current / 'prompt.txt').write_text(prompt, encoding='utf-8')
+            value = None
             try:
                 raw = self._request(prompt, images, schema, current)
                 (current / 'response.txt').write_text(raw, encoding='utf-8')
-                return validator(json.loads(raw))
+                candidate = raw
+                lines = raw.strip().splitlines()
+                if len(lines) >= 3 and lines[0] in ('```json', '```') and lines[-1] == '```':
+                    candidate = '\n'.join(lines[1:-1])
+                value = json.loads(candidate)
+                if repair is not None:
+                    value, repairs = repair(value)
+                    if repairs or candidate != raw:
+                        _save(current/'repairs.json', dict(changes=repairs,
+                            unwrapped_json_fence=candidate != raw, repaired=value))
+                return validator(value)
             except ValueError as exc:
                 (current / 'error.txt').write_text(str(exc), encoding='utf-8')
                 if attempt == self.retries:
                     raise ValueError(f'{directory.name} rejected: {exc}') from exc
-                prompt = original + '\n\nThe previous response was invalid: ' + str(exc) + '\nReturn a complete corrected JSON object. Use unknown for uncertain attributes.'
+                detail = ''
+                if self.backend in ('local', 'vllm') and isinstance(value, dict):
+                    for asset in value.get('assets', []) if isinstance(value.get('assets'), list) else []:
+                        frames = asset.get('frame_ids') if isinstance(asset, dict) else None
+                        if isinstance(frames, list) and all(type(f) is int for f in frames) and len(set(frames)) < len(frames):
+                            detail += (f"\nAsset {asset.get('id')} repeated frame_ids {frames}. "
+                                'If only one representative frame is clearly visible, return that frame once in a one-element list. '
+                                'Otherwise select two different supplied frame numbers; never repeat a frame to fill two slots.')
+                prompt = original + '\n\nThe previous response was invalid: ' + str(exc) + detail + '\nReturn a complete corrected JSON object. Use unknown for uncertain attributes.'
 
     def observe(self, video, output_dir, *, frames=24, max_assets=8, max_side=768, progress=True):
         if (type(frames) is not int or not 2 <= frames <= 128
@@ -250,6 +366,8 @@ class VideoObserver:
         directory.mkdir(parents=True, exist_ok=False)
         source_frames = extract_frames(video, indices, directory / 'source_frames')
         from PIL import Image
+        with Image.open(source_frames[0]) as first_frame:
+            source_width, source_height = first_frame.size
         images = []
         image_dir = directory / 'frames'
         image_dir.mkdir()
@@ -271,7 +389,8 @@ class VideoObserver:
             print(f'Observing {len(images)} frames from {duration:.3f}s of video...', file=sys.stderr, flush=True)
         inventory = self._ask(inventory_prompt(times, max_assets), images,
             inventory_schema(len(images), max_assets),
-            lambda v: validate_inventory(v, len(images), max_assets), directory / 'inventory')
+            lambda v: validate_inventory(v, len(images), max_assets), directory / 'inventory',
+            repair=lambda v: repair_inventory(v, len(images)))
         _save(directory / 'inventory.json', inventory)
         assets = []
         for index, asset in enumerate(inventory['assets'], 1):
@@ -283,13 +402,14 @@ class VideoObserver:
                 return attrs
             attrs = self._ask(attributes_prompt(asset, [times[f-1] for f in frame_ids]),
                 [images[f-1] for f in frame_ids], attribute_schema(asset['kind']), check,
-                directory / f'asset_{index:02d}')
+                directory / f'asset_{index:02d}', repair=lambda v: repair_attributes(asset, v))
             proposed = attrs
             attrs = self._ask(review_prompt(asset, proposed), [images[f-1] for f in frame_ids],
                 review_schema(proposed), lambda v: validate_review(asset, proposed, v),
-                directory / f'asset_{index:02d}_review')
+                directory / f'asset_{index:02d}_review', repair=lambda v: repair_attributes(asset, v, proposed))
             assets.append(dict(id=asset['id'], kind=asset['kind'], name=asset['name'],
-                description=asset['name'], frames=[times[f-1] for f in frame_ids], attributes=attrs))
+                description=asset['description'], frames=[times[f-1] for f in frame_ids], attributes=attrs,
+                **({'attribute_extensions': deepcopy(asset['attribute_extensions'])} if asset.get('attribute_extensions') else {})))
         # The model selects frame numbers. Python supplies paths, version, ids,
         # timestamps, playback order and an empty production-constraint list.
         boundaries = [0.0] + [(times[s['first_frame']-2] + times[s['first_frame']-1]) / 2
@@ -297,7 +417,8 @@ class VideoObserver:
         shots = [dict(id=f'S{i+1}', start=boundaries[i], end=boundaries[i+1],
                       description=s['description'], assets=s['assets'])
                  for i, s in enumerate(inventory['shots'])]
-        result = dict(video=str(video), attribute_schema_version=CATALOG['schema_version'],
+        result = dict(video=str(video), video_metadata=dict(width=source_width, height=source_height, duration=duration),
+                      attribute_schema_version=CATALOG['schema_version'],
                       assets=assets, shots=shots, target_order=[s['id'] for s in shots], constraints=[])
         validate_observation(deepcopy(result))
         _save(directory / 'observation.json', result)
@@ -315,9 +436,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('video', type=Path)
     parser.add_argument('--output-dir', type=Path, required=True, help='New directory; never overwrite an existing run')
-    parser.add_argument('--backend', choices=('ollama', 'local'), default='ollama')
+    parser.add_argument('--enable-thinking', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--backend', choices=('ollama', 'local', 'vllm'), default=DEFAULT_BACKEND)
     parser.add_argument('--model', help=f'Default Ollama model: {DEFAULT_OLLAMA_MODEL}')
-    parser.add_argument('--base-url', default='http://127.0.0.1:11434')
+    parser.add_argument('--base-url', help='Default: localhost:11434 (Ollama), localhost:8000 (vLLM)')
     parser.add_argument('--frames', type=int, default=24)
     parser.add_argument('--max-assets', type=int, default=8)
     parser.add_argument('--max-side', type=int, default=768)
@@ -329,7 +451,7 @@ def main():
     parser.add_argument('--quiet', action='store_true')
     args = parser.parse_args()
     try:
-        result = observe_video(args.video, args.output_dir, backend=args.backend, model=args.model,
+        result = observe_video(args.video, args.output_dir, backend=args.backend, enable_thinking=args.enable_thinking, model=args.model,
             base_url=args.base_url, frames=args.frames, max_assets=args.max_assets, max_side=args.max_side,
             max_tokens=args.max_tokens, context_tokens=args.context_tokens, timeout=args.timeout,
             seed=args.seed, retries=args.retries, progress=not args.quiet)

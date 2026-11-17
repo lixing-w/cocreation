@@ -25,6 +25,7 @@ class Response:
 
 class PromptTests(unittest.TestCase):
     def model(self, **kwargs):
+        kwargs.setdefault("backend", "ollama")
         model = QwenRealizer(**kwargs)
         model.verifier = Mock(return_value=approved())
         return model
@@ -46,10 +47,23 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(positions, sorted(positions))
             self.assertTrue(prompt.endswith("Return only the user's spoken line."))
 
+    def test_formal_shot_category_is_shared_by_writer_and_verifier(self):
+        model = self.model()
+        turn = dict(id=1, role='user', intent=dict(action='request_shot',
+            description='Make the planned shot.', shot_description='Slow push-in on the cup.',
+            media_rule_context=['formal shots: black-and-white rendering']))
+        with patch.object(model, '_request', return_value='Make a formal black-and-white shot with a slow push-in on the cup.') as writer:
+            model(turn, {})
+        self.assertIn('Required media category: formal shots.', writer.call_args.args[0])
+        brief = model.verifier.call_args.args[1]
+        self.assertEqual(brief['intent_facts']['requested_media_role'], 'shot')
+        from tools.dialogue_verifier import build_prompt
+        self.assertIn('Required media category: formal shots.', build_prompt('candidate', brief))
+
     def test_writer_system_and_prompt_reach_wire_without_copying_draft_into_prefill(self):
         prompt = "Speak as the User with this tone:\nCasual.\nDraft content requirements: UNIQUE_FACT."
         with tempfile.TemporaryDirectory() as tmp:
-            model = QwenRealizer(model="qwen3-vl-30b-thinking", output_dir=tmp)
+            model = QwenRealizer(backend="ollama", model="qwen3-vl-30b-thinking", output_dir=tmp)
             with patch("urllib.request.urlopen", return_value=Response()) as request:
                 self.assertEqual(model._request(prompt, 123), "ok")
             body = json.loads(request.call_args.args[0].data)
@@ -76,7 +90,7 @@ class PromptTests(unittest.TestCase):
 
     def test_verifier_uses_same_model_distinct_system_and_structured_report_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
-            model = QwenRealizer(model="qwen3-vl:30b", output_dir=tmp)
+            model = QwenRealizer(backend="ollama", model="qwen3-vl:30b", output_dir=tmp)
             with patch("urllib.request.urlopen", return_value=Response()) as request:
                 self.assertEqual(model._verify_request("Evaluate this candidate.", 124), ("ok", "stop"))
             body = json.loads(request.call_args.args[0].data)
@@ -89,7 +103,7 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(json.loads((Path(tmp)/"verifier/requests.jsonl").read_text()), body)
 
     def test_local_backend_keeps_systems_separate_on_one_shared_adapter(self):
-        model = QwenRealizer(model="qwen3-vl-30b-thinking")
+        model = QwenRealizer(backend="ollama", model="qwen3-vl-30b-thinking")
         model.local = Mock(side_effect=[{"text":"ok"}, {"text":"Review evidence.\n</think>"+json.dumps(approved())}])
         model._request("Writer task", 1)
         model._verify_request("Judge task", 2)
@@ -100,7 +114,7 @@ class PromptTests(unittest.TestCase):
 
     def test_verifier_never_adds_a_separate_report_finalization_call(self):
         for name in ("qwen3-vl-30b-instruct", "qwen3-vl-30b-thinking"):
-            model = QwenRealizer(model=name)
+            model = QwenRealizer(backend="ollama", model=name)
             with patch.object(model, "_generate", return_value=("", "length")) as request:
                 self.assertEqual(model._verify_request("Evaluation data", 12), ("", "length"))
             request.assert_called_once()
@@ -111,7 +125,7 @@ class PromptTests(unittest.TestCase):
             model = QwenRealizer(backend="local")
         model._request("Write", 1)
         model._verify_request("Judge", 2)
-        self.assertEqual(factory.call_args.kwargs["model_id"], "Qwen/Qwen3-VL-30B-A3B-Instruct")
+        self.assertEqual(factory.call_args.kwargs["model_id"], "Qwen/Qwen3.6-35B-A3B")
         self.assertEqual(len(factory.return_value.call_args_list), 2)
         for call in factory.return_value.call_args_list:
             self.assertIsNone(call.kwargs["assistant_prefill"])
@@ -331,15 +345,15 @@ class PromptTests(unittest.TestCase):
 
     def test_clarification_gets_all_re_shown_candidates_without_hidden_answer(self):
         model = self.model(asset_names={"case":"waterproof case", "kayak":"kayak"})
-        turn = dict(id=58, role="assistant", reference_media=["one", "two"], intent=dict(
-                    action="clarify_reworks", asset_ids=["case"],
+        turn = dict(id=58, role="assistant", input_media=["one", "two"], intent=dict(
+                    display_media=["one", "two"], action="clarify_reworks", asset_ids=["case"],
                     description="Ask whether the user means the kayak or waterproof case."))
         media = {"one":dict(kind="image", description="Existing kayak.", asset_ids=["kayak"]),
                  "two":dict(kind="image", description="Existing waterproof case.", asset_ids=["case"])}
         with patch.object(model, "_request", return_value="Did you mean the kayak or the case?"):
             model(turn, media)
         brief = model.verifier.call_args.args[1]
-        self.assertEqual([row["subjects"] for row in brief["shown_reference_media"]], [["kayak"], ["waterproof case"]])
+        self.assertEqual([row["subjects"] for row in brief["shown_media"]], [["kayak"], ["waterproof case"]])
         self.assertNotIn("target_media", json.dumps(brief))
 
     def test_ambiguous_batch_brief_excludes_oracle_targets_and_future_facts(self):

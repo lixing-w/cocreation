@@ -8,3 +8,4 @@ runs/
 .DS_Store
 data/
 scratch
+slurm_logs/

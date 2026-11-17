@@ -1,61 +1,43 @@
-# 对话媒体的实际制作参考规则
+# 正向媒体构造
 
-`inputs` 描述对话里看起来怎样制作媒体；`reference_materials` 描述离线实际怎样构造这些媒体。
-两者使用同一套 `[[image_0001]]` / `[[video_0001]]` 占位符，但表示两张不同的依赖图。
-`inputs` 只允许指向对话里已经出现的媒体；`reference_materials` 可以指向对话后面出现的媒体。
-实际制作按 `reference_materials` 的拓扑顺序执行，不能按对话消息顺序执行。
+原始视频只供 observer 提取剧本、身份描述、属性和镜头动作。专家执行合同不附带原视频、原视频帧或原视频裁剪。最终视频由本条对话中生成的镜头组成。
 
-| 媒体类别 | 实际参考来源 | 规则 |
-| --- | --- | --- |
-| 最终 target video | 无 | `final.media` 是唯一根，`reference_materials=[]`、`reference_depth=0`；其 `source_video` 对应原始输入视频。它也是对话最后一个产生的媒体。 |
-| 与目标设计一致的人物、物体、室内/室外环境参考；图片或短视频候选 | target video | 完整 attributes 与目标一致、且有效画面处理没有改变目标外观的版本，直接从原视频提取、分离或编辑。时间提示沿用 `source_frames`。 |
-| 返工前版本、被否决候选、临时替代设计、多次编辑版本 | 相邻版本 | 把同一资产的 `edit_parent` 关系视为无向编辑图，从目标兼容版本向外定向。因此红色初稿可以引用后来出现的蓝色目标版本，且无需同时重复引用 target video。 |
-| 没有编辑路径连接目标的独立候选 | 该资产最终采用的目标版本 | 在该候选所在编辑分支中，选择与目标 attributes 和有效画面处理差异最少的版本作为起点，再沿已有编辑关系向外派生；相同分数按占位符稳定排序。 |
-| 试拍、任务切换中的测试视频 | 隐藏 target video + 已准备资产 | 优先从覆盖这些资产的对应 target shot 继承动作、构图和关系，只改当前设计或规则差异；没有共同 shot 时才多参考合成。对白不会暴露 target 视频。 |
-| 黑白预览、一次性原色预览 | 原来的资产参考 | `purpose=exploration` 的预览图片从既有参考派生，不改采用版本。 |
-| 正式镜头，以及正式镜头返工前/后的版本 | target video | `purpose=shot` 的镜头具有目标的动作和构图结构（允许设计返工差异），直接提取/编辑目标视频。资产绑定仍由 `bindings` 约束；不依赖对话 `inputs` 重做整段。 |
-| 中间剪辑、重排和替换后的预览 | 组成它的镜头版本 | 组合 `inputs` 中的已有镜头；顺序由 `shot_ids` / `shot_versions` 保留。最终剪辑本身按根处理。 |
+- 首次资产可以没有输入：FLUX 文生图，或 H3 文生视频。
+- 图片修改引用此前生成的图片；版本回退继续引用被选中的历史版本。
+- 首次正式镜头引用已经生成的身份图片；镜头修改引用该镜头的既有视频和相关身份图片。同一身份的图片与视频绑定到同一个 Subject。
+- 取消规则后重新生成资产，仍从该身份的既有素材继续；不重新无条件抽取身份。
+- 图片若依赖此前生成的视频，调用 `tools/find_crop_in_video.py` 找到最佳帧和 bbox，按原分辨率裁剪，然后将裁剪图交给 FLUX。
+- 镜头重排由 ffmpeg 按 `shot_ids` 和 `shot_versions` 确定性拼接。仅额外的显式外观修改需要 H3。
 
-若最后一个正式结果之后还展示了独立预览，计划会增加一次明确的最终视频导出，使最后产生的媒体仍然对应 target video。该导出的对话输入是已有成片，实际来源仍是原始 target。
+`reference_materials` 是输出的完整因果依赖，全部必须早于当前交付轮次。初始资产有多个零入度根，`reference_depth=0`；其余深度为输入的最大深度加一。
 
-## 深度
+`dialogue.json.turns[].input_media` 在生成交付轮次记录真实依赖；澄清时也可记录重新展示的旧媒体。`intent.display_media` 指定需要追加到正文的已有附件。其他历史语义指针保存在 `intent.context_media`，不自动作为聊天附件。`output_media` 是本轮新生成的结果。
 
-除根以外：`reference_depth = 1 + max(所有 reference_materials 的 reference_depth)`。
-这是统计字段，不参与模型提示或限制编辑次数；也不同于对话中的 `edit_depth`。
-例如 target → 蓝包 → 红包 → 试拍分别为 0、1、2、3。
-若试拍使用的设计经历了更多派生，深度可以是 4 或更高。
+`placeholders.json.references` 是有顺序的实际专家插槽，记录类型、label、身份角色和必要的裁剪参数。确定性拼接使用 `clips` 的精确次序；它与无序依赖集合不同。
 
-东京 seed 1 的实际例子（`--reworks 2 --p-compile 0.5`）：
+## 执行
 
-- `video_0008` 是 target，深度 0。
-- 最终 matte 包 `image_0007` 引用 target，深度 1。
-- semi-matte canvas 初稿 `image_0001` 引用 `image_0007`，深度 2。
-- semi-matte wood 变体 `image_0003` 引用 `image_0001`，深度 3。
-- 临时木包试拍 `video_0001` 引用 target `video_0008`、`image_0003` 和人物 `image_0002`，深度 4。
-- 正式街头镜头 `video_0003` 直接引用 target，深度 1。
+先启动 vLLM，完成 observer、generate 和 prompt rewriting。随后在同一 GPU 节点关闭 vLLM：
 
-杯子正好体现反向关系：对话 `image_0009.inputs=[image_0005]`，表示从渐变杯改到纯色杯；
-实际 `image_0005.reference_materials=[image_0009]`，表示先从 target 得到纯色杯，再反向制作渐变杯。
+```bash
+bash scripts/vllm/stop.sh
+python scripts/dialogue_generation/materialize.py /absolute/path/to/dialogue
+```
 
-## 字段与消费方式
+支持 `--dry-run` 检查合同，`--resume` 继续中断的执行。专家按正向依赖执行，切换模型前释放前一个 worker。遇到视频到图片的依赖时，先释放生成模型；裁剪阶段自动临时启动 vLLM（若服务未运行），结束后只关闭由本次裁剪启动的服务，再继续生成。已有裁剪按输入视频哈希、query 和工具版本缓存于 `_inputs/generated_crops/`。
 
-`plan.json` 和 `dialogue.json` 的每个完整 placeholder，以及 `placeholders.json` 的每个简化记录，都保存 `reference_materials` 和 `reference_depth`。
-简化记录中的根还保存 `source_video`，因此仅凭占位符列表也能解析回原始视频。
-prompt writer 只看描述、完整 attributes、source_frames、bindings 与引用的文字说明，不附加多模态材料。
-后处理生成 `generation.dependencies`、实际媒体槽位与 `generation_prompt`；执行阶段才准备相应帧/片段。
-新增的设计绑定可能扩展实际执行依赖；精简清单的 dependencies 若省略，则回退到 reference_materials，完整合约仍在 `generation_plan.json`。
-`placeholders.json` 顶层 prompt 保存原提示词，references 只列实际媒体槽位，不重复规则、属性快照和参考描述。详见 [generation prompts](../../docs/generation_prompts.md)。
+`--prepare-frames` 可提前处理已经生成的视频，不会读取 guide。尚未生成的父视频会被列为 pending，正常 materialize 到达该依赖时再处理。
 
-验证会检查引用存在、没有重复或环路、唯一根、每个深度、最后一个媒体与 target 一致，以及各类别的参考选择规则。
-对话时间线的因果检查继续独立执行；实际反向引用不放宽 `inputs` 的时间顺序约束。
+真实媒体保存到同一 run 的 `media/`，`media_manifest.json` 记录状态和哈希。完成后 `dialogue.md` 使用 HTML 图片与视频标签，原占位符版本保存为 `dialogue.placeholders.md`。
 
-## 跨轮规则对实际画面的影响
+## 资产和提示词
 
-每个输出保留 `base_description`、`render_state`、`applied_rules` 和输入参考的画面状态快照。
-`description` 是实际制作指令，包含生成当时适用的黑白处理、季节或指定资产属性。
-资产还记录 `effective_attributes`；基础 `attributes` 可保留原始设计色，黑白处理属于整幅输出的呈现。
+每个观察资产有简短的 `description`，记录区别性细节。只管理人类直觉上显著的身份；微小装饰或短暂次要道具不单列。其他属性优先选择 catalog 选项；模型新增的字符串字段或值在每个身份的 `attribute_extensions` 中登记，随计划和专家状态传递，不修改全局 catalog。
 
-规则取消不修改已经生成的媒体。需要恢复目标的资产会产生新的参考版本，镜头和拼接随后更新。
-比较是否能直接从 target 提取时，除了基础设计属性，还比较实际会改变目标外观的规则效果；
-与目标属性相同的冗余要求不会造成多余重做。合成新的试拍/镜头时不能继承已失效的参考图处理；
-单纯拼接或导出已有片段也不会自动取消片段已经带有的画面处理。
+图像默认是独立产品照、自然人物图或连贯场景图。`generation_requirements` 仅保留显式 composition / pose。
+
+之前包产品照实验使用的原始 prompt：
+
+> Create one studio product photograph of the exact brown leather shoulder satchel in <Image 1>, standing upright at a natural front three-quarter angle on a neutral background with a soft contact shadow. Preserve the same flap shape, leather panels, buckle straps, shoulder strap and white bird-shaped detail visible on the bag in <Image 1>. The bag identity, construction, proportions and brown leather color must faithfully match <Image 1>. Show one bag alone.
+
+新管线首次创建资产使用相同的独立产品照风格，但不带媒体引用：描述来自 observer 和当轮选定属性；后续修改才引用已生成的资产。FLUX / H3 rewriter 中已加入多组简短例子。H3 编辑同时接收 source_action，明确保留源动作，只将新的身份图绑定到既有 Subject。

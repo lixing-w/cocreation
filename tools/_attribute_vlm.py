@@ -34,7 +34,7 @@ def ask_text(system, task, references, *, qwen=None, output_dir=None,
     try:
         response = model(prompt, refs, system_prompt=system, output_dir=output_dir,
             system_cache_path=(scratch_root()/f'kvcache/{cache_name}/system_prompt.kvcache'
-                               if cache_name and use_system_cache else None),
+                               if cache_name and use_system_cache and getattr(model, "supports_system_cache", True) else None),
             max_new_tokens=max_new_tokens, seed=seed, video_fps=video_fps,
             video_max_frames=video_max_frames, max_pixels=max_pixels)
     finally:

@@ -163,7 +163,7 @@ class ReviewLoopTests(unittest.TestCase):
                      "Use the medium shot; the long shot was too wide.",
                      "Can we get her with short black hair?"]:
             with self.subTest(line=line):
-                model = QwenRealizer()
+                model = QwenRealizer(backend="ollama")
                 model.verifier = Mock(return_value=review())
                 with patch.object(model, "_request", return_value=line) as writer:
                     self.assertEqual(model(self.turn(), {}), line)
@@ -172,7 +172,7 @@ class ReviewLoopTests(unittest.TestCase):
 
     def test_any_nonmaximum_item_sends_critique_and_candidate_to_rewriter(self):
         for criterion in CRITERIA:
-            model = QwenRealizer()
+            model = QwenRealizer(backend="ollama")
             critique = "Restore the shot framing; keep the rest of this request."
             model.verifier = Mock(side_effect=[review(1, criterion, critique), review()])
             with patch.object(model, "_request", side_effect=["First candidate.", "Revised candidate."]) as writer:
@@ -186,7 +186,7 @@ class ReviewLoopTests(unittest.TestCase):
             self.assertNotIn(critique, model.verifier.call_args.args[1])
 
     def test_retry_uses_latest_critique_instead_of_accumulating_stale_diagnoses(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(side_effect=[review(1, critique="FIRST_ISSUE"),
                                           review(1, "grounding", "SECOND_ISSUE"), review()])
         with patch.object(model, "_request", side_effect=["One.", "Two.", "Three."]) as writer:
@@ -195,7 +195,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertNotIn("FIRST_ISSUE", model._writer_control)
 
     def test_failed_verification_exhausts_bounded_rewrites_without_template_fallback(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(return_value=review(0, critique="Wrong production state."))
         with patch.object(model, "_request", return_value="Candidate.") as writer:
             with self.assertRaisesRegex(RuntimeError, "Wrong production state"):
@@ -203,7 +203,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual(writer.call_count, MAX_REWRITE_ATTEMPTS)
 
     def test_format_failures_skip_judge_but_not_semantic_looking_text(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(return_value=review())
         with patch.object(model, "_request", side_effect=["Use [[image_0001]].", "Got it, use this one."]):
             self.assertEqual(model(self.turn(), {}), "Got it, use this one.")
@@ -229,7 +229,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual(model.verifier.call_args.args[1]["media_rule_context"], turn["intent"]["media_rule_context"])
 
     def test_keep_rule_outcome_reaches_writer_and_verifier(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(return_value=review())
         turn = dict(id=39, role="user", intent=dict(action="resolve_rule_conflict",
                     description="Keep the original-color rule and make this trial in color.",
@@ -240,7 +240,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual(model.verifier.call_args.args[1]["intent_facts"]["rule_decision"], "keep")
 
     def test_mixed_language_line_is_rewritten_before_semantic_review(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(return_value=review())
         english = "The rule covers all images and videos—including assets and trials."
         with patch.object(model, "_request", side_effect=[
@@ -259,7 +259,7 @@ class ReviewLoopTests(unittest.TestCase):
                 self.assertTrue(_format_problems("Here is the " + fragment + "."))
 
     def test_token_limit_is_evidence_for_verifier_not_automatic_semantic_rejection(self):
-        model = QwenRealizer(); model.verifier = Mock(return_value=review())
+        model = QwenRealizer(backend="ollama"); model.verifier = Mock(return_value=review())
         def writer(*args):
             model._last_finish_reason = "length"
             return "We'll use this one."
@@ -269,7 +269,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertEqual(model.verifier.call_args.kwargs["generation_finish_reason"], "length")
 
     def test_incomplete_token_limited_line_is_rewritten_from_model_critique(self):
-        model = QwenRealizer()
+        model = QwenRealizer(backend="ollama")
         model.verifier = Mock(side_effect=[review(1, "naturalness", "Finish the interrupted request."), review()])
         responses = iter([("Can we get the", "length"), ("Can we get the wide shot?", "stop")])
         def writer(*args):
@@ -286,7 +286,7 @@ class ReviewLoopTests(unittest.TestCase):
 
     def test_candidate_and_review_are_persisted_together_and_judge_failure_is_explicit(self):
         with tempfile.TemporaryDirectory() as tmp:
-            model = QwenRealizer(output_dir=tmp)
+            model = QwenRealizer(backend="ollama", output_dir=tmp)
             report = review()
             model.verifier = Mock(return_value=report)
             with patch.object(model, "_request", return_value="A candidate."):

@@ -5,7 +5,7 @@ Output video, attribute_schema_version (2), assets, shots, and target_order. Des
 For each asset include id, kind, name, description, frames (one or two timestamps in seconds where it is visible), and attributes.
 Choose kind from person, object, indoor_environment, outdoor_environment. Track people and objects separately.
 Reuse an id for the same person, object, or environment across shots. If the final video has distinct visible versions, use a separate id for each version.
-Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).
+Track only human-intuitive salient identities. Tiny incidental objects and decorative details belong in the owning asset description, not standalone assets. Describe distinctive details concisely. Additional supported attribute fields or values are legal per-identity extensions; prefer the listed choices for existing fields. Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).
 List ids in final playback order in target_order. Every asset must appear in at least one shot.
 For each field of each asset, select exactly one of the listed values.
 Use unknown when the image does not support a judgment. Use not applicable when the field does not make sense for the asset.
@@ -55,7 +55,7 @@ If hair_length is bald, then hair_style must be unknown or not applicable, and h
 | color_lightness | Object color lightness | very dark, somewhat dark, medium lightness, somewhat light, very light, unknown, not applicable |
 | color_saturation | Object color saturation | low saturation, medium saturation, high saturation, unknown, not applicable |
 | size | Object size | miniature, small, medium-sized, large, extra large, unknown, not applicable |
-| shape | Object shape | round, oval, square, rectangular, rounded rectangle, cylindrical, conical, spherical, hemispherical, elongated, streamlined, spindle-shaped, flat, irregular, unknown, not applicable |
+| shape | Object shape | round, oval, triangular, square, rectangular, rounded rectangle, cylindrical, conical, spherical, hemispherical, elongated, streamlined, spindle-shaped, flat, irregular, unknown, not applicable |
 | aspect_ratio | Object proportions | long and narrow, balanced, wide and flat, unknown, not applicable |
 | material | Main material | canvas, cotton fabric, leather, faux leather, nylon, silk, felt, wood, bamboo, ceramic, glass, metal, plastic, rubber, stone, paper, unknown, not applicable |
 | surface_finish | Surface finish | matte, semi-matte, glossy, mirror finish, frosted, brushed, glazed, satin finish, unknown, not applicable |

@@ -11,12 +11,13 @@ from unittest.mock import Mock, patch
 
 from scripts.dialogue_generation.asset_variations import empty_attributes
 from scripts.dialogue_generation.planner import build_plan, validate_plan
-from tools.video_observer import VideoObserver, inventory_schema, validate_inventory, validate_review
+from tools.video_observer import (VideoObserver, inventory_schema, validate_inventory, validate_review,
+                                 repair_inventory, repair_attributes)
 from tools.video_observer_prompts import attributes_prompt
 
 
 def inventory(count=4):
-    return dict(assets=[dict(id='A1', kind='object', name='ball', frame_ids=[1, count])],
+    return dict(assets=[dict(id='A1', kind='object', name='ball', description='A red ball with a visible seam.', frame_ids=[1, count])],
                 shots=[dict(first_frame=1, last_frame=count, description='A ball is visible.', assets=['A1'])])
 
 
@@ -29,7 +30,7 @@ class InventoryTests(unittest.TestCase):
             elif mutation == 'unknown_kind': value['assets'][0]['kind'] = 'animal'
             elif mutation == 'bad_frame': value['assets'][0]['frame_ids'] = [5]
             elif mutation == 'bad_type': value['assets'][0]['frame_ids'] = [True]
-            else: value['assets'].append(dict(id='A2', kind='object', name='extra', frame_ids=[1]))
+            else: value['assets'].append(dict(id='A2', kind='object', name='extra', description='An extra prop.', frame_ids=[1]))
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 validate_inventory(value, 4, 8)
 
@@ -41,7 +42,7 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(start=start), self.assertRaises(ValueError):
                 validate_inventory(value, 4, 8)
         value = inventory()
-        value['assets'].append(dict(id='A2', kind='object', name='cup', frame_ids=[1]))
+        value['assets'].append(dict(id='A2', kind='object', name='cup', description='A ceramic cup.', frame_ids=[1]))
         value['shots'] = [dict(first_frame=1, last_frame=2, description='First.', assets=['A1']),
                           dict(first_frame=3, last_frame=4, description='Second.', assets=['A2'])]
         with self.assertRaisesRegex(ValueError, 'frame_ids'):
@@ -77,7 +78,7 @@ class InventoryTests(unittest.TestCase):
             from PIL import Image
             Image.new('RGB', (128, 128), 'red').save(image)
             response = dict(done_reason='stop', message=dict(content='{}'))
-            observer = VideoObserver()
+            observer = VideoObserver(backend="ollama")
             schema = inventory_schema(1, 8)
             with patch('tools.video_observer.urllib.request.urlopen', return_value=io.BytesIO(json.dumps(response).encode())) as call:
                 self.assertEqual(observer._request('Observe.', [image], schema, directory), '{}')
@@ -96,19 +97,87 @@ class InventoryTests(unittest.TestCase):
             directory = Path(tmp)
             image = directory / 'frame.jpg'
             Image.new('RGB', (128, 128), 'red').save(image)
-            observer = VideoObserver(context_tokens=2048)
+            observer = VideoObserver(backend="ollama", context_tokens=2048)
             with patch('tools.video_observer.urllib.request.urlopen') as call:
                 with self.assertRaisesRegex(ValueError, 'context budget'):
                     observer._request('Observe.', [image], inventory_schema(1, 8), directory)
                 call.assert_not_called()
 
+    def test_decoder_subset_keeps_original_schema_and_repair_deduplicates(self):
+        schema = inventory_schema(4, 8)
+        original = json.loads(json.dumps(schema))
+        qwen = Mock(return_value=dict(text='{}'))
+        with tempfile.TemporaryDirectory() as tmp:
+            observer = VideoObserver(backend='vllm')
+            observer.qwen = qwen
+            self.assertEqual(observer._request('Observe.', [], schema, Path(tmp)), '{}')
+        decoder = qwen.call_args.kwargs['response_schema']
+        self.assertNotIn('uniqueItems', json.dumps(decoder))
+        self.assertIn('uniqueItems', json.dumps(schema))
+        self.assertEqual(schema, original)
+        self.assertEqual(decoder['required'], schema['required'])
+        value = inventory()
+        value['assets'][0]['frame_ids'] = [1, 1]
+        value['shots'][0]['assets'] *= 2
+        repaired, changes = repair_inventory(value)
+        self.assertEqual(repaired['assets'][0]['frame_ids'], [1])
+        self.assertEqual(repaired['shots'][0]['assets'], ['A1'])
+        self.assertEqual(len(changes), 2)
+        validate_inventory(repaired, 4, 8)
+        with self.assertRaisesRegex(ValueError, 'distinct supplied frame numbers'):
+            validate_inventory(value, 4, 8)
+
     def test_instruct_model_and_caller_ownership(self):
         with self.assertRaisesRegex(ValueError, 'Instruct'):
-            VideoObserver(model='qwen3-vl:30b')
+            VideoObserver(backend='ollama', model='qwen3-vl:30b')
         qwen = Mock(model_id='test-model')
         with VideoObserver(qwen=qwen) as observer:
             self.assertEqual(observer.backend, 'local')
         qwen.close.assert_not_called()
+
+    def test_native_fenced_json_is_repaired_once_and_keeps_raw_output(self):
+        bad = inventory()
+        bad['assets'][0]['frame_ids'] = [1, 1]
+        raw_bad = '```json\n' + json.dumps(bad) + '\n```'
+        raw_good = '```json\n' + json.dumps(inventory()) + '\n```'
+        qwen = Mock(model_id='test-model', side_effect=[dict(text=raw_bad), dict(text=raw_good)])
+        with tempfile.TemporaryDirectory() as tmp, VideoObserver(qwen=qwen) as observer:
+            directory = Path(tmp)/'inventory'
+            result = observer._ask('Observe.', [], inventory_schema(4, 8),
+                lambda value: validate_inventory(value, 4, 8), directory, repair=repair_inventory)
+            self.assertEqual(result['assets'][0]['frame_ids'], [1])
+            self.assertEqual((directory/'attempt_1/response.txt').read_text(), raw_bad)
+            self.assertEqual(json.loads((directory/'attempt_1/repairs.json').read_text())['changes'][0]['operation'], 'deduplicate')
+            self.assertIn('"type": "integer"', qwen.call_args_list[0].args[0])
+            self.assertEqual(qwen.call_count, 1)
+
+    def test_attribute_repairs_are_conservative_and_review_cannot_add_evidence(self):
+        asset = inventory()['assets'][0]
+        proposed = {**empty_attributes('object'), 'color': 'white', 'color_saturation': 'high saturation',
+                    'material': 'paper', 'transparency': 'transparent'}
+        repaired, changes = repair_attributes(asset, proposed)
+        self.assertEqual(repaired['color'], 'white')
+        self.assertEqual(repaired['color_saturation'], 'unknown')
+        self.assertEqual(repaired['material'], 'unknown')
+        self.assertTrue(changes)
+        from scripts.dialogue_generation.asset_variations import validate_attributes
+        validate_attributes(asset, repaired)
+        review, _ = repair_attributes(asset, {**repaired, 'color':'red'}, repaired)
+        self.assertEqual(review['color'], 'unknown')
+        validate_review(asset, repaired, review)
+
+    def test_single_missing_endpoint_is_repaired_but_internal_gaps_still_fail(self):
+        value = inventory()
+        value['shots'][0]['last_frame'] = 3
+        repaired, changes = repair_inventory(value, 4)
+        validate_inventory(repaired, 4, 8)
+        self.assertEqual(value['shots'][0]['last_frame'], 3)
+        self.assertEqual(changes[0]['operation'], 'cover_endpoint_sample')
+        value['shots'] = [dict(first_frame=1,last_frame=1,description='First.',assets=['A1']),
+                          dict(first_frame=3,last_frame=4,description='Second.',assets=['A1'])]
+        repaired, _ = repair_inventory(value, 4)
+        with self.assertRaisesRegex(ValueError,'gaps'):
+            validate_inventory(repaired,4,8)
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'Requires ffmpeg and ffprobe')
@@ -123,20 +192,20 @@ class VideoPipelineTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_decoded_frame_times_retries_and_downstream_plan(self):
+    def test_decoded_frame_times_repairs_and_downstream_plan(self):
         attrs = {**empty_attributes('object'), 'color': 'red', 'color_saturation': 'high saturation'}
         bad = {**attrs, 'color': 'invented red'}
-        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), bad, attrs, attrs)])
+        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), bad, attrs)])
         out = self.root / 'result'
         with VideoObserver(qwen=qwen) as observer:
             result = observer.observe(self.video, out, frames=4, progress=False)
             self.assertEqual(observer.qwen, qwen)
         qwen.close.assert_not_called()
-        self.assertEqual(qwen.call_count, 4)
-        self.assertIn('previous response was invalid', qwen.call_args_list[2].args[0])
+        self.assertEqual(qwen.call_count, 3)
+        self.assertTrue((out/'asset_01/attempt_1/repairs.json').exists())
         self.assertEqual(result['constraints'], [])
         self.assertEqual(result['attribute_schema_version'], 2)
-        self.assertEqual(result['assets'][0]['attributes'], attrs)
+        self.assertEqual(result['assets'][0]['attributes'], {**attrs, 'color':'unknown'})
         self.assertEqual(result['assets'][0]['frames'], [0.0, 0.875])
         self.assertEqual(result['shots'][0]['start'], 0.0)
         self.assertEqual(result['shots'][0]['end'], 1.0)
@@ -145,18 +214,25 @@ class VideoPipelineTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             VideoObserver(qwen=qwen).observe(self.video, out, frames=4, progress=False)
 
-    def test_invalid_catalog_and_compatibility_never_publish_observation(self):
+    def test_missing_extra_and_incompatible_attributes_are_repaired(self):
         for mode in ('missing', 'extra', 'incompatible'):
             attrs = empty_attributes('object')
             if mode == 'missing': attrs.pop('color')
             elif mode == 'extra': attrs['invented'] = 'value'
             else: attrs.update(material='wood', transparency='transparent')
-            qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), attrs)])
+            qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), attrs, attrs)])
             out = self.root / mode
-            with self.subTest(mode=mode), self.assertRaises(ValueError):
+            with self.subTest(mode=mode):
                 with VideoObserver(qwen=qwen, retries=0) as observer:
-                    observer.observe(self.video, out, frames=4, progress=False)
-            self.assertFalse((out / 'observation.json').exists())
+                    result = observer.observe(self.video, out, frames=4, progress=False)
+            self.assertTrue((out / 'observation.json').exists())
+            self.assertTrue((out / 'asset_01/attempt_1/repairs.json').exists())
+            if mode == 'extra':
+                self.assertEqual(result['assets'][0]['attributes']['invented'], 'value')
+                self.assertIn('invented', result['assets'][0]['attribute_extensions'])
+                self.assertEqual(result['assets'][0]['description'],'A red ball with a visible seam.')
+            else:
+                self.assertNotIn('invented', result['assets'][0]['attributes'])
 
     def test_shot_boundaries_are_bounded_and_adjacent(self):
         value = inventory()
