@@ -10,7 +10,20 @@ import tempfile
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.video_frames import frame_timestamps, sample_indices, extract_frames
+from tools.video_frames import frame_timestamps, rate_indices, sample_indices, extract_frames
+
+
+FRAME_SELECTION_SYSTEM = (
+    'Choose the single best frame showing the supplied target identity. '
+    'Prefer the clearest, largest, least occluded complete view. Match the target identity rather than nearby objects. '
+    'The supplied images are numbered from 0 in order. Always choose the best available frame. '
+    'Return only JSON {"index": N}.'
+)
+CROP_LOCALIZATION_SYSTEM = (
+    'Locate the supplied target identity in the image. Output one tight bounding box using JSON format: '
+    '{"bbox_2d": [left, top, right, bottom]}. Coordinates are normalized to 0..1000 '
+    'relative to the entire square image. Include the complete main subject. Always return the best available box.'
+)
 
 
 def _json(text):
@@ -23,7 +36,7 @@ def _json(text):
 def find_crop_in_video(video_path, description, *, qwen=None, output_dir=None,
                        crop_output=None, frame_output=None, video_fps=4.,
                        coarse_frames=32, refine_frames=16, batch_frames=16,
-                       max_side=768, hint_timestamps=None):
+                       max_side=768, hint_timestamps=None, fixed_rate=False):
     """Rank EVERY sample batch, compare winners globally, refine, then locate.
 
     This is best-match retrieval for a planner-provided identity, not a presence
@@ -53,9 +66,12 @@ def find_crop_in_video(video_path, description, *, qwen=None, output_dir=None,
     hints = list(hint_timestamps or [])
     if any(type(t) not in (int,float) or not math.isfinite(t) or not 0 <= t <= timestamps[-1]+.1 for t in hints):
         raise ValueError('Invalid hint timestamp')
-    count = min(len(timestamps), max(coarse_frames, math.ceil(timestamps[-1]*video_fps)+1))
-    coarse = set(sample_indices(timestamps, max(2,count)))
-    coarse.update(min(range(len(timestamps)),key=lambda i:abs(timestamps[i]-t)) for t in hints)
+    if fixed_rate:
+        coarse = rate_indices(timestamps, video_fps)
+    else:
+        count = min(len(timestamps), max(coarse_frames, math.ceil(timestamps[-1]*video_fps)+1))
+        coarse = set(sample_indices(timestamps, max(2,count)))
+        coarse.update(min(range(len(timestamps)),key=lambda i:abs(timestamps[i]-t)) for t in hints)
     images, rounds = {}, []
     model = qwen
     owned = model is None
@@ -80,13 +96,11 @@ def find_crop_in_video(video_path, description, *, qwen=None, output_dir=None,
             return indices[0]
         candidates(indices)
         refs = [Reference(f'candidate_{i}', images[index], 'image') for i,index in enumerate(indices)]
-        prompt = ('Choose the single best frame showing this identity: '+description+
-            '. Prefer the clearest, largest, least occluded complete view; match its identity, not nearby objects. '
-            'The supplied images are numbered from 0 in order. Always choose the best available frame. '
-            'Return only JSON {"index": N}.')
+        prompt = 'Target identity: ' + json.dumps(description, ensure_ascii=False)
         schema = dict(type='object',properties=dict(index=dict(type='integer',minimum=0,maximum=len(indices)-1)),
             required=['index'],additionalProperties=False)
-        response = model(prompt,refs,max_new_tokens=64,temperature=.1,response_schema=schema,max_pixels=max_side*max_side)
+        response = model(prompt,refs,system_prompt=FRAME_SELECTION_SYSTEM,max_new_tokens=64,
+                         temperature=.1,response_schema=schema,max_pixels=max_side*max_side)
         selected = _json(response['text'])['index']
         if type(selected) is not int or not 0 <= selected < len(indices):
             raise ValueError('Invalid selected frame index')
@@ -100,12 +114,13 @@ def find_crop_in_video(video_path, description, *, qwen=None, output_dir=None,
         return choose(values,stage+'-global')
 
     try:
-        anchor = tournament(coarse,'coarse')
-        radius = max(1/video_fps,.1)
-        lower = max(0,bisect.bisect_left(timestamps,timestamps[anchor]-radius))
-        upper = min(len(timestamps)-1,bisect.bisect_right(timestamps,timestamps[anchor]+radius)-1)
-        fine = set(sample_indices(timestamps,refine_frames,lower,upper)) | {anchor}
-        selected = tournament(fine,'refine')
+        selected = tournament(coarse, 'fixed_rate' if fixed_rate else 'coarse')
+        if not fixed_rate:
+            radius = max(1/video_fps,.1)
+            lower = max(0,bisect.bisect_left(timestamps,timestamps[selected]-radius))
+            upper = min(len(timestamps)-1,bisect.bisect_right(timestamps,timestamps[selected]+radius)-1)
+            fine = set(sample_indices(timestamps,refine_frames,lower,upper)) | {selected}
+            selected = tournament(fine,'refine')
         frame = extract_frames(source,[selected],directory/'selected_source')[0]
         with Image.open(frame) as original:
             width,height = original.size
@@ -118,13 +133,11 @@ def find_crop_in_video(video_path, description, *, qwen=None, output_dir=None,
             locator = description
             if any(word in description.lower() for word in ('bag', 'satchel', 'purse', 'backpack')):
                 locator += ', specifically the main bag body and flap, excluding the wearer and long shoulder strap'
-            prompt = ('Locate '+locator+'. Output one tight bounding box using JSON format: '
-                '{"bbox_2d": [left, top, right, bottom]}. Coordinates are normalized to 0..1000 '
-                'relative to the entire square image. Include the complete main subject. Always return the best available box.')
+            prompt = 'Target identity: ' + json.dumps(locator, ensure_ascii=False)
             box = None
             for attempt in range(3):
-                response = model(prompt,[Reference('selected',view,'image')],max_new_tokens=128,
-                    temperature=.1,response_schema=schema,seed=attempt,max_pixels=1024*1024)
+                response = model(prompt,[Reference('selected',view,'image')],system_prompt=CROP_LOCALIZATION_SYSTEM,
+                    max_new_tokens=128,temperature=.1,response_schema=schema,seed=attempt,max_pixels=1024*1024)
                 box = _json(response['text']).get('bbox_2d')
                 if (isinstance(box,list) and len(box)==4 and all(type(v) is int and 0<=v<=1000 for v in box)
                         and box[0]<box[2] and box[1]<box[3]):

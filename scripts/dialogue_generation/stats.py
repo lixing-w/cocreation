@@ -8,9 +8,25 @@ def histogram(values):
 
 
 def generation_snapshot(realizer):
-    return dict(getattr(realizer, "metrics", {}),
-                rewrite_attempts=getattr(realizer, "rewrite_attempts", 0),
-                verifier_attempts=getattr(getattr(realizer, "verifier", None), "attempt_count", 0))
+    return deepcopy(dict(getattr(realizer, "metrics", {}),
+                         rewrite_attempts=getattr(realizer, "rewrite_attempts", 0),
+                         verifier_attempts=getattr(getattr(realizer, "verifier", None), "attempt_count", 0)))
+
+
+def accumulate_generation(previous, current, baseline):
+    """Add this run's numeric deltas, including nested per-stage counters.
+
+    A reused realizer can already have counters when a run starts. Subtract
+    that snapshot at every numeric leaf; saved metadata is not a counter.
+    """
+    result = {}
+    for key in previous.keys() | current.keys():
+        values = [row.get(key, 0) for row in (previous, current, baseline)]
+        if any(isinstance(value, dict) for value in values):
+            result[key] = accumulate_generation(*(value if isinstance(value, dict) else {} for value in values))
+        elif all(type(value) in (int, float) for value in values):
+            result[key] = values[0] + values[1] - values[2]
+    return result
 
 
 def collect_stats(result, observation, *, elapsed_seconds, generation):
@@ -23,7 +39,7 @@ def collect_stats(result, observation, *, elapsed_seconds, generation):
     logical = {a for m in media for a in m["asset_ids"]}
     selections = [s for s in result["selections"] if s["after_message"] <= len(turns)]
     scopes = [t["intent"]["scope"] for t in users if "scope" in t["intent"]]
-    versions = Counter(a for m in media if m["purpose"] == "asset" for a in m["asset_ids"])
+    versions = Counter(a for m in media if m["operation"] == 'create_reference' for a in m["asset_ids"])
     generation = deepcopy(generation)
     return dict(
         schema_version=1,
@@ -43,14 +59,14 @@ def collect_stats(result, observation, *, elapsed_seconds, generation):
         turns_by_action=histogram(t["intent"]["action"] for t in turns),
         logical_assets_by_type=histogram(a["kind"] for a in observation["assets"] if a["id"] in logical),
         media_by_kind=histogram(m["kind"] for m in media),
-        media_by_purpose=histogram(m["purpose"] for m in media),
+        media_by_operation=histogram(m["operation"] for m in media),
         reference_depth_counts=histogram(m["reference_depth"] for m in media),
         max_reference_depth=max((m["reference_depth"] for m in media), default=0),
         reference_edges=sum(len(m["reference_materials"]) for m in media),
         reference_versions_per_asset=dict(sorted(versions.items())),
         number_of_target_shots=len(result["target_order"]),
-        number_of_shot_versions=sum(m["purpose"] == "shot" for m in media),
-        number_of_trial_clips=sum(m["purpose"] == "exploration" and m["kind"] == "video" for m in media),
+        number_of_shot_versions=sum(m["operation"] == 'generate_clip' for m in media),
+        number_of_generated_videos=sum(m['kind'] == 'video' and m['operation'] in ('create_reference', 'generate', 'generate_clip') for m in media),
         number_of_visual_edits=sum(bool(m.get("edit_parent")) for m in media),
         edited_attribute_counts=histogram(m["variation"]["type"] for m in media if m.get("variation")),
         requested_scope_counts=histogram(scopes),

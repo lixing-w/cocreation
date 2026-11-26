@@ -2,7 +2,7 @@
 from copy import deepcopy
 
 
-def resolve_requirements(kind, purpose, asset_kinds, *, parent=None, requested=None):
+def resolve_requirements(kind, operation, asset_kinds, *, parent=None, requested=None):
     result = deepcopy(parent) if parent is not None else {}
     requested = {} if requested is None else requested
     if not isinstance(requested, dict) or set(requested) - {'composition', 'pose'}:
@@ -18,7 +18,7 @@ def assign_generation_requirements(plan):
     media = {}
     for row in plan['placeholders']:
         parent = media.get(row.get('edit_parent'), {})
-        row['generation_requirements'] = resolve_requirements(row['kind'], row['purpose'],
+        row['generation_requirements'] = resolve_requirements(row['kind'], row['operation'],
             [plan['target_assets'][aid]['kind'] for aid in row['asset_ids']],
             parent=parent.get('generation_requirements') if row['kind'] == 'image' and parent.get('kind') == 'image' else None,
             requested=row.get('generation_requirements'))

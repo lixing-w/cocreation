@@ -61,7 +61,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(turn["intent"]["reference_policy"], "clear")
 
     def test_only_planned_reference_ambiguity_gets_relaxed_policy(self):
-        result = build_plan(self.source, seed=1, reworks=2)
+        result = build_plan(self.source, seed=4, reworks=2)
         vague = next(t for t in result["turns"] if t["intent"]["action"] == "ambiguous_reference")
         clarify = result["turns"][vague["id"]]
         self.assertEqual(vague["intent"]["reference_policy"], "ambiguous_subject")
@@ -88,7 +88,7 @@ class PlanningTests(unittest.TestCase):
             result = build_plan(source, seed=6, reworks=1, p_compile=0)
             self.assertEqual(result["final"]["order"], source["target_order"])
             if n == 1:
-                self.assertFalse(any(m["purpose"] == "compilation" for m in result["placeholders"]))
+                self.assertFalse(any(m["operation"] == 'assemble' for m in result["placeholders"]))
 
     def test_all_module_subsets_finish_even_cross_only(self):
         for module in MODULES:
@@ -116,9 +116,9 @@ class PlanningTests(unittest.TestCase):
 
     def test_unaffected_shot_not_regenerated_and_final_compilation_is_current(self):
         result = build_plan(self.source, seed=5, reworks=1, p_compile=1, cross_turn_rules=False)
-        cup_shots = [m for m in result["placeholders"] if m["purpose"] == "shot" and m["shot_ids"] == ["S2"]]
+        cup_shots = [m for m in result["placeholders"] if m["operation"] == 'generate_clip' and m["shot_ids"] == ["S2"]]
         self.assertEqual(len(cup_shots), 1)
-        bag_shots = [m for m in result["placeholders"] if m["purpose"] == "shot" and "bag" in m["bindings"]]
+        bag_shots = [m for m in result["placeholders"] if m["operation"] == 'generate_clip' and "bag" in m["bindings"]]
         self.assertTrue(any(not m["goal_match"] for m in bag_shots))
         self.assertTrue(any(m["goal_match"] for m in bag_shots))
         table = {m["placeholder"]: m for m in result["placeholders"]}
@@ -137,11 +137,14 @@ class PlanningTests(unittest.TestCase):
             validate_plan(result)
 
     def test_ambiguous_reference_does_not_attach_the_hidden_answer(self):
-        result = build_plan(self.source, seed=1, reworks=2, p_compile=1)
-        vague = [t for t in result["turns"] if t["intent"]["action"] == "ambiguous_reference"]
+        planner = Planner(self.source, seed=4, reworks=0, cross_turn_rules=False)
+        planner.single('bag', 'direct'); planner.single('woman', 'direct')
+        planner.ambiguity('bag', planner.ready['bag'])
+        vague = [t for t in planner.turns if t["intent"]["action"] == "ambiguous_reference"]
         self.assertTrue(vague)
         self.assertTrue(all(not t["input_media"] for t in vague))
         self.assertTrue(all(t["intent"]["target_media"] for t in vague))
+        result = build_plan(self.source, seed=4, reworks=2, p_compile=1)
         questions = [t for t in result["turns"] if t["intent"]["action"] == "clarify_shot_number"]
         self.assertTrue(questions)
         for turn in questions:
@@ -152,13 +155,13 @@ class PlanningTests(unittest.TestCase):
             current = table[turn["intent"].get("display_media", [])[0]]["shot_ids"]
             original = []
             for media in result["placeholders"]:
-                if media["purpose"] == "shot":
+                if media["operation"] == 'generate_clip':
                     shot = media["shot_ids"][0]
                     if shot in current and shot not in original:
                         original.append(shot)
             position = int(re.search(r"shot (\d+)", description).group(1)) - 1
             self.assertNotEqual(current[position], original[position])
-            source = {s["id"]: s for s in self.source["shots"]}
+            source = {s["id"]: s for s in observation(self.source)["shots"]}
             self.assertIn(source[current[position]]["description"], description)
             self.assertIn(source[original[position]]["description"], description)
 
@@ -208,7 +211,8 @@ class PlanningTests(unittest.TestCase):
                 if "variation" not in m:
                     continue
                 kind = m["variation"]["type"]
-                variations.add(kind)
+                if m["variation"]["phase"] in ("before", "preview"):
+                    variations.add(kind)
                 if kind == "size":
                     row = next(a for a in self.source["assets"] if a["id"] == m["asset_ids"][0])
                     self.assertTrue(row["kind"] == "object" or row["id"] in ("bag", "cup"))
@@ -240,7 +244,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(asset_type(dict(id="x", kind="object", description="X")), "object")
 
     def test_shot_requests_and_conflict_resolution_have_natural_drafts(self):
-        result = build_plan(self.source, seed=62, p_compile=1)
+        result = build_plan(self.source, seed=6, p_compile=1)
         requests = [t for t in result["turns"] if t["intent"]["action"] == "request_shot"]
         self.assertTrue(requests)
         for turn in requests:
@@ -251,23 +255,30 @@ class PlanningTests(unittest.TestCase):
         self.assertRegex(conflict["intent"]["description"], spec["reason"])
         reply = next(t for t in result["turns"] if t["intent"]["action"] == "resolve_conflict")
         self.assertEqual(reply["intent"]["conflict_type"], conflict["intent"]["conflict_type"])
-        self.assertEqual(reply["intent"]["shot_description"], self.source["shots"][0]["description"])
+        self.assertEqual(reply["intent"]["shot_description"], observation(self.source)["shots"][0]["description"])
 
     def test_numbering_is_a_concrete_operation_and_executes_after_clarification(self):
         result = build_plan(self.source, seed=296, p_compile=1)
         start = next(t for t in result["turns"] if t["intent"]["action"] == "ambiguous_shot_number")
         self.assertIn(start["intent"]["numbering_operation"]["type"], ("swap", "move_after"))
+        self.assertTrue(start["intent"]["description"].endswith("Keep your reference deliberately ambiguous."))
         question, resolution, delivery = result["turns"][start["id"]:start["id"] + 3]
         self.assertEqual(question["intent"]["action"], "clarify_shot_number")
         self.assertEqual(resolution["intent"]["numbering_basis"], "current")
+        self.assertNotIn("deliberately ambiguous", resolution["intent"]["description"])
         media = {m["placeholder"]: m for m in result["placeholders"]}
         before = media[question["intent"].get("display_media", [])[0]]["shot_ids"]
         self.assertEqual(media[delivery["output_media"][0]]["shot_ids"],
                          apply_numbering(before, start["intent"]["numbering_operation"]))
 
     def test_correction_records_shown_subject_separately_from_target_object(self):
-        result = build_plan(self.source, seed=62, p_compile=1)
-        t = next(t for t in result["turns"] if t["intent"]["action"] == "correct_reference")
+        # Test correction bookkeeping directly; compound requests can legitimately
+        # resolve this seed's reference and scope together instead.
+        planner = Planner(self.source, seed=6, reworks=0, cross_turn_rules=False)
+        for asset in planner.assets:
+            planner.single(asset, 'direct')
+        planner.ambiguity('bag', planner.ready['bag'])
+        t = next(t for t in planner.turns if t['intent']['action'] == 'correct_reference')
         correction = t["intent"]["reference_correction"]
         self.assertIn(correction["shown_name"], {a["name"] for a in self.source["assets"]})
         self.assertEqual(correction["target_name"], "tote bag")
@@ -286,7 +297,7 @@ class PlanningTests(unittest.TestCase):
         current = table[question["intent"].get("display_media", [])[0]]["shot_ids"]
         original = []
         for media in result["placeholders"]:
-            if media["purpose"] == "shot":
+            if media["operation"] == 'generate_clip':
                 shot = media["shot_ids"][0]
                 if shot not in original:
                     original.append(shot)
@@ -304,15 +315,15 @@ class PlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "before numbering clarification"):
             validate_plan(result)
 
-    def test_tokyo_rollback_surfaces_its_sampled_framing_change(self):
+    def test_tokyo_rollback_surfaces_its_sampled_weather_change(self):
         from scripts.dialogue_generation.asset_variations import empty_attributes
         source = deepcopy(self.source)
         source['constraints'] = []
         for asset in source['assets']:
-            distance = asset['attributes'].get('camera_distance')
+            weather = asset['attributes'].get('weather')
             asset['attributes'] = empty_attributes(asset['kind'])
             if asset['id'] == 'street':
-                asset['attributes']['camera_distance'] = distance
+                asset['attributes']['weather'] = weather
         from scripts.dialogue_generation.planner import Planner
         planner = Planner(source, seed=197, reworks=0, p_compile=1, cross_turn_rules=False)
         planner.cross('street', 'woman', 'temporary_rollback')
@@ -331,7 +342,7 @@ class PlanningTests(unittest.TestCase):
         variant = table[delivery["output_media"][0]]
         self.assertEqual(variant["edit_parent"], base)
         self.assertEqual(variant["attribute_changes"],
-                         {"camera_distance": {"before": values[0], "after": values[1]}})
+                         {"weather": {"before": values[0], "after": values[1]}})
         self.assertIn(base, rollback["intent"]["context_media"])
         for unchanged in ("clear skies", "somewhat dim", "shops line both sides"):
             self.assertNotIn(unchanged, request["intent"]["description"].lower())
@@ -434,6 +445,53 @@ class RealizationTests(unittest.TestCase):
             result = run(EXAMPLE, output, realizer=continued, seed=2, resume=True, progress=False)
             self.assertEqual(previous_lengths, list(range(2, len(result["turns"]))))
             self.assertEqual(result["realization"]["status"], "complete")
+
+    def test_resume_preserves_a_plan_from_the_previous_rule_sampler(self):
+        source = json.loads(EXAMPLE.read_text())
+        source['constraints'] = []
+
+        def realize(turn, media, previous, *, seed):
+            return "A test line."
+
+        def legacy_plan(observation, **options):
+            return build_plan(observation, legacy_rule_sampling=True, **options)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / 'observation.json'
+            output = Path(tmp) / 'result'
+            input_path.write_text(json.dumps(source))
+            options = dict(realizer=realize, seed=1, progress=False)
+            with patch('scripts.dialogue_generation.generate.build_plan', side_effect=legacy_plan):
+                initial = run(input_path, output, **options)
+            self.assertEqual(initial['turns'][0]['intent']['action'], 'set_cross_turn_rule')
+            self.assertNotEqual(build_plan(source, seed=1)['turns'][0]['intent']['action'],
+                                'set_cross_turn_rule')
+            resumed = run(input_path, output, resume=True, **options)
+            self.assertEqual(initial['turns'], resumed['turns'])
+
+    def test_resume_preserves_legacy_launch_rule_from_checkpoint(self):
+        observation = json.loads(EXAMPLE.read_text())
+        observation['constraints'] = []
+        legacy_rule = dict(scope='global', selector={}, effect=dict(aspect_ratio='portrait'), text='')
+
+        def realize(turn, media, previous, *, seed):
+            return "A test line."
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "source.json"
+            legacy = Path(tmp) / "legacy.json"
+            output = Path(tmp) / "result"
+            original.write_text(json.dumps(observation))
+            legacy.write_text(json.dumps({**observation, 'constraints': [legacy_rule]}))
+            options = dict(realizer=realize, seed=2, progress=False, cross_turn_rules=False)
+            started = run(legacy, output, **options)
+            resumed = run(original, output, resume=True, **options)
+            self.assertEqual(resumed['rules'], started['rules'])
+            self.assertEqual(resumed['rules'][0]['effect'], legacy_rule['effect'])
+            observation['video'] = 'different-source.mp4'
+            original.write_text(json.dumps(observation))
+            with self.assertRaisesRegex(ValueError, "same observation"):
+                run(original, output, resume=True, **options)
 
 
 if __name__ == "__main__":

@@ -19,8 +19,8 @@ class CropTests(unittest.TestCase):
             requests=[]
             class Model:
                 def __call__(self,prompt,refs,**options):
-                    requests.append((prompt,refs))
-                    if 'bounding box' in prompt:
+                    requests.append((prompt,refs,options['system_prompt']))
+                    if 'bbox_2d' in options['response_schema']['properties']:
                         return dict(text=json.dumps(dict(bbox_2d=[250,250,750,750])))
                     values=[int(Path(ref.path).stem.split('-')[-1]) for ref in refs]
                     return dict(text=json.dumps(dict(index=values.index(max(values)))))
@@ -36,7 +36,10 @@ class CropTests(unittest.TestCase):
             self.assertGreaterEqual(len([r for r in result['rounds'] if r['stage']=='coarse']),2)
             global_round=next(r for r in result['rounds'] if r['stage']=='coarse-global')
             self.assertEqual(global_round['selected_source_index'],15)
-            self.assertIn('Always choose the best available',requests[0][0])
+            self.assertIn('Always choose the best available',requests[0][2])
+            self.assertNotIn('red subject',requests[0][2])
+            self.assertIn('red subject',requests[0][0])
+            self.assertIn('Coordinates are normalized',requests[-1][2])
             with self.assertRaises(FileExistsError):
                 find_crop_in_video(video,'red subject',qwen=Model(),crop_output=root/'crop.png')
 

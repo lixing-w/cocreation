@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from scripts.dialogue_generation.asset_variations import (
     CATALOG, CATEGORIES, POOLS, UNOBSERVED, DISABLED_VARIATIONS, VISIBLE_FIELDS, AssetSpec, alternatives, alternate,
-    empty_attributes, validate_attributes, relative_variation, COMPARATIVES,
+    empty_attributes, validate_attributes, relative_variation, COMPARATIVES, register_attributes,
 )
 from scripts.dialogue_generation.observation_contract import input_schema, observation_prompt
 from scripts.dialogue_generation.planner import observation, build_plan, validate_plan
@@ -86,7 +86,7 @@ class AttributeTests(unittest.TestCase):
                 self.assertEqual(abs(positions.index(earlier.attributes[field]) - positions.index(row['attributes'][field])), 1)
                 self.assertTrue(request and question)
 
-    def test_incompatible_values_and_shape_family_changes_are_filtered(self):
+    def test_incompatible_values_and_forbidden_variation_fields_are_filtered(self):
         row = deepcopy(self.source['assets'][-1])
         row['attributes']['transparency'] = 'transparent'
         with self.assertRaisesRegex(ValueError, 'Incompatible'):
@@ -94,11 +94,51 @@ class AttributeTests(unittest.TestCase):
         row['attributes'].update(material='glass', surface_finish='glossy')
         choices = alternatives(row)
         self.assertNotIn('wood', choices.get('material', []))
-        self.assertTrue({'triangular', 'square', 'conical'} <= set(choices['shape']))
+        self.assertNotIn('shape', choices)
+        self.assertNotIn('texture', choices)
         person = deepcopy(self.source['assets'][0])
         person['attributes']['hair_length'] = 'bald'
         with self.assertRaisesRegex(ValueError, 'Incompatible'):
             validate_attributes(person)
+
+    def test_identity_extension_can_be_sampled_from_another_known_version(self):
+        row = dict(id='bag', kind='object', name='bag', description='A bag.',
+                   attributes={**empty_attributes('object'), 'color': 'petrol teal'})
+        register_attributes(row, row['attributes'])
+        baseline = AssetSpec(row, {**row['attributes'], 'color': 'red'})
+        options = alternatives(row, baseline)
+        self.assertIn('petrol teal', options['color'])
+        self.assertNotIn('petrol teal', CATEGORIES['object']['attributes']['color']['values'])
+        self.assertNotIn('red', options['color'])
+        for seed in range(40):
+            varied = alternate(row, baseline, random.Random(seed))
+            if varied.attributes['color'] == 'petrol teal':
+                break
+        else:
+            self.fail('The identity extension was never sampled')
+        validate_attributes(row, varied.attributes)
+
+    def test_extensions_do_not_enable_unknown_or_forbidden_fields(self):
+        row = dict(id='person', kind='person', name='person', description='A person.',
+                   attributes={**empty_attributes('person'), 'hair_style': 'neatly cut', 'clothing_color': 'unknown'},
+                   attribute_extensions={'hair_style': dict(values=['unknown', 'neatly cut']),
+                                         'clothing_color': dict(values=['unknown', 'petrol teal'])})
+        self.assertEqual(alternatives(row), {})
+        row['attributes']['clothing_color'] = 'red'
+        choices = alternatives(row)
+        self.assertNotIn('hair_style', choices)
+        self.assertIn('petrol teal', choices['clothing_color'])
+        self.assertNotIn('unknown', choices['clothing_color'])
+
+    def test_extension_aliases_do_not_duplicate_visual_choices_or_invent_order(self):
+        row = dict(id='scene', kind='outdoor_environment', name='scene', description='A landscape.',
+                   attributes={**empty_attributes('outdoor_environment'), 'season': 'winter'},
+                   attribute_extensions={'season': dict(values=['unknown', 'autumn'])})
+        self.assertEqual(alternatives(row)['season'], ['spring', 'summer', 'fall'])
+        person = dict(id='person', kind='person', name='person', description='A person.',
+                      attributes={**empty_attributes('person'), 'age_group': 'centenarian'},
+                      attribute_extensions={'age_group': dict(values=['unknown', 'centenarian'])})
+        self.assertNotIn('age_group', alternatives(person, relative=True))
 
     def test_unknown_attributes_are_never_invented_for_sampling(self):
         source = deepcopy(self.source)
@@ -112,7 +152,7 @@ class AttributeTests(unittest.TestCase):
 
     def test_final_state_checks_attributes_not_only_a_goal_flag(self):
         plan = build_plan(self.source, seed=5)
-        asset = next(m for m in plan['placeholders'] if m['purpose'] == 'asset' and m['goal_match'])
+        asset = next(m for m in plan['placeholders'] if m['operation'] == 'create_reference' and m['goal_match'])
         row = plan['target_assets'][asset['asset_ids'][0]]
         edited = alternate(row, AssetSpec(row, asset['attributes']), random.Random(0))
         asset['attributes'] = edited.attributes
@@ -148,7 +188,7 @@ class AttributeTests(unittest.TestCase):
         for seed in range(20):
             plan = build_plan(self.source, seed=seed, reworks=2, p_compile=1)
             table = {m['placeholder']: m for m in plan['placeholders']}
-            for shot in (m for m in table.values() if m['purpose'] == 'shot'):
+            for shot in (m for m in table.values() if m['operation'] == 'generate_clip'):
                 for asset, token in shot['bindings'].items():
                     if asset in ('street', 'cafe'):
                         self.assertEqual(table[token]['attributes']['time_of_day'], 'night')

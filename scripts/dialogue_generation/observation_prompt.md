@@ -7,16 +7,43 @@ Choose kind from person, object, indoor_environment, outdoor_environment. Track 
 Reuse an id for the same person, object, or environment across shots. If the final video has distinct visible versions, use a separate id for each version.
 Track only human-intuitive salient identities. Tiny incidental objects and decorative details belong in the owning asset description, not standalone assets. Describe distinctive details concisely. Additional supported attribute fields or values are legal per-identity extensions; prefer the listed choices for existing fields. Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).
 List ids in final playback order in target_order. Every asset must appear in at least one shot.
-For each field of each asset, select exactly one of the listed values.
+For each field of each asset, select one precise string value. Prefer listed choices; if explicit evidence supports a property they do not capture, add one accurate value scoped to this asset and run.
 Use unknown when the image does not support a judgment. Use not applicable when the field does not make sense for the asset.
 Gender presentation and apparent age describe visible appearance only. Do not infer identity or actual age.
 Select object size and apparent height only when a reliable visual scale is available. Otherwise use unknown.
 Use description for stable details outside the catalog. Leave changeable attributes such as color, material, hairstyle, and weather to their fields.
-Select the dominant value when several are visible. Use unknown when no value clearly dominates.
+When several properties coexist, use one concise combined value that preserves the explicit details, such as multiple garment colors. Use unknown only when the field lacks sufficient evidence, not because the listed choices are incomplete.
+Separate identity/action descriptions from editable attributes at their source.
+For every catalog field, record its supported value in attributes, preferring the
+supplied options. Do not duplicate catalog appearance in asset names, asset
+descriptions or shot descriptions. This includes a main color expressed on a
+component: a sword with a blue blade has color blue, while its description uses
+neutral blade/hilt wording. A gray hilt does not make a predominantly blue sword
+gray. Keep distinctive details outside the catalog and neutral relationships in
+asset descriptions. Keep all action, framing, camera movement, direction, speed
+and revealed scene details in shot descriptions, using neutral identities.
+For example, blue matte canvas tote bag with an owl emblem becomes tote bag with
+an owl emblem; color blue, material canvas and surface_finish matte are separate
+attributes. Exact evidence quotes may retain appearance words for provenance.
+Apply the same separation to SHOT descriptions, not just assets. For example,
+"Low tracking shot over wet sand under overcast skies in strong wind as a silver
+droplet passes colorful toys" becomes "Low tracking shot following the droplet
+across the beach as it passes the toys"; weather, wind, surface condition and
+object colors remain in attributes. Keep identities and their spatial layout.
+Keep dynamic events such as smiling, winking, putting on a hat, trembling or
+gliding as actions even when a related state has an attribute. Do not remove
+camera directions, speed, motion amplitude, transitions, reveals or action order.
+Neutral identity nouns are allowed, even when the same word occurs as a catalog
+value: purse, park, sword, teacup and beach identify subjects; they are not color,
+material, age or weather assertions. Do not replace these names with vague schema
+categories such as outdoor_environment or object. Separate mutable properties
+from identity and actions, not all words that happen to occur in the catalog.
+Do not borrow another subject's appearance. Unsupported attributes stay unknown.
 Write names, descriptions, and any constraint text in English. Use exact enum strings as printed below. Use short, version-neutral names, such as traveler or tote bag.
+Asset names describe stable object categories, independent of editable appearance: use teacup rather than porcelain teacup, bag rather than black leather bag, and table rather than wooden table. Keep material, color, size and finish in attributes. Use these neutral identities in shot action/camera prose.
 Use unknown for details such as actual material, apparent height, wind strength, and season when the video cannot establish them. Use numbers only in numeric fields.
 Include constraints only when the input explicitly supplies lasting production requirements. A visible property alone does not establish a persistent user rule.
-For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify roles or asset_ids. Effects may specify color_mode (black_and_white or original_colors), season (spring, summer, fall, winter), or asset_attributes. Do not infer user rules from video appearance.
+For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify kinds (image/video) or asset_ids. Effects may specify season (spring, summer, fall, winter), aspect_ratio (portrait, landscape, square_assets_landscape_video, square_assets_portrait_video), or asset_attributes. Do not infer user rules from video appearance.
 Follow the compatibility rules below.
 
 ## Attribute values
@@ -26,7 +53,7 @@ Follow the compatibility rules below.
 | Field | Meaning | Allowed values |
 | --- | --- | --- |
 | gender_presentation | Gender presentation | feminine, masculine, androgynous, unknown, not applicable |
-| age_group | Apparent age group | young child, school-age child, teenager, young adult, middle-aged adult, older adult, unknown, not applicable |
+| age_group | Apparent age group | child, teenager, adult, elder, unknown, not applicable |
 | hair_length | Hair length | bald, buzz-length hair, short hair, shoulder-length hair, long hair, waist-length hair, unknown, not applicable |
 | hair_style | Hairstyle | sleek straight hair, voluminous straight hair, slightly wavy hair, wavy hair, tight curls, side part, center part, blunt bangs, wispy bangs, choppy bangs, slicked back, tousled hair, unknown, not applicable |
 | hair_color | Hair color | black, white, gray, beige, brown, red, orange, yellow, green, cyan, blue, purple, pink, gold, silver, copper, multicolored, gray-white, silver-white, two-tone hair, highlights, dark blue, light blue, dark green, light green, burgundy, khaki, off-white, neon green, unknown, not applicable |
@@ -41,7 +68,7 @@ Follow the compatibility rules below.
 | height | Apparent height | short, average height, tall, very tall, unknown, not applicable |
 | body_build | Build | slim, proportionate, athletic, stocky, full-figured, unknown, not applicable |
 | clothing_type | Main garment | coat, jacket, trench coat, down jacket, suit, button-up shirt, T-shirt, knit sweater, sweatshirt, sportswear, dress, workwear, traditional clothing, unknown, not applicable |
-| clothing_color | Main clothing color | black, white, gray, beige, brown, red, orange, yellow, green, cyan, blue, purple, pink, gold, silver, copper, multicolored, dark blue, light blue, dark green, light green, burgundy, khaki, off-white, neon green, unknown, not applicable |
+| clothing_color | Main clothing color | black, white, gray, beige, brown, red, orange, yellow, green, cyan, blue, purple, pink, gold, silver, copper, multicolored, dark blue, light blue, dark green, light green, burgundy, khaki, off-white, neon green, red and white, blue and white, black and white, white and yellow, green and yellow, pink and purple, unknown, not applicable |
 | clothing_fit | Clothing fit | fitted, regular fit, loose, oversized, unknown, not applicable |
 | accessory | Main accessory | no accessory, eyeglasses, sunglasses, scarf, necklace, earrings, hat, hair accessory, unknown, not applicable |
 
@@ -57,7 +84,7 @@ If hair_length is bald, then hair_style must be unknown or not applicable, and h
 | size | Object size | miniature, small, medium-sized, large, extra large, unknown, not applicable |
 | shape | Object shape | round, oval, triangular, square, rectangular, rounded rectangle, cylindrical, conical, spherical, hemispherical, elongated, streamlined, spindle-shaped, flat, irregular, unknown, not applicable |
 | aspect_ratio | Object proportions | long and narrow, balanced, wide and flat, unknown, not applicable |
-| material | Main material | canvas, cotton fabric, leather, faux leather, nylon, silk, felt, wood, bamboo, ceramic, glass, metal, plastic, rubber, stone, paper, unknown, not applicable |
+| material | Main material | canvas, cotton fabric, leather, faux leather, nylon, silk, felt, wood, bamboo, ceramic, glass, metal, plastic, rubber, stone, paper, fabric, cotton, powder, unknown, not applicable |
 | surface_finish | Surface finish | matte, semi-matte, glossy, mirror finish, frosted, brushed, glazed, satin finish, unknown, not applicable |
 | texture | Surface texture | fine-textured, smooth, grainy, rough, woven, fuzzy, carved, unknown, not applicable |
 | pattern | Pattern | plain, striped, checked, polka dots, geometric pattern, floral pattern, animal print, gradient, lettering, logo, unknown, not applicable |
@@ -94,8 +121,10 @@ If color is colorless, then transparency must be transparent or unknown.
 | lighting_level | Ambient light level | dim, somewhat dim, moderate light, bright, very bright, unknown, not applicable |
 | lighting_temperature | Lighting color temperature | cool-toned, neutral-toned, warm-toned, colored lighting, unknown, not applicable |
 | lighting_softness | Light quality | hard light, moderately soft light, soft light, diffuse light, unknown, not applicable |
-| time_of_day | Time of day | dawn, early morning, morning, noon, afternoon, dusk, night, late night, unknown, not applicable |
+| time_of_day | Time of day | daytime, dawn, early morning, morning, noon, afternoon, dusk, night, late night, unknown, not applicable |
 | camera_distance | Shot size | long shot, wide shot, medium shot, close shot, unknown, not applicable |
+| season | Season | spring, summer, fall, winter, unknown, not applicable |
+| weather | Weather | sunny with many clouds, sunny with few clouds, clear skies, partly cloudy, overcast, light rain, heavy rain, thunderstorm, light snow, heavy snow, foggy, blowing dust, unknown, not applicable |
 
 If time_of_day is night or late night, then lighting_source must be moonlight or light through windows or indoor lights or streetlights or neon lights or campfire or mixed light sources or unknown or not applicable.
 
@@ -106,7 +135,7 @@ If time_of_day is night or late night, then lighting_source must be moonlight or
 | setting_type | Setting type | city street, alley, public square, park, garden, forest, grassland, mountains, lake, river, beach, open sea, desert, snowfield, countryside, field, campsite, unknown, not applicable |
 | geography | Terrain | plain, hills, valley, alpine terrain, basin, coast, island, canyon, unknown, not applicable |
 | season | Season | spring, summer, fall, winter, unknown, not applicable |
-| weather | Weather | clear skies, partly cloudy, overcast, light rain, heavy rain, thunderstorm, light snow, heavy snow, foggy, blowing dust, unknown, not applicable |
+| weather | Weather | sunny with many clouds, sunny with few clouds, clear skies, partly cloudy, overcast, light rain, heavy rain, thunderstorm, light snow, heavy snow, foggy, blowing dust, unknown, not applicable |
 | surface_material | Main ground surface | asphalt, stone slabs, gravel, sand, grass, wooden boardwalk, ice and snow, dirt, rock, water surface, unknown, not applicable |
 | surface_condition | Ground condition | dry, wet, standing water, snow-covered, icy, muddy, unknown, not applicable |
 | vegetation_density | Vegetation density | no vegetation, sparse vegetation, moderate vegetation, dense vegetation, unknown, not applicable |
@@ -121,7 +150,7 @@ If time_of_day is night or late night, then lighting_source must be moonlight or
 | lighting_level | Ambient light level | dim, somewhat dim, moderate light, bright, very bright, unknown, not applicable |
 | lighting_temperature | Lighting color temperature | cool-toned, neutral-toned, warm-toned, colored lighting, unknown, not applicable |
 | lighting_softness | Light quality | hard light, moderately soft light, soft light, diffuse light, unknown, not applicable |
-| time_of_day | Time of day | dawn, early morning, morning, noon, afternoon, dusk, night, late night, unknown, not applicable |
+| time_of_day | Time of day | daytime, dawn, early morning, morning, noon, afternoon, dusk, night, late night, unknown, not applicable |
 | camera_distance | Shot size | long shot, wide shot, medium shot, close shot, unknown, not applicable |
 
 If time_of_day is night or late night, then lighting_source must be moonlight or light through windows or indoor lights or streetlights or neon lights or campfire or mixed light sources or unknown or not applicable.
@@ -270,7 +299,9 @@ Output:
         "lighting_temperature": "warm-toned",
         "lighting_softness": "unknown",
         "time_of_day": "unknown",
-        "camera_distance": "unknown"
+        "camera_distance": "unknown",
+        "season": "unknown",
+        "weather": "unknown"
       }
     },
     {

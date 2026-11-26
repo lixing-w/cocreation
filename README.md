@@ -1,5 +1,9 @@
 # cocreation
 
+New server image plans default to **MiniMax-H3-Image W4A8 + NVFP4-AWQ** on Torch
+cu128, using recommended ~16 MP canvases and six-step sampling. Flux remains
+available. See [H3 Image deployment and prompting](docs/minimax-h3-image.md).
+
 Multimodal co-creation with evolving intent: synthesizing interleaved creative sessions through attribute-grounded provenance graphs.
 
 ## Python 接口
@@ -8,7 +12,7 @@ Multimodal co-creation with evolving intent: synthesizing interleaved creative s
 |---|---|---|
 | `Qwen()` | Linux 原生可选: Qwen3.6-35B-A3B；Mac: 原有 8B 默认值 | 文字、图片、视频 → 文字 |
 | `Flux()` | FLUX.2-klein-4B | 文字、图片 → PNG |
-| `MiniMaxH3()` | 本地 ComfyUI / MiniMax-H3 pruned FP8 | 文字、图片／视频／音频参考 → 带生成音轨的 MP4 |
+| `MiniMaxH3()` | 本地 ComfyUI / MiniMax-H3 Base-Ref2VA FP8（默认无 LoRA，50 steps；Turbo 可选） | 文字、图片／视频／音频参考 → 带生成音轨的 MP4 |
 
 服务器端 Qwen3.6-35B-A3B NVFP4、交错 messages/batching、默认关闭 thinking 的共享 vLLM 服务和并发造数据见 [Qwen server guide](docs/qwen_server.md)。Mac 的 Ollama 默认入口保持不变。
 
@@ -34,12 +38,18 @@ result = MiniMaxH3(
 
 ### 自动模型选择
 
-- 没有 references：FL2VA pruned FP8，执行纯文字 `t2va`。
+- 没有 references：Base-Ref2VA pruned FP8，执行纯文字 `t2va`。
 - 有 references：Ref2VA pruned FP8，执行多模态 `ref2va`。
 - 图片是人物／风格等参考，不承诺成为第一帧；当前没有 `first`／`last` 接口。
-- 不提供全尺寸 DiT 的隐式回退，也不使用 Turbo LoRA。
+- 不提供全尺寸 DiT 的隐式回退。默认不加载 LoRA；`H3Runtime(turbo=True)` 显式开启 Turbo v4-600 EMA LoRA。
 
-每次只加载一套 DiT；编码器和两个 VAE 共用。H3 并不自己决定权重，选择记录在请求的 `options.variant` 中。
+默认始终加载原版 Base-Ref2VA 的 FP8 AdaLN 压缩权重（不是 VDN），选择记录在 `options.variant` 中；保留 CUDA 12.8。Turbo 使用专用 sampler 处理音视频时钟，接受 4–15 秒请求；sequence 使用 4 秒请求。
+
+未传 `steps` 时，原版默认 50 步（Euler/simple，CFG 1，video/audio shift 12/3），Turbo 默认 6 步（专用 sampler/simple）。两者都支持显式覆盖 `steps`。50 步采用 [Diffusers 官方默认值](https://huggingface.co/docs/diffusers/main/en/api/pipelines/minimax_h3) 和 [SGLang 基准配置](https://docs.sglang.io/cookbook/diffusion/MiniMax/MiniMax-H3)；[Comfy 官方 Ref2VA 模板](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_minimax_h3_r2v.json) 使用另一组 20 步 / res_multistep 配置，并非所有采样器共用一个推荐步数。
+
+注意：Larryvrh 作者说明 v4-600 未专门训练 Ref2VA，只给出 6 或 8 步的通用尝试建议，未对图片参考生成与视频编辑分别验证步数。当前这两类 sequence 请求都使用 Ref2VA，Turbo 属于可选实验路径；增加步数不保证恢复身份、细节或源视频运动。见 [作者确认](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/discussions/38)。
+
+Sequence 的 `materialize.py` 默认也使用无 LoRA 原版；添加 `--video-turbo-lora` 才开启 Turbo，`--video-steps` 可覆盖步数。关闭时不会检查或下载 Turbo 节点和 LoRA 权重。模式和实际步数写入 manifest，并参与 resume 缓存校验。`run_pipeline.sh` 现为无 LoRA、50 步。
 
 ### 引用与媒体语义
 
@@ -51,8 +61,8 @@ Qwen 将文本中首次出现的已绑定 `<Image N>` / `<Video N>` 标签与对
 - 视频生成模型默认同时参考视频画面和音轨，也支持独立的 `Reference(..., kind="audio")`。Qwen3-VL 只读取视频画面，不接收独立音频输入。
 - 视频／音频参考须为 2–15 秒，同一类型总时长不超过 15 秒。
 - 视频在任务目录中转成 24 FPS，原文件不变。为避免上游节点静默截断，参考视频长于目标视频时会报错，调用方须明确裁剪或增加 `seconds`。上游还会按 17k+5 帧规整参考末尾，最多去掉 16 帧。
-- 生成时长接受 5–15 秒，按 24 FPS 向上规整到 17k+5 帧；`seconds=5` 实际为 124 帧（约 5.167 秒）。实际帧数和时长写入结果。
-- 默认 `width=768, height=512, steps=50`，尺寸须是 32 的倍数。高分辨率、多参考和长视频的峰值显存仍需实测。
+- 生成时长接受 4–15 秒，按 24 FPS 向上规整到 17k+5 帧；`seconds=5` 实际为 124 帧（约 5.167 秒）。实际帧数和时长写入结果。
+- 默认 `width=768, height=512`，步数为原版 50 / Turbo 6，尺寸须是 32 的倍数。高分辨率、多参考和长视频的峰值显存仍需实测。
 - Qwen 包装不接收音频；FLUX 仅接收图片。
 
 ## 存储与环境
@@ -107,10 +117,10 @@ python -m pip check
 1. 验证输入及许可确认，在 scratch 建立独立环境。
 2. 克隆 ComfyUI 并固定提交；安装 cu128 PyTorch 和 Comfy 依赖。`pip check` 通过后写入准备标记。
 3. 检查 CUDA 可用，再通过 `huggingface_hub.hf_hub_download` 获取选中任务的四个文件。
-4. 启动仅监听 `127.0.0.1` 的临时 Comfy 服务，禁用自定义节点和云端 partner 节点。
+4. 启动仅监听 `127.0.0.1` 的 Comfy 服务，只放行固定版本的 MiniMax-H3 Turbo 自定义节点。
 5. 提交生成的 API 工作流，等待完成、收集 MP4，并在成功或失败后关闭服务进程。
 
-**现在安装主项目、运行测试或 dry-run 都不下载权重。** 首次纯文字调用只下载 FL2VA DiT；首次参考调用只下载 Ref2VA DiT。后续复用 HF 磁盘缓存，不重复下载共用文件。HF 认证继承 `HF_TOKEN` 等环境配置。
+**现在安装主项目、运行测试或 dry-run 都不下载权重。** 纯文字和参考调用都使用 Base-Ref2VA DiT，另加载 Turbo v4-600 EMA LoRA（默认 strength 1.0、low_vram=False、simple scheduler、7 steps）。后续复用 HF 磁盘缓存，不重复下载共用文件。HF 认证继承 `HF_TOKEN` 等环境配置。
 
 固定版本（实现常量位于 `cocreation/h3.py`）：
 
@@ -120,10 +130,11 @@ python -m pip check
 下载清单：
 
 ```text
-diffusion_models/minimax_h3_{fl2va或ref2va}_pruned_fp8_scaled.safetensors
+diffusion_models/minimax_h3_ref2va_pruned_fp8_scaled.safetensors
 text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
 vae/minimax_h3_video_vae_fp16.safetensors
 vae/minimax_h3_audio_vae_fp32.safetensors
+loras/minimax_h3_turbo_v4_step600_ema.safetensors  # 仅 turbo=True 时需要
 ```
 
 FP8 DiT + NVFP4-AWQ 编码器负责降低主要权重占用；VAE 保持 FP16/FP32，避免依赖 cu130 的 ConvRot VAE 路径。NVFP4-AWQ 是存储格式，不承诺原生 NVFP4 加速。Comfy 的 cu128 路径会禁用它要求 cu130 的优化 CUDA 后端，使用可用的回退算子；实际性能待 GPU 验收。
@@ -165,7 +176,7 @@ python3 -m unittest discover -s tests -v
 python3 examples/plan.py
 ```
 
-已做离线接口、路由、下载清单、参考视频规整、错误传播和服务清理测试，并对照固定 Comfy 源码核实节点接口。**尚未下载权重或进行 GPU 端到端推理**，因此 575 驱动上的依赖安装、显存峰值、NVFP4 回退与生成质量仍须在服务器首次运行验收。依赖包含上游版本范围，不是完整的传递依赖锁文件。
+已做离线接口、路由、下载清单、参考视频规整、错误传播和服务清理测试，并对照固定 Comfy 源码核实节点接口。GPU 验证记录见 `scratch/runs/h3-turbo-validation-9256419/`；完整 sequence 状态见 `scratch/runs/latest-pipeline.txt`。依赖包含上游版本范围，不是完整的传递依赖锁文件。
 
 ## VDN-H3 (FreeVideo CLI, FP8)
 

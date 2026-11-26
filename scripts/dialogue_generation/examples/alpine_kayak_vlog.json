@@ -229,7 +229,7 @@
   "constraints": [
     {
       "text": "Set all vlog footage at the alpine lake in clear daytime weather. Standalone character and prop references are exempt.",
-      "scope": "shots",
+      "scope": "partial",
       "asset_attributes": {
         "lake": {
           "time_of_day": "morning",
@@ -241,6 +241,11 @@
           "weather": "clear skies",
           "geography": "alpine terrain"
         }
+      },
+      "selector": {
+        "kinds": [
+          "video"
+        ]
       }
     }
   ],

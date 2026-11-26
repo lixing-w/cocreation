@@ -3,12 +3,12 @@
   "unknown_value": "unknown",
   "not_applicable_value": "not applicable",
   "notes": [
-    "For each field of each asset, select exactly one of the listed values.",
+    "For each field of each asset, select one precise string value. Prefer listed choices; if explicit evidence supports a property they do not capture, add one accurate value scoped to this asset and run.",
     "Use unknown when the image does not support a judgment. Use not applicable when the field does not make sense for the asset.",
     "Gender presentation and apparent age describe visible appearance only. Do not infer identity or actual age.",
     "Select object size and apparent height only when a reliable visual scale is available. Otherwise use unknown.",
     "Use description for stable details outside the catalog. Leave changeable attributes such as color, material, hairstyle, and weather to their fields.",
-    "Select the dominant value when several are visible. Use unknown when no value clearly dominates."
+    "When several properties coexist, use one concise combined value that preserves the explicit details, such as multiple garment colors. Use unknown only when the field lacks sufficient evidence, not because the listed choices are incomplete."
   ],
   "categories": {
     "person": {
@@ -35,14 +35,18 @@
         "age_group": {
           "label": "Apparent age group",
           "values": [
-            "young child",
-            "school-age child",
+            "child",
             "teenager",
-            "young adult",
-            "middle-aged adult",
-            "older adult",
+            "adult",
+            "elder",
             "unknown",
             "not applicable"
+          ],
+          "ordered_values": [
+            "child",
+            "teenager",
+            "adult",
+            "elder"
           ]
         },
         "hair_length": {
@@ -309,6 +313,12 @@
             "khaki",
             "off-white",
             "neon green",
+            "red and white",
+            "blue and white",
+            "black and white",
+            "white and yellow",
+            "green and yellow",
+            "pink and purple",
             "unknown",
             "not applicable"
           ]
@@ -519,6 +529,9 @@
             "rubber",
             "stone",
             "paper",
+            "fabric",
+            "cotton",
+            "powder",
             "unknown",
             "not applicable"
           ]
@@ -1014,6 +1027,7 @@
         "time_of_day": {
           "label": "Time of day",
           "values": [
+            "daytime",
             "dawn",
             "early morning",
             "morning",
@@ -1041,6 +1055,36 @@
             "wide shot",
             "medium shot",
             "close shot"
+          ]
+        },
+        "season": {
+          "label": "Season",
+          "values": [
+            "spring",
+            "summer",
+            "fall",
+            "winter",
+            "unknown",
+            "not applicable"
+          ]
+        },
+        "weather": {
+          "label": "Weather",
+          "values": [
+            "sunny with many clouds",
+            "sunny with few clouds",
+            "clear skies",
+            "partly cloudy",
+            "overcast",
+            "light rain",
+            "heavy rain",
+            "thunderstorm",
+            "light snow",
+            "heavy snow",
+            "foggy",
+            "blowing dust",
+            "unknown",
+            "not applicable"
           ]
         }
       },
@@ -1165,6 +1209,8 @@
         "weather": {
           "label": "Weather",
           "values": [
+            "sunny with many clouds",
+            "sunny with few clouds",
             "clear skies",
             "partly cloudy",
             "overcast",
@@ -1395,6 +1441,7 @@
         "time_of_day": {
           "label": "Time of day",
           "values": [
+            "daytime",
             "dawn",
             "early morning",
             "morning",

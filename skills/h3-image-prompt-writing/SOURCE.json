@@ -1,0 +1,26 @@
+{
+  "repository": "MiniMax-AI/MiniMax-H3-Image",
+  "revision": "40850901ab938303b5274122b5f305ebc5b75c80",
+  "files": {
+    "SKILL.md": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3-Image/40850901ab938303b5274122b5f305ebc5b75c80/skills/h3-image-prompt-writing/SKILL.md",
+      "sha256": "d76fb522208149078d284cdab11260c11d974ec12db921f25e3c0fa76aa3f9cf"
+    },
+    "references/t2i-en.txt": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3-Image/40850901ab938303b5274122b5f305ebc5b75c80/skills/h3-image-prompt-writing/references/t2i-en.txt",
+      "sha256": "a0fe54167532464d5c4f40517c07e350c9631fc97fc1299b56f9f1d74b05a78b"
+    },
+    "references/edit-en.txt": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3-Image/40850901ab938303b5274122b5f305ebc5b75c80/skills/h3-image-prompt-writing/references/edit-en.txt",
+      "sha256": "4f08883dcf390d388fe077959d077834e6514eed73c5385aa71f9e962521aff3"
+    },
+    "agents/openai.yaml": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3-Image/40850901ab938303b5274122b5f305ebc5b75c80/skills/h3-image-prompt-writing/agents/openai.yaml",
+      "sha256": "77c36fd940584ab737e1f26e32f26da8f7c9a33ac17a6b5859003d0ada9fc664"
+    },
+    "scripts/generate.py": {
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3-Image/40850901ab938303b5274122b5f305ebc5b75c80/skills/h3-image-prompt-writing/scripts/generate.py",
+      "sha256": "f3f15cb0c7bc31b18434b500b3de95a25ab0033b70f303839f7291191cdec4f3"
+    }
+  }
+}

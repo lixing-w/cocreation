@@ -127,6 +127,23 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(messages[1][0]['content'][-1]['text'],'second')
         self.assertNotIn('first', str(messages[1]))
 
+    def test_comfy_workers_do_not_mix_system_and_bundled_cuda_libraries(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            'COCREATION_SCRATCH': tmp, 'LD_LIBRARY_PATH': '/system/cuda/lib64',
+            'CUDA_HOME': '/system/cuda', 'TRITON_PTXAS_PATH': '/system/cuda/bin/ptxas',
+        }), patch('cocreation.session.ProcessSession.call'):
+            for model in (MiniMaxH3(), Qwen()):
+                with model:
+                    model._persistent_execute({}, Path(tmp))
+                    env = model._session.environment
+                    if model.backend == 'minimax_h3':
+                        self.assertNotIn('LD_LIBRARY_PATH', env)
+                    else:
+                        self.assertEqual(env['LD_LIBRARY_PATH'], '/system/cuda/lib64')
+                    self.assertEqual(env['CUDA_HOME'], '/system/cuda')
+                    self.assertEqual(env['TRITON_PTXAS_PATH'], '/system/cuda/bin/ptxas')
+            self.assertEqual(os.environ['LD_LIBRARY_PATH'], '/system/cuda/lib64')
+
     def test_worker_routes_opt_in_prefix_cache(self):
         torch=MagicMock(__version__='test'); transformers=MagicMock(); utils=MagicMock()
         model=transformers.AutoModelForImageTextToText.from_pretrained.return_value.eval.return_value

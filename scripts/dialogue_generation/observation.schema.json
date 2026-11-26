@@ -542,7 +542,9 @@
                   "lighting_temperature",
                   "lighting_softness",
                   "time_of_day",
-                  "camera_distance"
+                  "camera_distance",
+                  "season",
+                  "weather"
                 ],
                 "additionalProperties": {
                   "type": "string",
@@ -622,6 +624,14 @@
                     "minLength": 1
                   },
                   "camera_distance": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "season": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "weather": {
                     "type": "string",
                     "minLength": 1
                   }
@@ -931,18 +941,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "roles": {
+              "kinds": {
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
                 "items": {
                   "enum": [
-                    "asset_image",
-                    "asset_video",
-                    "trial_video",
-                    "shot",
-                    "compilation",
-                    "final_export"
+                    "image",
+                    "video"
                   ]
                 }
               },
@@ -961,18 +967,20 @@
             "minProperties": 1,
             "additionalProperties": false,
             "properties": {
-              "color_mode": {
-                "enum": [
-                  "black_and_white",
-                  "original_colors"
-                ]
-              },
               "season": {
                 "enum": [
                   "spring",
                   "summer",
                   "fall",
                   "winter"
+                ]
+              },
+              "aspect_ratio": {
+                "enum": [
+                  "portrait",
+                  "landscape",
+                  "square_assets_landscape_video",
+                  "square_assets_portrait_video"
                 ]
               },
               "asset_attributes": {

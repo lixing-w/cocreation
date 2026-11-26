@@ -27,7 +27,7 @@ def placeholder_catalog(result):
         task = row.get('generation', {})
         item = dict(placeholder=row['placeholder'], kind=row['kind'],
                     description=display_description(row['description']))
-        for key in ('purpose', 'asset_ids', 'shot_ids'):
+        for key in ('operation', 'asset_ids', 'shot_ids'):
             if row.get(key):
                 item[key] = deepcopy(row[key])
         if 'generation_requirements' in row:
@@ -45,7 +45,7 @@ def placeholder_catalog(result):
                 for ref in task['references']]
         if 'dependencies' in task and task['dependencies'] != row['reference_materials']:
             item['dependencies'] = list(task['dependencies'])
-        for key in ('seconds', 'output_seconds', 'shot_id', 'frame_seconds', 'preprocess', 'clips', 'clip_edits', 'render_state', 'presentation'):
+        for key in ('seconds', 'output_seconds', 'shot_id', 'frame_seconds', 'preprocess', 'clips', 'clip_edits', 'render_state', 'presentation', 'reasoner', 'operation_reasoner', 'latest_rules', 'workflow_leader', 'reasoner_shared_with'):
             if key in task:
                 item[key] = deepcopy(task[key])
         source = row.get('source_video', task.get('source_video'))

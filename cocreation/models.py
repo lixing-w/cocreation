@@ -11,7 +11,8 @@ import uuid
 
 from .references import Reference, prepare
 from .qwen_sampling import generation_options
-from .h3 import H3Runtime, MODEL_REPO, frame_count
+from .qwen_inputs import DEFAULT_VIDEO_FPS, DEFAULT_VIDEO_MAX_FRAMES
+from .h3 import H3Runtime, MODEL_REPO, frame_count, default_steps
 from .storage import scratch_root, ensure_scratch, runtime_environment
 
 _GPU_LOCK = threading.RLock()
@@ -64,6 +65,9 @@ class _System:
         session = getattr(self, '_session', None)
         if session is None:
             env = runtime_environment()
+            if self.backend in ('minimax_h3', 'h3_image'):
+                # Comfy's cu128 wheels must not load the system toolkit's cuBLASLt.
+                env.pop('LD_LIBRARY_PATH', None)
             package_root = str(Path(__file__).resolve().parent.parent)
             env['PYTHONPATH'] = os.pathsep.join(filter(None, [package_root, env.get('PYTHONPATH')]))
             directory = Path(getattr(self, 'session_dir', job_dir / 'session'))
@@ -142,7 +146,8 @@ class Qwen(_System):
             raise ValueError("Qwen wrapper accepts images and videos, not audio")
 
     def __call__(self, prompt: str | None = None, references: list[Reference] | None = None, *,
-                 max_new_tokens=1024, video_fps=1.0, video_max_frames=16,
+                 max_new_tokens=1024, video_fps=DEFAULT_VIDEO_FPS,
+                 video_max_frames=DEFAULT_VIDEO_MAX_FRAMES,
                  max_pixels=512 * 512, seed=None, dry_run=False, system_prompt=None,
                  assistant_prefill=None, system_cache_path=None, output_dir=None, temperature=0.8, top_p=0.95, top_k=50,
                  messages=None, response_schema=None, enable_thinking=False, _conversations=None):
@@ -227,6 +232,37 @@ class Flux(_System):
             guidance_scale=guidance_scale, seed=seed), dry_run)
 
 
+class MiniMaxH3Image(_System):
+    """Six-step W4A8 still-image model with the NVFP4-AWQ text encoder."""
+    backend = 'h3_image'
+    model_id = 'MiniMaxAI/MiniMax-H3-Image'
+
+    def __init__(self, *, runtime=None, output_dir=None):
+        from .h3_image import H3ImageRuntime
+        self.runtime = runtime or H3ImageRuntime()
+        self.output_dir = Path(output_dir if output_dir is not None else scratch_root()/'runs').expanduser().resolve()
+
+    def __call__(self, prompt, references=None, *, width=4096, height=4096,
+                 steps=6, guidance_scale=1.0, seed=0, dry_run=False):
+        if any(type(v) is not int or v < 32 or v % 32 for v in (width, height)):
+            raise ValueError('H3 Image dimensions must be integer multiples of 32')
+        if not 1/3 <= width/height <= 3 or not 2048**2 <= width*height <= 20*1024**2:
+            raise ValueError('H3 Image requires 4–20 MP and an aspect ratio between 1:3 and 3:1')
+        if steps != 6 or guidance_scale != 1.0:
+            raise ValueError('H3 Image uses a fixed six-step schedule with guidance 1')
+        if type(seed) is not int or not 0 <= seed < 2**63:
+            raise ValueError('H3 Image seed must be an integer in [0, 2**63)')
+        return self._invoke(prompt, references, dict(width=width, height=height,
+            steps=6, guidance_scale=1.0, seed=seed, generator_device='cpu'), dry_run)
+
+    def _validate(self, request):
+        refs = [Reference(r['artifact_id'], r['path'], r['kind']) for r in request['references']]
+        if len(refs) > 16 or any(r.kind != 'image' for r in refs):
+            raise ValueError('H3 Image accepts at most 16 ordered image references; extract video frames first')
+        request.update(prepare(request['original_prompt'], refs,
+                               labels={'image':'Picture', 'video':'Video', 'audio':'Audio'}))
+
+
 class MiniMaxH3(_System):
     backend = "minimax_h3"
     model_id = MODEL_REPO
@@ -236,23 +272,30 @@ class MiniMaxH3(_System):
         self.output_dir = Path(output_dir if output_dir is not None else scratch_root() / "runs").expanduser().resolve()
 
     def __call__(self, prompt: str, references: list[Reference] | None = None, *,
-                 seconds=15.0, width=768, height=512, steps=50, seed=0, dry_run=False):
+                 seconds=15.0, width=768, height=512, steps=None, seed=0, sampler=None, dry_run=False):
         import math
-        if not math.isfinite(seconds) or not 5 <= seconds <= 15:
-            raise ValueError("H3 duration must be between 5 and 15 seconds")
+        if steps is None:
+            steps = default_steps(self.runtime.turbo)
+        if not math.isfinite(seconds) or not 4 <= seconds <= 15:
+            raise ValueError("H3 duration must be between 4 and 15 seconds")
         if any(not isinstance(v, int) or v < 64 or v % 32 for v in (width, height)):
             raise ValueError("H3 dimensions must be integer multiples of 32 (>=64)")
-        if not isinstance(steps, int) or not 1 <= steps <= 10000 or not isinstance(seed, int) or not 0 <= seed < 2**64:
+        if type(steps) is not int or not 1 <= steps <= 10000 or not isinstance(seed, int) or not 0 <= seed < 2**64:
             raise ValueError("Invalid H3 steps or seed")
+        if sampler not in (None, 'euler', 'res_multistep'):
+            raise ValueError('H3 sampler must be euler or res_multistep')
+        if self.runtime.turbo and sampler not in (None, 'euler'):
+            raise ValueError('Turbo requires its dedicated Euler sampler')
         refs = list(references or [])
         counts = {kind: sum(r.kind == kind for r in refs) for kind in ("image", "video", "audio")}
         if len(refs) > 12 or counts["image"] > 9 or max(counts["video"], counts["audio"]) > 3:
             raise ValueError("H3 allows 9 images, 3 videos, 3 audios; 12 references total")
         if refs and not (counts["image"] or counts["video"]):
             raise ValueError("H3 audio references require an image or video reference")
-        variant = "ref2va" if refs else "fl2va"
+        # Use the requested Base-Ref2VA partition for both reference and text-only tasks.
+        variant = "ref2va"
         return self._invoke(prompt, refs, dict(seconds=seconds, frames=frame_count(seconds),
-            width=width, height=height, steps=steps, seed=seed, variant=variant,
+            width=width, height=height, steps=steps, seed=seed, variant=variant, sampler=sampler or "euler",
             task="ref2va" if refs else "t2va"), dry_run)
 
     def _validate(self, request):

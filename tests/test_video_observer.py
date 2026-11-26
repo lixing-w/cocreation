@@ -21,6 +21,11 @@ def inventory(count=4):
                 shots=[dict(first_frame=1, last_frame=count, description='A ball is visible.', assets=['A1'])])
 
 
+def separated_inventory(value):
+    return dict(assets=[dict(id='A1',description='Ball with a visible seam.')],
+                shots=[dict(id=f'S{i+1}',description=row['description']) for i,row in enumerate(value['shots'])])
+
+
 class InventoryTests(unittest.TestCase):
     def test_rejects_invented_references_and_frame_numbers(self):
         for mutation in ('unknown_id', 'duplicate_id', 'unknown_kind', 'bad_frame', 'bad_type', 'unused'):
@@ -49,7 +54,7 @@ class InventoryTests(unittest.TestCase):
             validate_inventory(value, 4, 8)
 
     def test_attribute_prompt_only_includes_relevant_category(self):
-        prompt = attributes_prompt(inventory()['assets'][0], [0.0, 1.0])
+        prompt = attributes_prompt(inventory()['assets'][0], [0.0, 1.0]).instructions
         self.assertIn('surface_finish', prompt)
         self.assertIn('unknown', prompt)
         self.assertNotIn('hair_length', prompt)
@@ -135,6 +140,45 @@ class InventoryTests(unittest.TestCase):
             self.assertEqual(observer.backend, 'local')
         qwen.close.assert_not_called()
 
+    def test_reasoning_only_token_exhaustion_is_logged_and_retried(self):
+        observer = VideoObserver(backend='vllm', enable_thinking=True, max_tokens=8192)
+        observer.qwen = Mock(side_effect=[
+            dict(text='', finish_reason='length', output_tokens=8192, enable_thinking=True,
+                 usage=dict(completion_tokens_details=dict(reasoning_tokens=8192))),
+            dict(text=json.dumps(inventory()), finish_reason='stop', enable_thinking=True)])
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)/'inventory'
+            result = observer._ask('Observe.', [], inventory_schema(4, 8),
+                lambda value: validate_inventory(value, 4, 8), directory)
+            self.assertEqual(result, inventory())
+            self.assertEqual((directory/'attempt_1/response.txt').read_text(), '')
+            error = (directory/'attempt_1/error.txt').read_text()
+            self.assertIn('token limit', error)
+            self.assertIn('reasoning_tokens=8192', error)
+            self.assertNotIn('Expecting value', error)
+            metadata = json.loads((directory/'attempt_1/response_metadata.json').read_text())
+            self.assertEqual(metadata['finish_reason'], 'length')
+            self.assertEqual(metadata['reasoning_tokens'], 8192)
+            self.assertIn('Finish reasoning promptly', observer.qwen.call_args.args[0])
+            self.assertEqual(observer.qwen.call_count, 2)
+
+    def test_truncation_and_empty_final_response_are_not_accepted_as_json(self):
+        for raw in ('', '{"color":', '{}'):
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as tmp:
+                observer = VideoObserver(backend='vllm', retries=0)
+                observer.qwen = Mock(return_value=dict(text=raw, finish_reason='length', output_tokens=4096))
+                validator = Mock()
+                directory = Path(tmp)/'asset_02'
+                with self.assertRaisesRegex(ValueError, 'asset_02 rejected: Response hit the token limit'):
+                    observer._ask('Observe.', [], {}, validator, directory)
+                validator.assert_not_called()
+                self.assertEqual((directory/'attempt_1/response.txt').read_text(), raw)
+        with tempfile.TemporaryDirectory() as tmp:
+            observer = VideoObserver(backend='vllm', retries=0)
+            observer.qwen = Mock(return_value=dict(text='', finish_reason='stop'))
+            with self.assertRaisesRegex(ValueError, 'Empty final response'):
+                observer._ask('Observe.', [], {}, Mock(), Path(tmp)/'asset_02')
+
     def test_native_fenced_json_is_repaired_once_and_keeps_raw_output(self):
         bad = inventory()
         bad['assets'][0]['frame_ids'] = [1, 1]
@@ -195,13 +239,16 @@ class VideoPipelineTests(unittest.TestCase):
     def test_decoded_frame_times_repairs_and_downstream_plan(self):
         attrs = {**empty_attributes('object'), 'color': 'red', 'color_saturation': 'high saturation'}
         bad = {**attrs, 'color': 'invented red'}
-        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), bad, attrs)])
+        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), bad, attrs, separated_inventory(inventory()),dict(attribute_separation=2,action_preservation=2,detail_preservation=2,correction=''))])
         out = self.root / 'result'
         with VideoObserver(qwen=qwen) as observer:
             result = observer.observe(self.video, out, frames=4, progress=False)
             self.assertEqual(observer.qwen, qwen)
         qwen.close.assert_not_called()
-        self.assertEqual(qwen.call_count, 3)
+        self.assertEqual(qwen.call_count, 5)
+        for call in qwen.call_args_list[-2:]:
+            self.assertEqual(len(call.args[1]),4)
+            self.assertIn('frame_timestamps',call.args[0])
         self.assertTrue((out/'asset_01/attempt_1/repairs.json').exists())
         self.assertEqual(result['constraints'], [])
         self.assertEqual(result['attribute_schema_version'], 2)
@@ -220,7 +267,7 @@ class VideoPipelineTests(unittest.TestCase):
             if mode == 'missing': attrs.pop('color')
             elif mode == 'extra': attrs['invented'] = 'value'
             else: attrs.update(material='wood', transparency='transparent')
-            qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), attrs, attrs)])
+            qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (inventory(), attrs, attrs, separated_inventory(inventory()),dict(attribute_separation=2,action_preservation=2,detail_preservation=2,correction=''))])
             out = self.root / mode
             with self.subTest(mode=mode):
                 with VideoObserver(qwen=qwen, retries=0) as observer:
@@ -230,7 +277,7 @@ class VideoPipelineTests(unittest.TestCase):
             if mode == 'extra':
                 self.assertEqual(result['assets'][0]['attributes']['invented'], 'value')
                 self.assertIn('invented', result['assets'][0]['attribute_extensions'])
-                self.assertEqual(result['assets'][0]['description'],'A red ball with a visible seam.')
+                self.assertEqual(result['assets'][0]['description'],'Ball with a visible seam.')
             else:
                 self.assertNotIn('invented', result['assets'][0]['attributes'])
 
@@ -238,7 +285,7 @@ class VideoPipelineTests(unittest.TestCase):
         value = inventory()
         value['shots'] = [dict(first_frame=1, last_frame=2, description='First.', assets=['A1']),
                           dict(first_frame=3, last_frame=4, description='Second.', assets=['A1'])]
-        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (value, empty_attributes('object'), empty_attributes('object'))])
+        qwen = Mock(model_id='test-model', side_effect=[dict(text=json.dumps(v)) for v in (value, empty_attributes('object'), empty_attributes('object'), separated_inventory(value),dict(attribute_separation=2,action_preservation=2,detail_preservation=2,correction=''))])
         with VideoObserver(qwen=qwen) as observer:
             result = observer.observe(self.video, self.root / 'shots', frames=4, progress=False)
         first, second = result['shots']

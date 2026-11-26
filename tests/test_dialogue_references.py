@@ -19,7 +19,7 @@ class ReferenceTests(unittest.TestCase):
             self.assertTrue(all(ref in rows for ref in refs))
             self.assertNotIn('source_video',row)
             self.assertEqual(row['reference_depth'],max((rows[ref]['reference_depth']+1 for ref in refs),default=0))
-            if row['purpose']=='shot':
+            if row['operation']=='generate_clip':
                 sid=row['shot_ids'][0]
                 if sid in latest:
                     self.assertEqual(refs[0],latest[sid])
@@ -34,19 +34,21 @@ class ReferenceTests(unittest.TestCase):
                 self.assertIn(token,turn['input_media'])
 
     def test_graph_closes_across_seeds_and_includes_video_to_image_edges(self):
-        purposes, crop_edges = set(), []
+        operations, kinds, crop_edges = set(), set(), []
         source=json.loads((EXAMPLES/'tokyo_vlog.json').read_text())
         for seed in range(12):
             plan=build_plan(source,seed=seed,reworks=2,p_compile=.5,modules=['candidates'])
             self.assertTrue(validate_plan(plan))
             rows={row['placeholder']:row for row in plan['placeholders']}
             for row in rows.values():
-                purposes.add(row['purpose'])
+                operations.add(row['operation'])
+                kinds.add(row['kind'])
                 for ref in row['reference_materials']:
                     self.assertLessEqual(rows[ref]['introduced_at'],row['introduced_at'])
                     if row['kind']=='image' and rows[ref]['kind']=='video':
                         crop_edges.append((seed,ref,row['placeholder']))
-        self.assertTrue({'asset','shot','exploration','compilation'}<=purposes)
+        self.assertEqual(kinds, {'image','video'})
+        self.assertTrue({'create_reference','generate_clip','assemble'}<=operations)
         self.assertTrue(crop_edges)
 
     def test_invalid_cycle_missing_reference_wrong_depth_and_policy_rejected(self):

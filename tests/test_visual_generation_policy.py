@@ -17,20 +17,20 @@ class VisualPolicyTests(unittest.TestCase):
     def source(self):
         return json.loads((ROOT/'scripts/dialogue_generation/examples/tokyo_vlog.json').read_text())
 
-    def test_no_object_scale_or_confusable_soft_material_edits(self):
+    def test_object_variations_only_change_color_and_requested_material_families(self):
         row = next(a for a in self.source()['assets'] if a['id']=='bag')
         row['attributes'].update(material='paper', shape='square', surface_finish='matte')
         choices = alternatives(row)
         self.assertNotIn('size', choices)
-        self.assertIn('triangular', choices['shape'])
-        self.assertNotIn('rounded rectangle', choices['shape'])
+        self.assertEqual(set(choices), {'color', 'material'})
+        self.assertNotIn('texture', choices)
         self.assertTrue({'wood', 'glass'} <= set(choices['material']))
-        self.assertNotIn('leather', choices['material'])
+        self.assertIn('leather', choices['material'])
         counts = {}
         for seed in range(200):
             changed = alternate(row, AssetSpec(row), random.Random(seed)).change['field']
             counts[changed] = counts.get(changed,0)+1
-        self.assertGreater(counts['color']+counts['shape']+counts['material'], 100)
+        self.assertGreater(counts['color']+counts['material'], 100)
 
     def test_every_studio_image_receives_seasonal_presentation_including_local_edits(self):
         for season in ('spring','summer','fall','winter'):
@@ -57,7 +57,7 @@ class VisualPolicyTests(unittest.TestCase):
         paper=AssetSpec(bag,{**bag['attributes'],'material':'paper'})
         token=p.asset_media('bag',description=paper,desired=False)
         p.emit('assistant','deliver_asset','Here is the paper bag.',outputs=[token])
-        trial=p.add_media('video','Short trial: brown leather satchel; material: paper',assets=['bag'],inputs=[token],purpose='exploration')
+        trial=p.add_media('video','Short trial: brown leather satchel; material: paper',assets=['bag'],inputs=[token],operation='generate')
         p.emit('assistant','deliver_exploration','Here is the trial.',outputs=[trial])
         plan=p.run(); task=build_tasks(plan,source)[trial]
         contract=writer_contract(task)

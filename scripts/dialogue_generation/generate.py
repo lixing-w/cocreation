@@ -11,7 +11,7 @@ import time
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.dialogue_models import DEFAULT_BACKEND
+from tools.dialogue_models import BACKENDS, DEFAULT_BACKEND, SONNET_MODEL_ID, SONNET_EFFORTS, resolve_think_mode
 
 from scripts.dialogue_generation.planner import build_plan, validate_plan, MODULES
 from scripts.dialogue_generation.catalog import placeholder_catalog
@@ -19,7 +19,7 @@ from tools.dialogue_realizer import QwenRealizer, DEFAULT_OLLAMA_MODEL, DEFAULT_
 from tools.dialogue_personas import choose_personas, USER_PERSONAS
 from tools.dialogue_models import resolve_model
 from cocreation.qwen_sampling import generation_options
-from scripts.dialogue_generation.stats import collect_stats, generation_snapshot
+from scripts.dialogue_generation.stats import collect_stats, generation_snapshot, accumulate_generation
 
 
 def save(path, value):
@@ -29,9 +29,56 @@ def save(path, value):
     temporary.replace(path)
 
 
+def markdown_header(result, *, records=None, turns=None):
+    """Summarize the selected models and the media available at this stage."""
+    realization = result.get("realization", {})
+    planned = result.get("placeholders", [])
+    turns = result.get("turns", []) if turns is None else turns
+    models = {"image": set(), "video": set()}
+    actual = {"image": set(), "video": set()}
+    counts = {"image": 0, "video": 0}
+
+    def add_model(row, destination, default_kind=None):
+        kind = row.get("kind", default_kind)
+        model = row.get("model_id")
+        if kind in destination and isinstance(model, str) and model:
+            destination[kind].add(model)
+
+    for row in planned:
+        task = row.get("generation") or {}
+        add_model(task, models, row.get("kind"))
+        for part in task.get("clip_edits", []):
+            add_model(part["generation"], models, "video")
+        if records is None and row.get("kind") in counts:
+            counts[row["kind"]] += 1
+    if records is not None:
+        for token, row in records.items():
+            kind = row.get("kind") or ("image" if token.startswith("[[image_") else "video")
+            add_model(row, actual, kind)
+            for attempt in row.get("attempts", []):
+                add_model(attempt, actual, kind)
+            for part in row.get("clip_edits", []):
+                add_model(part, actual, "video")
+                for attempt in part.get("attempts", []):
+                    add_model(attempt, actual, "video")
+            if kind in counts and row.get("status") == "complete" and row.get("path"):
+                counts[kind] += 1
+    for kind in models:
+        models[kind] = ", ".join(sorted(actual[kind] or models[kind])) or "—"
+    vlm = realization.get("model") or "—"
+    if realization.get("think_mode"):
+        vlm += f" ({realization['think_mode']})"
+    media_scope = "Planned" if records is None else "Delivered"
+    return ["# Video co-creation dialogue", "",
+            "| Run metadata | Value |", "| --- | --- |",
+            f"| VLM | {vlm} |", f"| Video model | {models['video']} |", f"| Image model | {models['image']} |",
+            f"| Dialogue turns | {len(turns)} |", f"| {media_scope} images | {counts['image']} |",
+            f"| {media_scope} videos | {counts['video']} |", ""]
+
+
 def markdown(result):
-    lines = ["# Video co-creation dialogue", "",
-             f"Seed: {result['seed']} | Dialogue model: {result['realization']['model']}", "",
+    lines = markdown_header(result) + [
+             f"Seed: {result['seed']}", "",
              f"User style: {result['personas']['user']['id']}", "",
              "The dialogue contains text and media placeholders.", ""]
     for turn in result["turns"]:
@@ -53,20 +100,38 @@ def markdown(result):
     return "\n".join(lines) + "\n"
 
 
+def _resume_observation(original, saved):
+    """Recover a format rule that an older launcher persisted in this checkpoint."""
+    if saved == original:
+        return original
+    from scripts.dialogue_generation.cross_turn_rule import EFFECTS
+
+    constraints = original.get('constraints', [])
+    if not any('aspect_ratio' in rule.get('effect', {}) for rule in constraints):
+        for preset in EFFECTS['aspect_ratio']:
+            legacy_rule = dict(scope='global', selector={}, effect=dict(aspect_ratio=preset), text='')
+            if saved == {**original, 'constraints': [*constraints, legacy_rule]}:
+                return saved
+    raise ValueError("Resume requires the same observation, seed, modules and persona")
+
+
 def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         modules=None, extra_behaviors=True, realizer=None, backend=DEFAULT_BACKEND,
         model=None, base_url=None, max_tokens=256,
         timeout=180, progress=True, user_persona=None, context_tokens=32768, resume=False,
         temperature=0.9, top_p=0.95, top_k=50, rewrite_seed=None, model_mode=None, cross_turn_rules=None,
-        rewrite_prompts=None, prompt_rewriter=None):
+        rewrite_prompts=None, prompt_rewriter=None, think_mode=None):
     from scripts.dialogue_generation.rewrite_prompts import rewrite_run
+    think_mode = resolve_think_mode(backend if realizer is None else getattr(realizer, "backend", backend), think_mode)
     if rewrite_prompts is None:
         rewrite_prompts = realizer is None or isinstance(realizer, QwenRealizer) or prompt_rewriter is not None
     def finish_prompts(result, writer=None):
         if rewrite_prompts:
             rewrite_run(result, observation, output, writer=prompt_rewriter or writer,
-                        progress=progress, backend=backend, model=model, model_mode=model_mode,
+                        progress=progress, backend=backend, model=model, model_mode=model_mode, think_mode=think_mode,
                         base_url=base_url, timeout=timeout, context_tokens=context_tokens)
+            if not (output / "media_manifest.json").is_file():
+                (output / "dialogue.md").write_text(markdown(result), encoding="utf-8")
         return result
     started = time.perf_counter()
     sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
@@ -75,27 +140,40 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         raise ValueError("rewrite_seed must be an integer in [0, 2**31), or None")
     source = Path(input_path).expanduser().resolve()
     observation = json.loads(source.read_text(encoding="utf-8"))
-    # Plan/validate before opening a model or touching the output directory.
-    plan = build_plan(observation, seed=seed, reworks=reworks,
-                      p_compile=p_compile, modules=modules, extra_behaviors=extra_behaviors, cross_turn_rules=cross_turn_rules)
-    plan["personas"] = choose_personas(seed, user_persona)
     output = Path(output_dir).expanduser().resolve()
+    if resume:
+        saved_observation = json.loads((output / "observation.json").read_text(encoding="utf-8"))
+        observation = _resume_observation(observation, saved_observation)
+    # Plan/validate before opening a model or touching the output directory.
+    plan_options = dict(seed=seed, reworks=reworks, p_compile=p_compile, modules=modules,
+                        extra_behaviors=extra_behaviors, cross_turn_rules=cross_turn_rules)
+    personas = choose_personas(seed, user_persona)
+    plan = build_plan(observation, **plan_options)
+    plan["personas"] = personas
     completed_count = 0
     if resume:
         from scripts.dialogue_generation.generation_requirements import assign_generation_requirements
         saved_plan = json.loads((output / 'plan.json').read_text())
         assign_generation_requirements(saved_plan)
-        if (json.loads((output / "observation.json").read_text()) != observation
-                or saved_plan != plan):
-            raise ValueError("Resume requires the same observation, seed, modules and persona")
+        if saved_plan != plan:
+            for legacy_sampling in (False, True):
+                plan = build_plan(observation, **plan_options, sample_time_of_day=False,
+                                  legacy_rule_sampling=legacy_sampling)
+                plan["personas"] = personas
+                if saved_plan == plan:
+                    break
+            else:
+                raise ValueError("Resume requires the same observation, seed, modules and persona")
         result = json.loads((output / "dialogue.json").read_text())
         assign_generation_requirements(result)
         validate_plan(result)
         completed_count = result["realization"]["completed_turns"]
+        if result["realization"]["backend"] == "sonnet" and result["realization"].get("think_mode", "low") != think_mode:
+            raise ValueError("Resume requires the original Sonnet think mode")
         if len(result["turns"]) != len(plan["turns"]) or not 0 <= completed_count <= len(plan["turns"]):
             raise ValueError("Invalid completed-turn checkpoint")
         for i, turn in enumerate(result["turns"]):
-            if {**turn, "content": None} != plan["turns"][i] or bool(turn["content"]) != (i < completed_count):
+            if {**{k:v for k,v in turn.items() if k != "generation_opening"}, "content": None} != plan["turns"][i] or bool(turn["content"]) != (i < completed_count):
                 raise ValueError("Checkpoint is not an intact realized prefix of this plan")
         save(output / 'plan.json', saved_plan)
     else:
@@ -133,9 +211,10 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
     owned = realizer is None
     if owned:
         realizer = QwenRealizer(backend=backend, model=model, base_url=base_url,
-                                output_dir=output / "qwen", max_tokens=max_tokens, timeout=timeout,
+                                output_dir=output / ("sonnet" if backend == "sonnet" else "qwen"),
+                                max_tokens=max_tokens, timeout=timeout,
                                 personas=plan["personas"], context_tokens=context_tokens,
-                                model_mode=model_mode, **sampling,
+                                model_mode=model_mode, think_mode=think_mode, **sampling,
                                 asset_names={a["id"]: a.get("name", a["id"]) for a in observation["assets"]})
     if resume and (result["realization"]["backend"] != getattr(realizer, "backend", "injected")
                    or result["realization"]["model"] != getattr(realizer, "model", "injected-test-realizer")
@@ -145,17 +224,16 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
         raise ValueError("Resume must use the same realization model/backend")
     prior_stats = result.get("stats", {})
     previous_elapsed = prior_stats.get("time_elapsed_seconds", 0.0)
-    previous_generation = {k:v for k,v in prior_stats.get("generation", {}).items() if isinstance(v, (int, float))}
+    previous_generation = deepcopy(prior_stats.get("generation", {}))
     baseline = generation_snapshot(realizer)
     injected_attempts = 0
     def refresh_stats():
         current = generation_snapshot(realizer)
-        generation = {key: previous_generation.get(key, 0) + current.get(key, 0) - baseline.get(key, 0)
-                      for key in current.keys() | previous_generation.keys()}
+        generation = accumulate_generation(previous_generation, current, baseline)
         if not hasattr(realizer, "rewrite_attempts"):
             generation["rewrite_attempts"] = previous_generation.get("rewrite_attempts", 0) + injected_attempts
-        generation["token_counts_source"] = getattr(realizer, 'backend', 'unavailable') if getattr(realizer, 'backend', None) in ('ollama', 'vllm') else 'unavailable'
-        # Only numeric counters take part in resume arithmetic.
+        generation["token_counts_source"] = getattr(realizer, 'backend', 'unavailable') if getattr(realizer, 'backend', None) in ('ollama', 'vllm', 'sonnet') else 'unavailable'
+        # Only numeric leaves take part in resume arithmetic.
         result["stats"] = collect_stats(result, observation,
             elapsed_seconds=previous_elapsed + time.perf_counter() - started, generation=generation)
 
@@ -164,6 +242,8 @@ def run(input_path, output_dir, *, seed=0, reworks=1, p_compile=0.65,
                                  model_mode=getattr(realizer, "model_mode", "injected"),
                                  status="running", completed_turns=completed_count,
                                  sampling=sampling, rewrite_seed=rewrite_seed, rewrite_seed_stride=seed_stride)
+    if think_mode is not None:
+        result["realization"]["think_mode"] = think_mode
     media = {m["placeholder"]: m for m in result["placeholders"]}
     completed = result["turns"][:completed_count]
     refresh_stats()
@@ -220,8 +300,9 @@ def main():
     parser.add_argument("--no-extra-behaviors", action="store_true",
                         help="Disable optional ambiguity, constraint and shot-requirement conflict episodes")
     parser.add_argument('--no-cross-turn-rule', action='store_true', help='Disable randomly sampled cross-turn rules; explicit input constraints remain modeled')
-    parser.add_argument("--backend", choices=("ollama", "local", "vllm"), default=DEFAULT_BACKEND)
-    parser.add_argument("--model", help=f"Default: {DEFAULT_OLLAMA_MODEL} (Ollama), {DEFAULT_LOCAL_MODEL} (local)")
+    parser.add_argument("--backend", choices=BACKENDS, default=DEFAULT_BACKEND)
+    parser.add_argument("--model", help=f"Default: {DEFAULT_OLLAMA_MODEL} (Ollama), {DEFAULT_LOCAL_MODEL} (local), {SONNET_MODEL_ID} (Sonnet)")
+    parser.add_argument("--think-mode", choices=SONNET_EFFORTS, help="Sonnet reasoning effort (default: low)")
     parser.add_argument("--enable-thinking", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--model-mode", choices=("instruct", "thinking"),
                         help="Override mode inference for custom model names; explicit instruct/thinking aliases are recommended")
@@ -243,7 +324,7 @@ def main():
     try:
         result = run(args.observation, args.output_dir, seed=args.seed, reworks=args.reworks,
                      p_compile=args.p_compile, modules=args.modules,
-                     extra_behaviors=not args.no_extra_behaviors, backend=args.backend,
+                     extra_behaviors=not args.no_extra_behaviors, backend=args.backend, think_mode=args.think_mode,
                      model=args.model, model_mode=("thinking" if args.enable_thinking else "instruct") if args.enable_thinking is not None else args.model_mode, base_url=args.base_url, max_tokens=args.max_tokens,
                      timeout=args.timeout, progress=not args.quiet,
                      user_persona=args.user_persona, context_tokens=args.context_tokens, resume=args.resume,

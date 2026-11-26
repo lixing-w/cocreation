@@ -16,7 +16,7 @@ EXAMPLE = Path(__file__).resolve().parents[1] / 'scripts/dialogue_generation/exa
 class BatchRevisionTests(unittest.TestCase):
     def setUp(self):
         self.source = json.loads(EXAMPLE.read_text())
-        self.plan = build_plan(self.source, seed=0, reworks=2, p_compile=.5, cross_turn_rules=False)
+        self.plan = build_plan(self.source, seed=74, reworks=2, p_compile=.5, cross_turn_rules=False)
         self.request = next(t for t in self.plan['turns'] if t['intent']['action'] == 'request_reworks')
         self.questions, self.answer, self.delivery = self.plan['turns'][self.request['id']:self.request['id'] + 3]
 

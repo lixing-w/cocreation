@@ -18,14 +18,14 @@ BASE_SECTIONS = ('integrated_multimodal_description','overall_soundscape','non_d
 
 def prepare_inputs(description, references, target):
     """Validate prose and construct observation-to-generator labels in source order."""
-    if target not in ('flux', 'h3'):
-        raise ValueError('Expected flux or h3')
+    if target not in ('flux', 'h3', 'h3_image'):
+        raise ValueError('Expected flux, h3 or h3_image')
     refs = [reference(r) for r in references or []]
     labels = media_catalog(refs)
     description = validate_sources(description, refs)
     if set(SOURCE.findall(description)) != set(labels.values()):
         raise ValueError('Every supplied reference must appear in the description')
-    if len(refs) > (4 if target == 'flux' else 32):
+    if len(refs) > (4 if target == 'flux' else 16 if target == 'h3_image' else 32):
         raise ValueError('Too many generation references')
     catalog = []
     for index, ref in enumerate(refs, 1):
@@ -69,11 +69,11 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
         require(not any(token in prompt for token in ('```', '{{artifact:', '<|')),
                 'forbidden_markup', 'Prompt contains code fences, unresolved artifact placeholders or model tokens')
         expected = {row['observation_label' if target == 'flux' else 'generator_label'] for row in catalog}
-        subjects, found = set(), set()
+        found = set()
         for match in LABEL.finditer(prompt):
             label = match.group()
-            if re.fullmatch(r'<Subject [1-9]\d*>', label) and target == 'h3' and catalog:
-                subjects.add(label)
+            if re.fullmatch(r'<Subject [1-9]\d*>', label) and target in ('h3', 'h3_image') and catalog:
+                continue
             elif label in expected:
                 require(not source_attachment or prompt[:match.start()].endswith('like in '), 'source_attachment',
                         f'Each media label must immediately follow like in: {label}')
@@ -82,6 +82,9 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
                 raise PromptValidationError('unexpected_label',
                     f'Unexpected label {label!r}; expected media labels {sorted(expected)}')
         require(found == expected, 'missing_labels', f'Missing media labels: {sorted(expected - found)}')
+        if target == 'h3_image':
+            require(len(prompt.split()) <= 1200, 'h3_image_word_limit', 'H3 Image prompt exceeds 1200 words')
+            return prompt
         if target == 'flux':
             require(len(prompt.split()) <= 200, 'flux_word_limit',
                     f'Flux prompt has {len(prompt.split())} words; maximum is 200')
@@ -95,10 +98,6 @@ def parse_prompt(response, catalog, target, seconds=None, *, diagnostic_path=Non
                   for i,m in enumerate(headings)}
         require(all(bodies.values()), 'empty_sections',
                 f'Empty H3 sections: {[key for key, body in bodies.items() if not body]}')
-        if subjects:
-            defined = re.findall(r'(?m)^(<Subject [1-9]\d*>)(?:\s+|:\s*)', bodies['subject_definitions'])
-            require(set(defined) == subjects and len(defined) == len(subjects), 'subject_definitions',
-                    f'Each subject needs one own-line definition; used {sorted(subjects)}, defined {defined}')
         body = bodies['detailed_description' if catalog else 'integrated_multimodal_description']
         shots = list(re.finditer(r'\[Shot (\d+)\]',body))
         numbers = [int(m[1]) for m in shots]
@@ -149,8 +148,8 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
     """
     if not isinstance(brief,str):
         raise TypeError('user_prompt must be text')
-    if target == 'h3' and (type(seconds) not in (int,float) or not math.isfinite(seconds) or not 5<=seconds<=15):
-        raise ValueError('VDNH3 seconds must be between 5 and 15')
+    if target == 'h3' and (type(seconds) not in (int,float) or not math.isfinite(seconds) or not 4<=seconds<=15):
+        raise ValueError('MiniMaxH3 seconds must be between 4 and 15')
     rows, refs, catalog = prepare_inputs(attributes, references, target)
     for row in catalog:
         row['description'] = '\n'.join(line for line in rows.splitlines()
@@ -169,7 +168,7 @@ def run_prompter(target, attributes, references, brief, *, qwen, factory,
                                             if use_system_cache and getattr(model, "supports_system_cache", True) else None),
                          max_new_tokens=max_new_tokens, video_fps=video_fps,
                          video_max_frames=video_max_frames, max_pixels=max_pixels, output_dir=output_dir)
-        return parse_prompt(response, catalog, target, seconds,
+        return parse_prompt(response, catalog, target, seconds, source_attachment=target != 'h3_image',
                             diagnostic_path=Path(output_dir)/'diagnostics.jsonl' if output_dir is not None else None)
     finally:
         if owned:

@@ -2,6 +2,9 @@
 
 - `flux-image-best-practices`: Black Forest Labs' official image prompting skill.
 - `h3-prompt-writing`: MiniMax's official H3 base/reference prompt writing skill.
+- `h3-image-prompt-writing`: MiniMax's official still-image skill, pinned to
+  `40850901ab938303b5274122b5f305ebc5b75c80`. Qwen receives matching rules without
+  worked examples; the upstream snapshot stays intact.
 
 Original upstream files are preserved. Each `SOURCE.json` records the pinned commit,
 source URLs and SHA-256 hashes. These are project reference materials, not changes

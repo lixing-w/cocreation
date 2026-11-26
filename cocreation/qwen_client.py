@@ -2,13 +2,14 @@
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import json
+import os
 from pathlib import Path
 import secrets
 import urllib.error
 import urllib.request
 import uuid
 
-from .qwen_inputs import normalize_messages
+from .qwen_inputs import DEFAULT_VIDEO_FPS, DEFAULT_VIDEO_MAX_FRAMES, normalize_messages
 from .qwen_sampling import generation_options
 from .references import prepare
 from .storage import scratch_root
@@ -47,7 +48,8 @@ class VLLMQwen:
     supports_system_cache = False  # vLLM owns prefix/KV state.
 
     def __init__(self, model_id=MODEL_ID, *, base_url='http://127.0.0.1:8000',
-                 timeout=600, output_dir=None, video_fps=1.0, video_max_frames=16, enable_thinking=False):
+                 timeout=600, output_dir=None, video_fps=None,
+                 video_max_frames=DEFAULT_VIDEO_MAX_FRAMES, enable_thinking=False):
         self.model_id = model_id
         if type(enable_thinking) is not bool:
             raise TypeError("enable_thinking must be bool")
@@ -56,7 +58,9 @@ class VLLMQwen:
         if not self.base_url.endswith('/v1'):
             self.base_url += '/v1'
         self.timeout = timeout
-        self.video_fps, self.video_max_frames = video_fps, video_max_frames
+        self.video_fps = float(os.environ.get('COCREATION_VLLM_VIDEO_FPS', DEFAULT_VIDEO_FPS)) if video_fps is None else video_fps
+        self.video_max_frames = video_max_frames
+        self.max_pixels = int(os.environ.get('COCREATION_VLLM_MAX_PIXELS', 512*512))
         self.output_dir = Path(output_dir) if output_dir is not None else scratch_root()/'runs'
 
     def close(self):
@@ -90,21 +94,32 @@ class VLLMQwen:
 
     def __call__(self, prompt=None, references=None, *, messages=None,
                  max_new_tokens=1024, video_fps=None, video_max_frames=None,
-                 max_pixels=512*512, seed=None, dry_run=False, system_prompt=None,
+                 max_pixels=None, seed=None, dry_run=False, system_prompt=None,
                  assistant_prefill=None, system_cache_path=None, output_dir=None,
-                 temperature=0.8, top_p=0.95, top_k=50, response_schema=None, enable_thinking=None):
+                 temperature=0.8, top_p=0.95, top_k=50, response_schema=None, enable_thinking=None,
+                 thinking_token_budget=None):
         from .worker import qwen_messages
         enable_thinking = self.enable_thinking if enable_thinking is None else enable_thinking
         if type(enable_thinking) is not bool:
             raise TypeError("enable_thinking must be bool")
         video_fps = self.video_fps if video_fps is None else video_fps
         video_max_frames = self.video_max_frames if video_max_frames is None else video_max_frames
+        max_pixels = self.max_pixels if max_pixels is None else max_pixels
         sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
         seed = secrets.randbits(63) if seed is None else seed
         if type(seed) is not int or not 0 <= seed < 2**63:
             raise ValueError('Qwen seed must be an integer in [0, 2**63), or None')
         if type(max_new_tokens) is not int or max_new_tokens < 1 or video_fps <= 0 or video_max_frames < 2 or max_pixels < 1024:
             raise ValueError('Invalid Qwen token/frame/pixel budget')
+        if thinking_token_budget is not None:
+            if type(thinking_token_budget) is not int or not 0 <= thinking_token_budget < max_new_tokens:
+                raise ValueError('thinking_token_budget must be an integer from 0 to max_new_tokens - 1')
+            if not enable_thinking:
+                raise ValueError('thinking_token_budget requires enable_thinking=True')
+        elif enable_thinking:
+            # max_tokens includes reasoning and final text. Reserve at least
+            # half for the answer; the server forces the reasoning end marker.
+            thinking_token_budget = min(2048, max_new_tokens // 2)
         if system_cache_path:
             raise ValueError('Use vLLM automatic prefix caching instead of a native system_cache_path')
         if assistant_prefill:
@@ -140,6 +155,8 @@ class VLLMQwen:
                     max_tokens=max_new_tokens, temperature=sampling['temperature'],
                     top_p=sampling['top_p'], top_k=sampling['top_k'], seed=seed, stream=False,
                     chat_template_kwargs=dict(enable_thinking=enable_thinking))
+        if enable_thinking:
+            body['thinking_token_budget'] = thinking_token_budget
         kinds = {item['type'] for message in normalized
                  for item in (message['content'] if isinstance(message['content'], list) else [])}
         if kinds & {'image', 'video'}:
@@ -147,7 +164,8 @@ class VLLMQwen:
             if 'video' in kinds:
                 if video_fps != self.video_fps or video_max_frames != self.video_max_frames:
                     raise ValueError('Video sampling is fixed at server launch in this deployment; match the client/server FPS and frame limit, or use native Qwen')
-                body['mm_processor_kwargs'].update(fps=video_fps, do_sample_frames=False)
+                body['mm_processor_kwargs'].update(fps=video_fps,
+                    max_frames=video_max_frames, do_sample_frames=False)
         if response_schema is not None:
             body['response_format'] = dict(type='json_schema',
                 json_schema=dict(name='response', strict=True, schema=response_schema))
@@ -177,6 +195,10 @@ class VLLMQwen:
             model_id=self.model_id, finish_reason=choice.get('finish_reason'),
             input_tokens=usage.get('prompt_tokens'), output_tokens=usage.get('completion_tokens'),
             usage=usage, reasoning=choice['message'].get('reasoning') or choice['message'].get('reasoning_content'),
-            enable_thinking=enable_thinking, job_dir=str(directory), request_path=str(directory/'request.json'), bindings=bindings)
+            enable_thinking=enable_thinking, thinking_token_budget=thinking_token_budget,
+            job_dir=str(directory), request_path=str(directory/'request.json'), bindings=bindings)
+        if 'video' in kinds:
+            result['video_sampling'] = dict(fps=video_fps, max_frames=video_max_frames,
+                coverage='uniform_across_full_clip_including_endpoints', processor_resampling=False)
         (directory/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
         return result

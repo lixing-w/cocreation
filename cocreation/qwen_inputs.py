@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 
+DEFAULT_VIDEO_FPS = 1.0
+DEFAULT_VIDEO_MAX_FRAMES = 64
+
 
 def _media_path(value, check_files):
     value = str(value) if isinstance(value, Path) else value
@@ -21,7 +24,7 @@ def _media_path(value, check_files):
 
 
 def normalize_messages(messages, *, check_files=True, max_pixels=512*512,
-                       video_fps=1.0, video_max_frames=16):
+                       video_fps=DEFAULT_VIDEO_FPS, video_max_frames=DEFAULT_VIDEO_MAX_FRAMES):
     """Preserve turns/content order; leave encoding and positions to Qwen's processor."""
     if not isinstance(messages, (list, tuple)) or not messages:
         raise ValueError('messages must be a nonempty list of conversations turns')

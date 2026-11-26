@@ -1,0 +1,4 @@
+interface:
+  display_name: "MiniMax-H3-Image Prompt Writing"
+  short_description: "Write MiniMax-H3-Image text-to-image and editing prompts, and render them with the MiniMax API"
+  default_prompt: "Use $h3-image-prompt-writing to write an image prompt from my idea, brief, existing prompt, or reference images."

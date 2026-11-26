@@ -116,7 +116,9 @@
         "lighting_temperature": "warm-toned",
         "lighting_softness": "soft light",
         "time_of_day": "night",
-        "camera_distance": "medium shot"
+        "camera_distance": "medium shot",
+        "season": "unknown",
+        "weather": "unknown"
       }
     },
     {
@@ -186,7 +188,7 @@
   "constraints": [
     {
       "text": "Set all vlog footage in Tokyo at night. Standalone character and prop references are exempt.",
-      "scope": "shots",
+      "scope": "partial",
       "asset_attributes": {
         "street": {
           "time_of_day": "night"
@@ -194,6 +196,11 @@
         "cafe": {
           "time_of_day": "night"
         }
+      },
+      "selector": {
+        "kinds": [
+          "video"
+        ]
       }
     }
   ],

@@ -12,6 +12,11 @@ from cocreation.vdn_worker import NativeVDNSession, VDNSession
 
 class VideoSessionTests(unittest.TestCase):
     def test_comfy_server_reused_and_outputs_are_job_specific(self):
+        for turbo in (False, True):
+            with self.subTest(turbo=turbo):
+                self.check_comfy_server(turbo)
+
+    def check_comfy_server(self, turbo):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); entries=[]; exits=[]; home=[]
             @contextmanager
@@ -26,10 +31,11 @@ class VideoSessionTests(unittest.TestCase):
                 output=home[0]/'comfy_output'/graph['save']['inputs']['filename_prefix']
                 output.parent.mkdir(parents=True); output.with_suffix('.mp4').write_bytes(b'video')
                 return {'prompt_id':'id'}
-            request=MiniMaxH3(runtime=H3Runtime(root=str(root),accept_model_license=True))('hi',dry_run=True)
+            request=MiniMaxH3(runtime=H3Runtime(root=str(root),accept_model_license=True, turbo=turbo))('hi',dry_run=True)
             from cocreation.h3 import build_graph
             self.graph=build_graph(request, [])
-            with patch('cocreation.comfy_worker.prepare_runtime',return_value=(root,root/'python')) as setup, \
+            with patch('cocreation.comfy_worker.prepare_turbo') as prepare_turbo, \
+                 patch('cocreation.comfy_worker.prepare_runtime',return_value=(root,root/'python')) as setup, \
                  patch('cocreation.comfy_worker.download_models',return_value=['model']) as download, \
                  patch('cocreation.comfy_worker.server',side_effect=server), \
                  patch('cocreation.comfy_worker.api',side_effect=api), \
@@ -40,6 +46,8 @@ class VideoSessionTests(unittest.TestCase):
                     results.append(session.execute(request,job))
                 self.assertEqual(len(entries),1); self.assertFalse(exits)
                 setup.assert_called_once(); download.assert_called_once()
+                self.assertEqual(prepare_turbo.call_count, int(turbo))
+                self.assertEqual(results[0]['turbo'] is not None, turbo)
                 self.assertNotEqual(results[0]['path'],results[1]['path'])
                 self.assertTrue(all(Path(r['path']).is_file() for r in results))
                 session.close(); self.assertEqual(len(exits),1)

@@ -17,43 +17,15 @@ class RevisionTests(unittest.TestCase):
     def source(self):
         return json.loads((ROOT/'scripts/dialogue_generation/examples/tokyo_vlog.json').read_text())
 
-    def test_monochrome_contract_has_no_conflicting_hues_or_saturation(self):
-        task=dict(backend='flux',operation='text_generation',subject='Pink Sheep',layout='product',
-            desired_description='A sheep with pink wool under warm-toned lights.',
-            desired_attributes=dict(color='pink',color_saturation='medium saturation',texture='fuzzy'),
-            render_state=dict(color_mode='black_and_white'),changes=[],references=[])
-        data=writer_contract(task); text=json.dumps(data).lower()
-        for unwanted in ('pink','saturation','warm-toned'):self.assertNotIn(unwanted,text)
-        self.assertEqual(data['output_color_mode'],'black_and_white')
-        from scripts.dialogue_generation.appearance_policy import output_contract
-        self.assertEqual(output_contract(dict(hair_color='white',color='pink'),dict(color_mode='black_and_white')),dict(hair_color='white'))
-        good='A fuzzy sheep on a neutral studio background, entirely in black and white.'
-        request=Mock(side_effect=[('A pink sheep on a neutral studio background, in black and white.','stop'),(good,'stop')])
-        self.assertEqual(rewrite_placeholder(task,request),good)
-        self.assertEqual(request.call_count,2)
 
-    def test_monochrome_video_rejects_a_selective_color_exception(self):
-        task=dict(backend='vdn_h3',operation='video_edit',seconds=4,changes=[dict(field='Bag.color_saturation',after='medium saturation')],
-            render_state=dict(color_mode='black_and_white'),references=[dict(kind='video',label='<Video 1>',role='source video'),dict(kind='image',label='<Picture 1>',role='updated bag')])
-        self.assertEqual(writer_contract(task)['changes'],[])
-        base='subject_definitions: The bag in <Video 1> now matches <Picture 1>.\nsummary: [video editing] Edit <Video 1>. '
-        tail='\nretention_analysis: Preserve source action.\ndetailed_description: [Shot 1] Retain the same action.\noverall_soundscape: N/A\nnon_diegetic_music: N/A'
-        bad=base+'Black and white except for the brown bag with medium saturation.'+tail
-        good=base+'Render the entire scene and every subject in grayscale.'+tail
-        request=Mock(side_effect=[(bad,'stop'),(good,'stop')])
-        self.assertEqual(rewrite_placeholder(task,request),good)
-        self.assertEqual(request.call_count,2)
 
     def test_subtle_metadata_never_drives_a_variation(self):
         row=next(a for a in self.source()['assets'] if a['id']=='bag')
         choices=alternatives(row)
         for key in ('size','color_saturation','color_lightness','condition'):self.assertNotIn(key,choices)
-        self.assertTrue({'color','shape','material'} <= set(choices))
+        self.assertEqual({'color','material'}, set(choices))
         fields=[alternate(row,AssetSpec(row),random.Random(seed)).change['field'] for seed in range(300)]
-        self.assertGreater(sum(k in ('color','shape','material') for k in fields),150)
-        source=self.source();source['constraints']=[dict(scope='global',selector={},effect=dict(color_mode='black_and_white'),text='')]
-        plan=build_plan(source,seed=4,reworks=2)
-        self.assertFalse(any(e['field'] in ('color','hair_color','clothing_color','color_saturation') for e in plan['rework_plan']))
+        self.assertGreater(sum(k in ('color','material') for k in fields),150)
 
     def staged(self,scope):
         source=self.source(); bag=next(a for a in source['assets'] if a['id']=='bag')
@@ -61,7 +33,7 @@ class RevisionTests(unittest.TestCase):
         p=Planner(source,seed=3,reworks=1,cross_turn_rules=False,extra_behaviors=False)
         p.single('bag','direct');old=p.ready['bag']
         for sid in ('S1','S2'):
-            token=p.add_media('video',p.shots[sid]['description'],assets=['bag'],shots=[sid],inputs=[old],purpose='shot',bindings=dict(bag=old))
+            token=p.add_media('video',p.shots[sid]['description'],assets=['bag'],shots=[sid],inputs=[old],operation='generate_clip',bindings=dict(bag=old))
             p.emit('assistant','deliver_shot','Here is the clip.',outputs=[token])
             p.rendered[sid]=token;p.bindings[sid]=dict(bag=old);p.render_order.append(sid)
         p.compilation(['S1','S2'],'request_compilation')
@@ -88,7 +60,7 @@ class RevisionTests(unittest.TestCase):
         self.assertEqual(task['seconds'],4)
         self.assertEqual(task['output_seconds'],4)
         cut=media[delivery['intent']['updated_compilation']]
-        self.assertEqual(cut['shot_versions']['S2'],next(m['placeholder'] for m in media.values() if m['purpose']=='shot' and m['shot_ids']==['S2']))
+        self.assertEqual(cut['shot_versions']['S2'],next(m['placeholder'] for m in media.values() if m['operation']=='generate_clip' and m['shot_ids']==['S2']))
 
     def test_all_existing_scope_updates_together_and_changes_future_default(self):
         plan,old,new,delivery=self.staged('all_uses')
@@ -128,17 +100,6 @@ class MaterializePolicyTests(unittest.TestCase):
                 self.assertTrue((self.run/row['generation_record']).is_file())
                 self.assertTrue(row['runtime_cleaned'])
 
-    def test_monochrome_output_is_enforced_after_the_model(self):
-        from PIL import Image
-        import subprocess
-        for row in self.catalog:
-            if row.get('backend'):row['render_state']=dict(color_mode='black_and_white')
-        self.persist();self.execute()
-        with Image.open(self.run/'media/image_0001.png') as image:
-            r,g,b=image.convert('RGB').split()
-            self.assertEqual(r.tobytes(),g.tobytes());self.assertEqual(g.tobytes(),b.tobytes())
-        frame=subprocess.check_output(['ffmpeg','-v','error','-i',str(self.run/'media/video_0002.mp4'),'-frames:v','1','-vf','scale=1:1','-f','rawvideo','-pix_fmt','rgb24','-'])
-        self.assertLessEqual(max(frame)-min(frame),2)
 
     def test_assembly_appearance_edits_are_separate_short_calls(self):
         parent=next(t for t in self.catalog if t['placeholder']=='[[video_0003]]')

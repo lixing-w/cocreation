@@ -10,6 +10,19 @@ from cocreation.h3 import COMFY_REVISION, H3Runtime, model_files
 
 
 class ComfyWorkerTests(unittest.TestCase):
+    def test_materializer_preflight_only_requires_turbo_assets_when_enabled(self):
+        from scripts.dialogue_generation.materialize import preflight_models
+        from cocreation.h3 import TURBO_LORA
+        tasks = {'video': dict(operation='text_generation', backend='minimax_h3')}
+        for turbo in (False, True):
+            with self.subTest(turbo=turbo), \
+                 patch('cocreation.comfy_worker.prepare_runtime', return_value=(Path('/tmp/comfy'), 'python')), \
+                 patch('cocreation.comfy_worker.download_models', return_value=['base']), \
+                 patch('cocreation.comfy_worker.prepare_turbo') as prepare_turbo:
+                result = next(iter(preflight_models(tasks, video_turbo_lora=turbo).values()))
+                self.assertEqual(prepare_turbo.call_count, int(turbo))
+                self.assertEqual(result['lora'], TURBO_LORA if turbo else None)
+
     def test_no_setup_in_offline_mode(self):
         with tempfile.TemporaryDirectory() as tmp, patch('cocreation.comfy_worker.run') as run:
             with self.assertRaisesRegex(RuntimeError, 'not prepared'):

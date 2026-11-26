@@ -42,23 +42,23 @@ class PromptTests(unittest.TestCase):
             self.assertIn(personas["user"]["style"], prompt)
             self.assertIn(personas["user"]["example"], prompt)
             positions = [prompt.index(part) for part in ["Speak as the User", "Tone examples:",
-                         "Previous messages", "Now, write", "Reply intention:",
-                         "Content requirements"]]
+                         "Previous messages", "Now, write", "Current speech act", "Reply intention:",
+                         "Content and action for this turn"]]
             self.assertEqual(positions, sorted(positions))
             self.assertTrue(prompt.endswith("Return only the user's spoken line."))
 
-    def test_formal_shot_category_is_shared_by_writer_and_verifier(self):
+    def test_video_kind_is_shared_by_writer_and_verifier(self):
         model = self.model()
         turn = dict(id=1, role='user', intent=dict(action='request_shot',
             description='Make the planned shot.', shot_description='Slow push-in on the cup.',
-            media_rule_context=['formal shots: black-and-white rendering']))
-        with patch.object(model, '_request', return_value='Make a formal black-and-white shot with a slow push-in on the cup.') as writer:
+            media_rule_context=['video: winter as the background season']))
+        with patch.object(model, '_request', return_value='Make a video with a slow push-in on the cup.') as writer:
             model(turn, {})
-        self.assertIn('Required media category: formal shots.', writer.call_args.args[0])
+        self.assertIn('Requested media kind: video.', writer.call_args.args[0])
         brief = model.verifier.call_args.args[1]
-        self.assertEqual(brief['intent_facts']['requested_media_role'], 'shot')
+        self.assertEqual(brief['intent_facts']['requested_media_kind'], 'video')
         from tools.dialogue_verifier import build_prompt
-        self.assertIn('Required media category: formal shots.', build_prompt('candidate', brief))
+        self.assertIn('Requested media kind: video.', build_prompt('candidate', brief))
 
     def test_writer_system_and_prompt_reach_wire_without_copying_draft_into_prefill(self):
         prompt = "Speak as the User with this tone:\nCasual.\nDraft content requirements: UNIQUE_FACT."
@@ -75,7 +75,7 @@ class PromptTests(unittest.TestCase):
             self.assertEqual(body["prompt"].count("UNIQUE_FACT"), 1)
             self.assertEqual(json.loads((Path(tmp)/"requests.jsonl").read_text()), body)
 
-    def test_action_control_is_system_only_and_reaches_ollama(self):
+    def test_action_control_is_in_user_prompt_and_reaches_ollama(self):
         from tools.dialogue_realizer import ACT_GUIDANCE
         with tempfile.TemporaryDirectory() as tmp:
             model = self.model(output_dir=tmp)
@@ -84,8 +84,10 @@ class PromptTests(unittest.TestCase):
                 model(turn, {})
             body = json.loads(request.call_args.args[0].data)
             system, user = body["prompt"].split("<|im_start|>user\n", 1)
-            self.assertIn(ACT_GUIDANCE["request_shot"], system)
-            self.assertNotIn(ACT_GUIDANCE["request_shot"], user)
+            self.assertNotIn(ACT_GUIDANCE["request_shot"], system)
+            self.assertIn(ACT_GUIDANCE["request_shot"], user)
+            self.assertLess(user.index("Previous messages"), user.index(ACT_GUIDANCE["request_shot"]))
+            self.assertLess(user.index(ACT_GUIDANCE["request_shot"]), user.index("Reply intention:"))
             self.assertNotIn("Action: request_shot", user)
 
     def test_verifier_uses_same_model_distinct_system_and_structured_report_contract(self):
@@ -158,7 +160,7 @@ class PromptTests(unittest.TestCase):
             turn = dict(id=1, role=role, intent=dict(action=action, description=description))
             with patch.object(model, "_request", return_value="A line.") as writer:
                 model(turn, {})
-            notes = writer.call_args.args[0].split("Content requirements", 1)[1]
+            notes = writer.call_args.args[0].split("Content and action for this turn", 1)[1]
             self.assertNotIn("Got it, we'll use", notes)
             self.assertNotIn("Here's the reference", notes)
             self.assertNotIn("Let's use this version.", notes)
@@ -171,7 +173,36 @@ class PromptTests(unittest.TestCase):
         with patch.object(model, "_request", return_value="Use the second one for now.") as writer:
             model(turn, {}, previous)
         self.assertIn("Selected option number: 2", writer.call_args.args[0])
-        self.assertIn("Decision status: temporary", writer.call_args.args[0])
+        self.assertNotIn("Decision status:", writer.call_args.args[0])
+        self.assertNotIn("decision", model.verifier.call_args.args[1]["intent_facts"])
+
+    def test_legacy_adoption_state_does_not_become_a_spoken_requirement(self):
+        from tools.dialogue_verifier import build_prompt
+
+        model = self.model(asset_names={"person": "man"})
+        previous = [dict(role="assistant", content="Here is the reference image.", output_media=["ref"])]
+        for action, description, candidate in [
+            ("adopt", "Use this version for now while we explore.", "I'll take that version."),
+            ("temporary_adoption_trial", "Use this version for now. Make a test clip.",
+             "Use that variant in a short test clip with the traveler.")
+        ]:
+            with self.subTest(action=action):
+                turn = dict(id=5, role="user", intent=dict(action=action, description=description,
+                            asset_ids=["person"], context_media=["ref"], decision="temporary"))
+                with patch.object(model, "_request", return_value=candidate) as writer:
+                    self.assertEqual(model(turn, {}, previous), candidate)
+                brief = model.verifier.call_args.args[1]
+                judge_prompt = build_prompt(candidate, brief)
+                for prompt in (writer.call_args.args[0], judge_prompt):
+                    self.assertNotIn("Decision status:", prompt)
+                    self.assertNotIn("for now", prompt)
+                    self.assertNotIn("temporary", prompt.lower())
+                self.assertNotIn("decision", brief["intent_facts"])
+                if action == "adopt":
+                    self.assertEqual(brief["offered_choice_count"], 1)
+                    self.assertIn("accept the single reference", " ".join(brief["draft_content_requirements"]))
+                else:
+                    self.assertIn("short test clip", " ".join(brief["draft_content_requirements"]))
 
     def test_verifier_gets_separate_content_notes_and_actual_delivered_subjects(self):
         model = self.model(asset_names={"bag":"tote bag"})
@@ -237,7 +268,8 @@ class PromptTests(unittest.TestCase):
         turn = dict(id=1, role="user", intent=dict(action="request_shot", description="Ask for a tracking shot."))
         with patch.object(model, "_request", return_value="Can we get a tracking shot?") as writer:
             model(turn, {}, review_feedback="REVIEW_NOTE: rewrite the whole line in English.")
-        self.assertIn("REVIEW_NOTE", model._writer_control)
+        self.assertIn("Important turn requirement: REVIEW_NOTE", writer.call_args.args[0])
+        self.assertNotIn("REVIEW_NOTE", model._writer_control)
         self.assertNotIn("REVIEW_NOTE", json.dumps(model.verifier.call_args.args[1]))
 
     def test_required_version_detail_is_content_for_both_writer_and_judge(self):
@@ -254,7 +286,7 @@ class PromptTests(unittest.TestCase):
         turn = dict(id=15, role="user", intent=dict(action="rollback", asset_ids=["bag"],
                     description="Return to the canvas tote bag.", context_media=["earlier"],
                     required_attribute=dict(label="main material", value="canvas", alternative="PRIVATE_ALTERNATIVE")))
-        media = {"earlier":dict(kind="image", purpose="asset", asset_ids=["bag"])}
+        media = {"earlier":dict(kind="image", operation='create_reference', asset_ids=["bag"])}
         previous = [dict(role="user", content="Let's test the wood version."),
                     dict(role="assistant", content="The test clip is ready.")]
         with patch.object(model, "_request", return_value="Back to the canvas tote bag.") as writer:
@@ -266,7 +298,7 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_ALTERNATIVE", json.dumps(brief))
         self.assertIn("earlier reference of the tote bag", writer.call_args.args[0])
 
-    def test_original_description_and_subject_transition_reach_judge(self):
+    def test_projected_requirements_and_subject_transition_reach_judge(self):
         model = self.model(asset_names={"bag": "tote bag", "woman": "lead traveler"})
         turn = dict(id=11, role="user", intent=dict(action="request_variant", asset_ids=["bag"],
                     reference_policy="clear", description="Try the previous tote bag with wood."))
@@ -274,7 +306,8 @@ class PromptTests(unittest.TestCase):
         with patch.object(model, "_request", return_value="Try that tote bag with wood."):
             model(turn, {}, previous)
         brief = model.verifier.call_args.args[1]
-        self.assertEqual(brief["python_description"], turn["intent"]["description"])
+        self.assertEqual(brief["draft_content_requirements"], [turn["intent"]["description"]])
+        self.assertNotIn('python_description', brief)
         self.assertIn("preceding turn concerns lead traveler", brief["reference_transition"])
         self.assertIn("'that tote bag'", brief["reference_transition"])
         turn["intent"]["reference_policy"] = "ambiguous_subject"
@@ -304,7 +337,7 @@ class PromptTests(unittest.TestCase):
         self.assertIn("accept the single reference of the Tokyo street just shown", writer.call_args.args[0])
         brief = model.verifier.call_args.args[1]
         self.assertEqual(brief["offered_choice_count"], 1)
-        self.assertEqual(brief["selected_choice_number"], 1)
+        self.assertNotIn("selected_choice_number", brief)
 
     def test_rollback_contrast_uses_only_already_delivered_variant(self):
         model = self.model(asset_names={"bag": "tote bag"})
@@ -342,6 +375,52 @@ class PromptTests(unittest.TestCase):
             model(turn, {}, previous)
         self.assertEqual(model.verifier.call_args.args[1]["prior_subject_discussion"],
                          [dict(role="assistant", content="What should the paddle look like?")])
+
+    def test_first_reference_without_source_reaches_writer_and_independent_judge(self):
+        from tools.dialogue_verifier import build_prompt,reference_state_lines
+        model=self.model(asset_names={'phone':'phone'})
+        turn=dict(id=3,role='user',input_media=[],intent=dict(action='request_asset',first_creation=True,
+            asset_ids=['phone'],description='Request a reference image of the phone held in one hand.',
+            attribute_overrides=[dict(subject='phone',attributes={'color':'unknown','material':'unknown'})]))
+        controls=[]
+        def request(*args):
+            controls.append(model._writer_control)
+            return 'Make a reference image of a phone held in one hand.'
+        with patch.object(model,'_request',side_effect=request) as writer:
+            model(turn,{},[dict(role='user',content='Use portrait for future images.')])
+        self.assertIn('no source media is supplied',controls[0])
+        self.assertNotIn('current reference values',writer.call_args.args[0])
+        self.assertNotIn('Current visual attributes',writer.call_args.args[0])
+        brief=model.verifier.call_args.args[1]
+        judge=build_prompt('Preserve the current reference.',brief)
+        self.assertIn('unavailable current/source reference invents media',judge)
+        self.assertEqual(reference_state_lines(turn['intent']['attribute_overrides']),[])
+
+    def test_supplied_source_is_not_misclassified_as_unavailable(self):
+        model=self.model(asset_names={'phone':'phone'})
+        turn=dict(id=3,role='user',input_media=['photo'],intent=dict(action='request_asset',first_creation=True,
+            asset_ids=['phone'],context_media=['photo'],description='Make a phone reference from this photo.'))
+        with patch.object(model,'_request',return_value='Make a phone reference from this photo.'):
+            model(turn,{'photo':dict(kind='image',asset_ids=['phone'])})
+        self.assertNotIn('reference_creation_requirement',model.verifier.call_args.args[1])
+        self.assertNotIn('no source media is supplied',model._writer_control)
+
+    def test_keep_rule_keeps_pending_generation_in_both_writer_and_judge(self):
+        from tools.dialogue_verifier import build_prompt
+        model=self.model(asset_names={'table':'tables'})
+        turn=dict(id=53,role='user',intent=dict(action='resolve_rule_conflict',asset_ids=['table'],
+            description='Keep portrait for all images and videos; withdraw only the conflicting setting. Proceed with the requested content.',
+            rule_event=dict(type='resolve',outcome='keep')))
+        controls=[]
+        def request(*args):
+            controls.append(model._writer_control)
+            return 'Keep portrait for every image and video, and make the table reference in portrait.'
+        with patch.object(model,'_request',side_effect=request):model(turn,{})
+        self.assertIn('still wants the pending media',controls[0])
+        self.assertIn('image/video request is not canceled',controls[0])
+        judge=build_prompt('candidate',model.verifier.call_args.args[1])
+        self.assertIn('Only the conflicting setting is withdrawn, not the media request',judge)
+        self.assertIn('Canceling or abandoning the media request fails',judge)
 
     def test_clarification_gets_all_re_shown_candidates_without_hidden_answer(self):
         model = self.model(asset_names={"case":"waterproof case", "kayak":"kayak"})

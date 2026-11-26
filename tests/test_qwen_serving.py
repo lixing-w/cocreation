@@ -109,7 +109,7 @@ class ServingHTTP(unittest.TestCase):
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                client = VLLMQwen(base_url=f'http://127.0.0.1:{server.server_port}/v1', output_dir=tmp)
+                client = VLLMQwen(base_url=f'http://127.0.0.1:{server.server_port}/v1', output_dir=tmp, enable_thinking=True)
                 schema = dict(type='object', properties=dict(value=dict(type='string')), required=['value'], additionalProperties=False)
                 result = client.generate_batch([[dict(role='user', content='ALPINE')],
                     [dict(role='user', content='TOKYO')]], seed=10, response_schema=schema, concurrency=2)
@@ -117,7 +117,9 @@ class ServingHTTP(unittest.TestCase):
                 self.assertEqual({body['seed'] for _,body in received}, {10,11})
                 self.assertEqual({path for path,_ in received}, {'/v1/chat/completions'})
                 self.assertTrue(all(body['response_format']['json_schema']['schema'] == schema for _,body in received))
+                self.assertTrue(all(body['thinking_token_budget'] == 512 for _,body in received))
                 for row in result['results']:
+                    self.assertEqual(row['thinking_token_budget'], 512)
                     self.assertTrue(Path(row['request_path']).is_file())
                     self.assertTrue((Path(row['job_dir'])/'response.json').is_file())
         finally:
@@ -137,6 +139,23 @@ class ServingHTTP(unittest.TestCase):
             client.chat(messages, dry_run=True, enable_thinking='false')
         with self.assertRaises(ValueError):
             resolve_model('vllm', 'qwen3-vl-30b-instruct')
+
+    def test_thinking_budget_reserves_final_output_and_is_overridable(self):
+        client = VLLMQwen(enable_thinking=True)
+        messages = [dict(role='user', content='Return JSON.')]
+        for total, expected in ((512, 256), (4096, 2048), (8192, 2048)):
+            body = client.chat(messages, dry_run=True, max_new_tokens=total)['request']
+            self.assertTrue(body['chat_template_kwargs']['enable_thinking'])
+            self.assertEqual(body['thinking_token_budget'], expected)
+            self.assertEqual(body['max_tokens'], total)
+        body = client.chat(messages, dry_run=True, max_new_tokens=8192, thinking_token_budget=1024)['request']
+        self.assertEqual(body['thinking_token_budget'], 1024)
+        self.assertNotIn('thinking_token_budget', client.chat(messages, dry_run=True, enable_thinking=False)['request'])
+        for invalid in (-1, 8192, True, 1.5, '1024'):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'thinking_token_budget'):
+                client.chat(messages, dry_run=True, max_new_tokens=8192, thinking_token_budget=invalid)
+        with self.assertRaisesRegex(ValueError, 'enable_thinking'):
+            client.chat(messages, dry_run=True, enable_thinking=False, max_new_tokens=4096, thinking_token_budget=1024)
 
     def test_vllm_realizer_thinking_uses_template_option_without_prefill(self):
         from tools.dialogue_realizer import QwenRealizer
@@ -162,7 +181,8 @@ class ServingHTTP(unittest.TestCase):
         self.assertEqual(body['messages'][0]['content'][3]['video_url']['url'], Path('/tmp/b.mp4').resolve().as_uri())
         self.assertEqual(body['mm_processor_kwargs']['fps'], 1.0)
         self.assertFalse(body['mm_processor_kwargs']['do_sample_frames'])
-        self.assertNotIn('max_frames', body['mm_processor_kwargs'])
+        from cocreation.qwen_inputs import DEFAULT_VIDEO_MAX_FRAMES
+        self.assertEqual(body['mm_processor_kwargs']['max_frames'], DEFAULT_VIDEO_MAX_FRAMES)
         with self.assertRaisesRegex(ValueError, 'fixed at server launch'):
             VLLMQwen().chat([dict(role='user',content=[dict(type='video',video='/tmp/b.mp4')])],
                            dry_run=True, video_fps=0.5, video_max_frames=8)

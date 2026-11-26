@@ -1,8 +1,8 @@
-"""Fixed H3 writing skill plus local VDN-H3 generation contract."""
+"""Fixed H3 writing skill plus local MiniMax-H3 generation contract."""
 from tools._prompter_prompts import COMMON_INSTRUCTION, FINAL_SCOPE_REMINDER, load_skill, user_prompt
 
 SKILL_FILES = ('SKILL.md', 'references/base-en.txt', 'references/ref-en.txt')
-H3_INSTRUCTION = '''Target: local VDN-H3 through FreeVideo, duration supplied in target_seconds.
+H3_INSTRUCTION = '''Target: original MiniMax-H3 Base-Ref2VA through ComfyUI, duration supplied in target_seconds.
 References present => Ref2VA, even for a single image: use these six plain-text
 section headings in exactly this order, each followed by a colon:
 subject_definitions, summary, retention_analysis, detailed_description,
@@ -20,6 +20,10 @@ is unsourced, DO NOT add source labels. A <Subject N>
 alias is not a substitute for this inline media reference. Do not fill sections
 with unselected scenery, camera moves or actions; a static requested scene can
 simply remain visible for the requested duration.
+Explicitly describe the relationships between selected subjects in the actual
+shot action: who carries, holds, wears, rides or interacts with whom. Defining a
+prop alone does not place it in the shot. Preserve supported relationships from
+the supplied descriptions, using current attributes for every subject.
 
 Complete reference example:
 Note: DO NOT add properties not listed in the input text, visual reference images 
@@ -72,8 +76,8 @@ are needed by the requested attributes/brief. Viewpoint objects are perceptually
 meaningful framing stages, not necessarily editing shots. A continuous wide-to-close
 viewpoint_change stays within one [Shot N]; add a new [Shot N] only for an actual
 requested edit/shot transition. Preserve continuous versus cut transition types.
-You may infer sound from the reference or add ambience,
-music or speech to fill the required sections. 
+When audio is unspecified, briefly describe plausible ambience and a music
+treatment that fit the atmosphere. Honor explicit requests about audio.
 Return all six Ref2VA sections when references exist, or all three T2VA sections
 when none exist, as direct plain text, without any envelope.
 '''
@@ -81,7 +85,7 @@ when none exist, as direct plain text, without any envelope.
 
 def h3_system_prompt():
     """Return a fixed system prefix with both official base and reference guides."""
-    return "You are the VDN-H3 video prompt expert, composing a coherent audiovisual sequence.\n" + COMMON_INSTRUCTION + '\n' + H3_INSTRUCTION + '\n' + load_skill(
+    return "You are the MiniMax-H3 video prompt expert, composing a coherent audiovisual sequence.\n" + COMMON_INSTRUCTION + '\n' + H3_INSTRUCTION + '\n' + load_skill(
         'h3-prompt-writing', SKILL_FILES) + '\n' + FINAL_SCOPE_REMINDER
 
 
@@ -91,47 +95,45 @@ def h3_user_prompt(brief, attributes, catalog, seconds):
 
 
 VIDEO_SYSTEM = """Write only the finished English H3 generation prompt. Keep it concise, normally 100-190 words. Use simple visible actions and natural camera motion. Every supplied reference label must occur literally. Do not invent media inputs or mention a guide/target/original dataset video.
+Describe how the subjects belong together, not just a separate inventory. Read subject_relationship_context for who carries, holds, wears, rides, sits on or interacts with whom. These captions supply RELATIONSHIPS ONLY: take age, color, material and every other appearance from current structured attributes. Keep these links even when the short shot action leaves them implicit. For example, a person who carries the supplied bag must visibly carry that same bag while riding the supplied mount; a bag listed only in subject_definitions is insufficient. Do not invent a relationship unsupported by the requested action or relationship context.
+For story shots with subject_relationship_context, define a <Subject N> alias for each supplied subject and use those aliases explicitly in detailed_description. Every referenced subject must participate in the actual shot description, with concrete actions or spatial relationships. State who holds or carries a prop and where it remains through the shot. Preserve these relationships in edits unless the user explicitly changes them. Before returning, check the detailed_description for omitted subjects and missing links.
 Current reference appearance and explicit desired attributes are authoritative. Scene/action prose supplies choreography, never an obsolete material, color or hairstyle. Do not reintroduce a guide appearance that conflicts with a current reference. Define each pictured subject using its CURRENT salient design: for a paper bag say folded paper, crisp creases and matte paper panels; never call that reference leather. For wood emphasize visible grain, for glass use the requested transparency and optical reflections. Shape changes must change the visible silhouette. Carry these same properties consistently through subject_definitions and detailed_description. Do not recite irrelevant inventories or change size from metadata.
 Bind identity references to existing subjects: <Video 1> supplies the source action and composition when editing. An additional image of the same bag/person supplies that SAME subject's identity/design; it does not introduce another subject, insert a still image, or append a product shot. State this binding explicitly in subject_definitions. Preserve action, composition, camera movement and timing except for specified edits. Detailed_description describes the source action with the requested changes, rather than an appended reference showcase. Apply only listed changes; retain everything else. In an edit, source_action is a textual description of the source clip. Preserve that action exactly: riding must never become walking or carrying the mount. If source_action is absent, simply say retain the source action rather than inventing one. Examples teach format and binding; never copy their unrequested actions or properties.
-Use one continuous shot unless cuts are requested. Start with [Shot 1] without a timestamp; further shots use [Shot 2] At 00:02.500, etc. Use N/A for soundscape and music. References are media already generated earlier in this conversation.
-Examples (example identities, actions and styles are not defaults):
+Each generation prompt produces one independent single-shot clip. Use exactly one [Shot 1] without a timestamp. Separate requested clips or alternatives have their own prompts and generation calls. Invent a short, plausible overall_soundscape and non_diegetic_music that suit the atmosphere when audio is open to interpretation. A brief phrase for each is enough. Follow explicit audio requirements, including silence, and preserve unedited source audio in video edits. References are media already generated earlier in this conversation.
+Examples (format and binding only; subjects and actions below are not defaults):
 IMAGE REFERENCES / NEW VIDEO:
 subject_definitions:
-<Subject 1>: The traveler from <Picture 1>.
-<Subject 2>: The shoulder bag from <Picture 2>.
-summary: [reference generation] A traveler walks beside a canal carrying the bag.
-retention_analysis: Preserve each subject's identity and the bag's construction.
-detailed_description: [Shot 1] Side tracking view of <Subject 1> walking along the canal with <Subject 2> hanging naturally at their hip. Their steps gently swing the bag while the camera follows at walking speed.
-overall_soundscape: N/A
-non_diegetic_music: N/A
-CURRENT PAPER BAG / NEW VIDEO:
+<Subject 1>: The object from <Picture 1>.
+summary: [reference generation] The referenced object is shown in a simple setting.
+retention_analysis: Preserve its exact identity and supplied appearance.
+detailed_description: [Shot 1] The camera gently moves around <Subject 1> against a plain unobtrusive backdrop.
+overall_soundscape: Quiet room tone and subtle movement in the space.
+non_diegetic_music: A sparse, soft instrumental bed.
+SOURCE VIDEO PLUS UPDATED SAME OBJECT / EDIT:
 subject_definitions:
-<Subject 1>: The folded-paper bag in <Picture 1>, with crisp creases, matte paper panels and its bird emblem.
-summary: [reference generation] A traveler carries the paper bag while riding through the canal.
-retention_analysis: Keep the exact bag design and folded-paper material of <Picture 1> throughout.
-detailed_description: [Shot 1] Side tracking view of a traveler riding a woolly sheep along the canal. <Subject 1> hangs at the traveler's hip; its rigid folded edges and paper panels remain clearly visible as it gently sways.
-overall_soundscape: N/A
-non_diegetic_music: N/A
-SOURCE VIDEO PLUS UPDATED SAME BAG / EDIT:
-subject_definitions:
-<Subject 1>: The existing carried bag in <Video 1>, now matching the exact bag design in <Picture 1>. Both references describe the same bag.
-summary: [video editing] Edit <Video 1>: make the scene winter and black and white; update its existing bag to <Picture 1>.
-retention_analysis: Preserve the source people, motion, camera, shot structure and timing; replace only the existing bag's appearance, with no inserted shot.
-detailed_description: [Shot 1] Retain the source action and framing. Apply winter snow and black-and-white rendering throughout, with <Subject 1> following the same motion and remaining attached in its original position.
-overall_soundscape: N/A
-non_diegetic_music: N/A
+<Subject 1>: The existing object in <Video 1>, now matching <Picture 1>. Both references describe the same object.
+summary: [video editing] Edit <Video 1>: update only the existing object's requested appearance.
+retention_analysis: Preserve source action, camera, composition, timing and all other content, with no inserted shot.
+detailed_description: [Shot 1] Retain the source action. Keep <Subject 1> in its existing position and change only its explicitly requested appearance.
+overall_soundscape: Retain the source ambience.
+non_diegetic_music: Retain the source music treatment.
 TEXT ONLY / NO REFERENCES:
-integrated_multimodal_description: [Shot 1] A pink woolly sheep walks down a shallow flooded street at sunset, carrying a traveler in a yellow jacket with a shoulder bag. A wide rear view gently tracks them towards the distant buildings.
-overall_soundscape: N/A
-non_diegetic_music: N/A
+integrated_multimodal_description: [Shot 1] A single glass marble rests on a plain surface as the camera slowly moves closer.
+overall_soundscape: Soft indoor room tone.
+non_diegetic_music: A few gentle, sustained notes.
+
 """
 
-VIDEO_SYSTEM += '\nResolve conflicting instructions before writing. Priority: current output rendering rules > compatible explicit edit > current design attributes > reference preservation > guide prose. A black-and-white output rule covers EVERY subject and background. In that case do not mention pink wool, brown bags, multicolored clothing, colored lights, hues or saturation anywhere, even in subject names. Keep texture, silhouette and achromatic tonal details. Never invent selective color or an exception. For a local edit, a preserve-everything sentence must explicitly allow the higher-priority output treatment. A season changes studio accents while preserving the neutral product composition.\nConflict examples (style only):\nInput: pink sheep, medium saturation; output black and white.\nOutput wording: a woolly sheep, photographed entirely in black and white on a neutral studio background.\nInput: source video and blue bag reference; output black and white.\nOutput wording: replace the existing bag with the exact design in <Picture 1>; render every subject and the entire scene in grayscale. Preserve the source action and camera.\nInput: reference has autumn leaves; current season winter.\nOutput wording: keep the neutral studio setup, with snow around the base and on the product surfaces.\n'
 
 
-def video_system(task):
-    sections = ('subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music'
-        if task.get('references') else 'integrated_multimodal_description, overall_soundscape, non_diegetic_music')
-    operation = ('For this video edit, summary must start with [video editing], identify <Video 1> as the source being edited, and explicitly preserve all unedited content.'
-        if task['operation'] == 'video_edit' else 'Generate the requested action. When references exist, summary starts with [reference generation].')
-    return VIDEO_SYSTEM + '\nUse exactly these headings in order: ' + sections + '.\n' + operation
+VIDEO_CONTRACT = """Use the output's own references list to select the section format.
+With references, use these headings in order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music.
+Without references, use these headings in order: integrated_multimodal_description, overall_soundscape, non_diegetic_music.
+For operation video_edit, summary must start with [video editing], identify <Video 1> as the source, and explicitly preserve all unedited content. The user's explicit edits in the current exchange, or the supplied changes for a standalone brief, are exhaustive. Existing unedited reference properties and attribute overrides are retention context. Do not describe an unchanged person, garment, expression or prop as now changed. Preserve source exposure, lighting, contrast and shadow detail unless the user requests a lighting edit.
+In a video edit, for each image listed in references, explicitly cite its exact label in subject_definitions as the appearance reference for its named subjects in the source video. If the binding has no subject name, use it only for its assigned existing subject. Use the supplied label rather than a placeholder ID or the words both references. A cup image edits the cup and does not edit the woman holding it. The image updates the same subject and does not add a new object, scene or shot.
+For a new video, generate the requested action. When references exist, summary starts with [reference generation].
+"""
+
+
+def video_system():
+    return VIDEO_SYSTEM + '\n' + VIDEO_CONTRACT

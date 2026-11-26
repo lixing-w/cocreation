@@ -53,6 +53,14 @@ with VLLMQwen() as model:
     batch = model.generate_batch([messages, other_messages], concurrency=2)
 ```
 
-Media file paths refer to the serving host and must be inside the scratch root. Raw video sampling is configured at server launch (1 FPS, maximum 16 frames by default); observation samples its own frame images independently. The transport passes JSON Schema constraints to vLLM and records the wire request and response.
+Media file paths refer to the serving host and must be inside the scratch root. Raw video sampling defaults to 8 FPS, at most 64 frames, uniformly spanning the full clip including both endpoints. The server, serving transport and optional native adapter share these defaults from `cocreation/qwen_inputs.py`. Server media I/O sets both `num_frames` (generic loader) and `max_frames` (Qwen3-VL loader) so the limit applies to either backend. The processor preserves the already sampled frames instead of sampling them a second time. A 4.46-second clip supplies about 35 distinct frames instead of four; clips reaching the frame limit still cover their full duration. Observation samples its own frame images independently (24 by default). The transport records sampling settings alongside the wire request and response, and real-prompt batches record them in `vlm_execution.json`. Keep explicit client and server overrides synchronized.
 
 The fixed Qwen-based text encoders bundled with H3/VDN are video-generation dependencies, not replaceable Qwen inference checkpoints; they are retained.
+
+
+`run_pipeline.sh` explicitly disables thinking on the server and each observation/dialogue/prompt-writing request for the next experiment (review of sequence 9242687). Optional thinking support and its hard token budget remain available.
+Its default media layout is square images and landscape videos. Dialogue rules come from the observation or the planner.
+
+Thinking requests now send vLLM's `thinking_token_budget=min(2048, max_new_tokens//2)` by default. The server forces the end of the reasoning block at that limit so generation can continue with the final answer. `max_new_tokens` still covers both reasoning and the answer. Override the reasoning cap per request with `thinking_token_budget=1024`, for example; keep it below the total token budget. Non-thinking requests omit this option.
+
+Observation preserves response metadata and reports truncated or empty final responses before JSON parsing. A reasoning-only response that exhausts the token limit is retried with an explicit completion instruction, retaining all raw responses and errors. This fixes the misleading `Expecting value` failure in job 9238547.

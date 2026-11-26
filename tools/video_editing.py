@@ -9,6 +9,8 @@ import subprocess
 
 from tools.video_frames import frame_timestamps
 
+EXPORT_VIDEO_CRF = '11'
+
 
 def probe(path):
     return json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(path)],text=True))
@@ -92,7 +94,7 @@ def extract_shot(video, shot, destination):
     command = ['ffmpeg','-nostdin','-v','error','-i',str(video),'-filter_complex',filters,'-map','[v]']
     if has_audio:
         command += ['-map','[a]','-c:a','aac']
-    subprocess.run(command+['-c:v','libx264','-crf','18','-pix_fmt','yuv420p','-fps_mode','vfr',str(dest)],check=True)
+    subprocess.run(command+['-c:v','libx264','-crf',EXPORT_VIDEO_CRF,'-pix_fmt','yuv420p','-fps_mode','vfr',str(dest)],check=True)
     return dest
 
 
@@ -107,14 +109,14 @@ def extract_frame(video, seconds, destination):
     return dest
 
 
-def concatenate(clips, destination):
+def concatenate(clips, destination, *, size=None):
     """Exact input order, with synchronized audio; normalize timebase, not content."""
     if not clips:
         raise ValueError('Cannot assemble an empty clip list')
     dest = _destination(destination)
     metadata = [probe(path) for path in clips]
     sizes = {(v['width'],v['height']) for m in metadata for v in m['streams'] if v['codec_type']=='video'}
-    if len(sizes) != 1:
+    if size is None and len(sizes) != 1:
         raise ValueError('Assembly clips need matching image dimensions')
     command = ['ffmpeg','-nostdin','-v','error']
     for path in clips:
@@ -122,7 +124,9 @@ def concatenate(clips, destination):
     audio = any(any(s['codec_type']=='audio' for s in m['streams']) for m in metadata)
     filters, inputs = [], ''
     for i,m in enumerate(metadata):
-        filters.append(f'[{i}:v:0]settb=AVTB,setpts=PTS-STARTPTS,setsar=1[v{i}]')
+        canvas = (f'scale={size[0]}:{size[1]}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
+                  f'pad={size[0]}:{size[1]}:(ow-iw)/2:(oh-ih)/2,' if size else '')
+        filters.append(f'[{i}:v:0]{canvas}settb=AVTB,setpts=PTS-STARTPTS,setsar=1[v{i}]')
         inputs += f'[v{i}]'
         if audio:
             if any(s['codec_type']=='audio' for s in m['streams']):
@@ -135,7 +139,7 @@ def concatenate(clips, destination):
     command += ['-filter_complex',';'.join(filters),'-map','[v]']
     if audio:
         command += ['-map','[a]','-c:a','aac']
-    subprocess.run(command+['-c:v','libx264','-crf','18','-pix_fmt','yuv420p','-fps_mode','vfr',str(dest)],check=True)
+    subprocess.run(command+['-c:v','libx264','-crf',EXPORT_VIDEO_CRF,'-pix_fmt','yuv420p','-fps_mode','vfr',str(dest)],check=True)
     return dest
 
 
@@ -169,6 +173,18 @@ def prepare_inputs(task, resolved, observation, output_dir, *, shot_map=None, cr
     return references, task['prompt']
 
 
+def edit_tool_call(task, resolved, destination):
+    """The actual Python function and arguments for deterministic assembly."""
+    if task['operation']=='concatenate':
+        return dict(name='tools.video_editing.concatenate', arguments=dict(
+            clips=[str(resolved[clip['placeholder']]) for clip in task['clips']],
+            destination=str(destination),size=task.get('output_size')))
+    if task['operation']=='copy':
+        dependencies=task.get('dependencies',task.get('reference_materials',[]))
+        return dict(name='shutil.copy2',arguments=dict(src=str(resolved[dependencies[0]]),dst=str(destination)))
+    raise ValueError('Not an assembly/copy operation: '+task['operation'])
+
+
 def execute_edit(task, resolved, observation, destination, *, shot_map=None):
     """Execute source/copy/extract/assemble contracts without a generative model."""
     operation = task['operation']
@@ -183,7 +199,7 @@ def execute_edit(task, resolved, observation, destination, *, shot_map=None):
     if operation == 'extract_frame':
         return extract_frame(resolved[dependencies[0]],task['frame_seconds'],destination)
     if operation == 'concatenate':
-        return concatenate([resolved[c['placeholder']] for c in task['clips']],destination)
+        return concatenate(**edit_tool_call(task,resolved,destination)['arguments'])
     if operation == 'extract_shot':
         source = resolved[dependencies[0]]
         mapping = shot_map or refine_shots(source,observation)

@@ -8,7 +8,16 @@ Qwen 将每条已确定的意图表达为自然英文，再由同一模型使用
 
 ## 运行
 
-Linux 默认通过 vLLM 使用 **Qwen3.6-35B-A3B NVFP4**，thinking 默认 false，可用 `--enable-thinking` 开启。视频观察、对话和 prompt 改写共用服务，支持并发 batching。Mac 仍默认使用下表中的 Ollama Instruct 模型。部署和新模型命令见 [服务器指南](../../docs/qwen_server.md)。
+Oscar 正式批跑从主仓库提交：
+
+```bash
+cd ~/cocreation
+sbatch run_native_dialogue_batch.sh
+```
+
+这个 launcher 默认使用 24 条 sequence 清单、Sonnet 5.5 `medium` 和单卡 B200。正式作业直接读取主仓库。`data/` 或运行目录中的代码快照只用于复盘和调试。后续代码改动合入主仓库。
+
+Linux 默认通过 vLLM 使用 **Qwen3.6-35B-A3B NVFP4**，`run_pipeline.sh` 在复盘 sequence 9242687 后默认关闭 thinking；独立工具仍可用 `--enable-thinking` / `--no-enable-thinking` 显式选择。视频观察、对话和 prompt 改写共用服务，支持并发 batching。Mac 仍默认使用下表中的 Ollama Instruct 模型。部署和新模型命令见 [服务器指南](../../docs/qwen_server.md)。
 模型别名与完整名称见 `tools/dialogue_models.py`：
 
 | 仓库别名 | Ollama 模型 | local checkpoint |
@@ -177,9 +186,9 @@ python3 scripts/dialogue_generation/observation_contract.py
 - 镜头 `description` 建议写动作、构图、环境关系，可变资产外观由 `assets` 的参考决定。
 - `target_order` 可省略，默认按 `shots` 列表顺序。
 - `constraints` 可选，必须给出可执行的结构化规则。`scope` 是 `global` 或 `partial`；
-  global 覆盖全部新产生的图片和视频，partial 用 `selector.roles` 或 `selector.asset_ids` 指定范围。
-  `effect` 支持 `color_mode`、`season`、`asset_attributes`。它是用户规则，不是永久属性锁，允许冲突、例外和替换。
-  旧输入 `scope=all|shots` 与顶层 `asset_attributes` 仍会转换为新结构；不从纯文本猜测规则。
+  global 覆盖全部新产生的图片和视频，partial 用 `selector.kinds`（image/video）或 `selector.asset_ids` 指定范围。
+  `effect` 支持 `aspect_ratio`、`season`、`asset_attributes`。它是用户规则，不是永久属性锁，允许冲突、例外和替换。
+  顶层 `asset_attributes` 可转换为结构化 effect；不从纯文本猜测规则。
   规则不需要与最终画面一致：当前接受的规则和设计可以保留至最终成片；只有明确的用户请求才会取消规则，不会为贴近 guide 自动恢复。
 
 - `video` 是来源标识，不要求文件存在；额外 VLM 字段会保留/忽略，不触发推理。
@@ -193,27 +202,25 @@ python3 scripts/dialogue_generation/observation_contract.py
 默认随额外行为启用；`--no-cross-turn-rule` 只关闭随机规则事件，显式输入规则仍会建模。
 `--no-extra-behaviors` 同时关闭随机规则、指代歧义和单轮拍摄冲突。
 
-例如先加入全局秋天背景，再加入仅试拍黑白的规则：
+例如全局秋季背景，以及仅对视频生效的场景属性：
 
 ```json
 [
   {"scope": "global", "effect": {"season": "fall"}},
-  {"scope": "partial", "selector": {"roles": ["trial_video"]},
-   "effect": {"color_mode": "black_and_white"}}
+  {"scope": "partial", "selector": {"kinds": ["video"]},
+   "effect": {"asset_attributes": {"scene": {"time_of_day": "night"}}}}
 ]
 ```
 
-可用角色是 `asset_image`、`asset_video`、`trial_video`、`shot`、`compilation`、`final_export`。
-资产图还包括独立资产预览图；双资产模块的静态测试视频是 trial_video。
-`asset_ids` 选择含有这些资产的输出画面；它不代表画面内部的局部像素遮罩。
-partial 的助手确认要明确其他类别不受**这条**规则限制，不影响其他已有规则。
+媒体只有 `image` 和 `video`，没有 trial/formal/final 类型。人物/物品/场景仍是主体内容标签，用于选择合法 variation。
+生成、编辑、拼接、导出保留为操作；主体绑定、版本和拼接顺序保留为引用关系。
+`asset_ids` 选择涉及指定主体的输出，不代表局部像素遮罩。
 
-每条规则有独立 ID、生效消息和结束消息，多条规则可先后、重叠或包含。
-规则事件只插入完整工作段之间，不打断候选选择或尚未解决的澄清。
-冲突请求明确使用实际适用的媒体类别（如正式镜头），并只提出当前主体实际改变的字段。
-每类规则都可被挑战；提醒后随机选择保留原规则、仅本次请求例外或永久替换。
-一次例外对该生成请求的全部输出生效，之后继续原规则，并额外生成下一次预览验证恢复。
-同一范围的矛盾新规则需要先协商，不按“最近优先”默默覆盖。
+规则只在完整工作段之间插入。季节规则支持保留、一次请求例外、永久替换和取消。
+比例规则支持明确设置、永久替换和一次请求例外，不提供取消。
+明确的单次比例请求直接执行，无需再次询问许可；下一次请求恢复持续规则。
+例外以当前请求的实际媒体比例比较，不能拿名称不同但图片比例同为 1:1 的 preset 制造假冲突。
+同一个请求含图片/视频时，指定图片的例外只作用于图片。
 
 每个 placeholder 记录：
 
@@ -223,16 +230,13 @@ partial 的助手确认要明确其他类别不受**这条**规则限制，不�
 - `reference_render_states`：输入参考的既有处理，避免把参考图的局部处理误当成当前输出规则。
 - `description`：最终可交给媒体合成工具的完整指令，包含实际输出要求。
 
-黑白处理改变整个输出的呈现，不会把基础设计的蓝包颜色属性改成黑色。
-季节作为输出场景要求可作用于人物/物体的背景；环境资产的有效季节属性也会同步。
-规则取消不会让已有媒体自动变回原色。随机规划结束后会明确取消剩余探索规则，
-仅重做实际受到影响的目标资产/镜头，再更新拼接。已有版本始终保留。
-实际制作参考也比较画面处理状态，不把“设计属性相同但黑白/季节不同”的版本误当成目标兼容版本。
+季节作为输出场景要求可作用于人物/物体背景；环境主体的有效季节属性也会同步。
+取消季节规则只影响后续输出，已有媒体和版本保留。比例规则不会自动取消或恢复默认。
 
 输出的 `rules.json`、`plan.json.rules` 和 `dialogue.json.rules` 保存规则时间线；
 `dialogue.md` 附可读时间线。`stats.cross_turn_rules` 统计范围、保留/例外/替换和收尾取消数。
 所有时间线、输出快照、一次例外恢复及最终状态都由 Python 校验；VLM 只负责台词表达。
-writer/verifier 接收本次输出真正适用的规则，不会把全部有效 partial 规则当作每次输出的要求。
+普通 writer 不接收整段持续规则；verifier 和生成专家接收当前输出适用的状态。
 
 人工复核用例：Tokyo seed 68、Alpine Kayak seed 26，均使用 `--reworks 2 --p-compile 0.5`。
 它们覆盖 global/partial、多个规则重叠，以及保留、一次例外和永久替换三个决定。
@@ -469,7 +473,7 @@ python -m unittest discover -s tests -p 'test_dialogue*.py' -v
 在 GPU interactive session 中运行。输入为一个已经完成对话及 generation prompt
 rewrite 的 run dir；执行依据是其中的 placeholders.json，而不是对话时间线的 inputs。
 需要同目录的 dialogue.md，以及涉及 shot 裁剪时的 observation.json。FLUX.2-klein-4B
-和 VDN-H3 的环境、权重须已安装；执行器使用已有离线 runtime，不进行自动安装。
+和原版 MiniMax-H3 Base-Ref2VA FP8 / Turbo v4-600 EMA 的环境、权重须已安装；执行器使用已有离线 runtime，不进行自动安装。
 开跑前会检查合同指定的模型缓存，缺失会直接报告模型名称；FLUX 加载固定到已检查的缓存 revision。
 新合同默认使用 Klein 4B（4 steps，guidance 1.0），也尊重旧合同显式指定的 model_id。
 
@@ -489,7 +493,7 @@ clip 始终按合同中的 frame_seconds（当前为 0 秒）确定性抽帧，�
     python scripts/dialogue_generation/materialize.py "$RUN" --resume
 
 使用 cocreation conda 环境运行，确保其 bin 目录在 PATH 中以提供 ffmpeg/ffprobe。
-materialize 自动按需加载 Flux/VDNH3，切换 backend 时释放前一个 worker，结束时关闭模型。
+materialize 自动按需加载 Flux/MiniMaxH3，默认 7 steps；保持 topological ordering，并尽量连续执行同一模型的就绪任务，切换时释放前一个 worker。默认 H3 按合同请求 4 秒镜头，接受 4–15 秒请求。可确定执行的复制、抽帧和拼接会立即执行，以解锁当前模型的后续任务。旧 VDN 合同仍可显式执行。
 普通执行阶段不会调用 vLLM、改写 prompt 或重新规划。--dry-run 仅校验输入并打印构建顺序。
 --seed 控制每个 placeholder 的稳定生成 seed。--source-video 可显式指定搬迁后的真实源文件；
 fictional:// 虚拟示例没有可执行的真实媒体，必须先提供内容对应的实际 target video。
@@ -527,16 +531,45 @@ dialogue.json 的 media_generated 随全部成功变为 true；对话正文与 p
 
 ### Forward asset appearance policy
 
-Object size and person height remain observation metadata, but are not sampled as variations. Prefer strong color/silhouette changes and visually distinct material families; triangular object silhouettes are supported. Closely related soft materials (including paper and leather) are not sampled against one another. Current generated reference attributes override guide appearance in expert contracts.
+Only object color/material, person clothing color/age group, and environment season/time of day/weather are sampled. Shape, surface finish, texture, garment type/fit, hair and all other observed fields remain unchanged. The baseline candidate pools are in `asset_variations.py`; accepted per-identity values in `attribute_extensions` join those pools for the already enabled fields. Unknown/not applicable baselines remain ineligible. Other observed fields, including custom hair or garment-type values, remain fixed and are preserved in planning and generation. Legacy observation values remain readable. Canonical aliases and unordered color combinations are compared before sampling, so a proposed value cannot repeat the current version. Explicit rollback to an older version remains supported.
 
 Final acceptance preserves active user constraints and the current generated designs. There is no automatic cancellation, asset restoration or shot regeneration to match the guide. Explicit rule conflicts/cancellations, combined edit requests, and deterministic final shot reordering remain available.
 
 Isolated object and character images keep a minimal neutral studio setup, including local edits. Seasons add sparse dressing: spring blossoms/leaves, one small lush tree and sunlight for summer, fallen leaves around the base for autumn, snow around the base and on the subject for winter. Environment assets retain their actual setting. The current image presentation contract is always passed to the rewriter.
 
-Materialization defaults to single-pass H3 at 16 steps. The story sample is sampled and delivered at 1280×736, with no enlargement. Each new synthetic clip requests four seconds; H3's 17n+5 frame grid samples 107 frames (4.4583 s at 24 fps), then the delivered clip is trimmed to exactly four seconds. Guide shot lengths no longer lengthen synthetic clips. `--video-steps`, `--video-width`, `--video-height`, `--output-width`, and `--output-height` can override the defaults.
+`run_pipeline.sh` uses classic 8+3 two-pass H3 (`--video-steps 8 --video-two-pass`). The standalone materialize API retains its single-pass default unless these options are supplied. By default videos generate at 1024×576 and are delivered at 1280×720; reference images are 1024×1024. Each new synthetic clip requests four seconds; H3's 17n+5 frame grid samples 107 frames (4.4583 s at 24 fps), then the delivered clip is trimmed to exactly four seconds. Guide shot lengths no longer lengthen synthetic clips. `--video-steps`, `--video-width`, `--video-height`, `--output-width`, and `--output-height` can override the defaults.
 
 The expert receives only an existing clip and the revised identities needed for that edit. Full source binding tables stay in planning metadata. Revisions after concatenation reuse individual clip files, render only affected clips, then concatenate them back in order. If an assembled output needs a new appearance treatment, `clip_edits` holds independent short expert requests; the whole cut is never submitted to H3.
 
-Current output rules outrank explicit edits that conflict with them, design metadata, reference preservation and descriptive prose. Monochrome writer inputs omit source hues/saturation, and rewritten prompts are checked for colored exceptions. The executor also applies the requested monochrome rendering deterministically. Saturation, lightness, absolute size, subtle facial details and other weak contrasts remain metadata, not sampled variations; color, silhouette, distinct material families and conspicuous patterns receive higher weights. Hue variations are excluded where monochrome or an explicit property rule would make them invisible.
+Prompt rewriting explicitly analyzes conflicts among original captions, current attributes, references and requested edits. `attribute_overrides` is authoritative for each current subject. Source descriptions are kept as lower-priority evidence; incompatible adjectives/clauses must be omitted from the final prompt. Age-only edits explicitly preserve hair and garment properties. Related subjects (for example a carried bag) use their own current version attributes. Names are neutralized deterministically before planning.
+
+Black-and-white output rules, monochrome-specific sampling/rewriting, hue-only deferral and deterministic desaturation have been removed. Black/white remain ordinary object/clothing colors.
 
 `media_manifest.json` records each asset's `generation_seconds` (actual model call) and `elapsed_seconds` (complete asset operation). Compact receipts remain under `generation_records/`. Successful request files are removed after the final media is saved. Failed work is retained for diagnosis/resume; once the run succeeds, all `_work` is removed after model workers close. The run lock lives outside `_work`.
+
+
+### Persistent format rules
+
+`effect.aspect_ratio` accepts `portrait` (all media 9:16), `landscape` (all media 16:9),
+`square_assets_landscape_video` (asset images 1:1, videos 16:9), or
+`square_assets_portrait_video` (asset images 1:1, videos 9:16).
+A user sets a rule once. Format supports explicit setting, keep, one-request exception and permanent replacement. It cannot be canceled. No explicit requirement means square 1:1 images and landscape 16:9 videos, without an opening format dialogue.
+Snapshots preserve the conditions of already produced media. Each generation task resolves its own ratio;
+command-line dimensions are fallback settings. Images use exact 1024×1024, 1024×576 or 576×1024 canvases;
+videos generate at those model-compatible dimensions and finish at 1280×720 or 720×1280.
+Assemblies normalize differently sized inputs with padding so existing shot content is preserved.
+Format-only changes do not invoke generative video editing.
+
+Launch settings can configure the output canvas. Explicit observation constraints still supply intentional project rules. The planner continues to sample random rules, including at the opening. Older batch manifests may contain the retired format-rule field, which is ignored for fresh dialogue generation.
+
+
+The pipeline explicitly disables Qwen thinking for observation, dialogue/review and expert prompt rewriting for the next experiment. Optional thinking mode remains available with a bounded reasoning budget.
+Observation allows 8192 output tokens; dialogue/review allows 4096; expert rewriting allows 4096 (FLUX) / 6144 (H3).
+The vLLM reasoning parser keeps reasoning separate from final dialogue/JSON. Per-stage request counts and latency are recorded in `generation.stages`.
+
+
+Independent image/video requests are composed by the prompt writer using only the supplied subject set, references and current attributes. They do not receive target-shot action prose. Formal `generate_clip` requests continue to use their declared shot description after all required assets are ready. H3 examples contain no target-story characters or settings.
+
+Aspect ratio is executor metadata. Python resolves each output to `width`/`height`, which become FreeVideo's `--width`/`--height`; generation prose does not set the canvas. The writer may use the orientation for composition, but must not repeat numeric ratios or sampler settings in the generation prompt.
+
+With the current video canvases and 2x latent upscale, 8+3 is 512×288 → 1024×576 for landscape, 288×512 → 576×1024 for portrait, or 512×512 → 1024×1024 for square. The final 1280×720/720×1280 export is a separate resize. These stage sizes were checked against the installed FreeVideo planner, not estimated from the prompt.

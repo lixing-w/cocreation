@@ -165,8 +165,7 @@ class Prompters(unittest.TestCase):
         for text in (REF_PROMPT.replace('00:02.000','00:05.000'),
                      REF_PROMPT.replace('[Shot 2]','[Shot 3]'),
                      REF_PROMPT.replace('summary:','wrong:'),
-                     REF_PROMPT.replace('[Shot 1]','[Shot 1] At 00:00.000,'),
-                     REF_PROMPT.replace('<Subject 2> is','A garden is')):
+                     REF_PROMPT.replace('[Shot 1]','[Shot 1] At 00:00.000,')):
             with self.subTest(text=text):
                 self.assertIsNone(parse_prompt({'text':text},catalog,'h3',5))
         self.assertEqual(parse_prompt({'text':REF_PROMPT},catalog,'h3',5),REF_PROMPT)

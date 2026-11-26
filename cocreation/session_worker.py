@@ -24,6 +24,9 @@ def main():
     if backend in ('qwen', 'flux'):
         from .worker import ModelSession
         engine = ModelSession(backend)
+    elif backend == 'h3_image':
+        from .h3_image_worker import H3ImageSession
+        engine = H3ImageSession()
     elif backend == 'minimax_h3':
         from .comfy_worker import ComfySession
         engine = ComfySession()

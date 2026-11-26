@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.dialogue_generation.materialize import materialize, file_hash, duration
 from tools.video_editing import concatenate, probe
@@ -105,6 +106,27 @@ class MaterializeTests(unittest.TestCase):
     def persist(self):
         write_json(self.run/'placeholders.json',self.catalog)
 
+    def test_assembly_receipt_matches_actual_python_call_without_extra_generation(self):
+        opening="This turn you only asked me to join existing clips, so I'm not generating new media and the rule requiring a winter background for new media does not apply."
+        write_json(self.run/'dialogue.json',dict(turns=[dict(id=1,role='user',content='Join the clips.'),
+            dict(id=2,role='assistant',content='Here is the assembly.',generation_opening=opening,
+                 output_media=['[[video_0003]]'])]))
+        assembly=next(row for row in self.catalog if row['placeholder']=='[[video_0003]]')
+        assembly['operation_reasoner']=dict(think='I will join the second clip and then the first clip.')
+        self.persist()
+        models=FakeModels()
+        with patch('tools.video_editing.concatenate',wraps=concatenate) as actual:
+            result=self.execute(models)
+        record=result['media']['[[video_0003]]']
+        self.assertEqual(actual.call_count,1)
+        self.assertEqual(record['tool_call']['arguments'],actual.call_args.kwargs)
+        self.assertEqual(len(models.calls),sum(row.get('backend') is not None for row in self.catalog))
+        self.assertFalse(record.get('attempts'))
+        self.assertFalse(record.get('actual_prompt'))
+        exported=json.loads((self.run/'sequence.json').read_text())['turns'][1]['segments']
+        self.assertEqual(exported[0]['text'],opening)
+        self.assertEqual(exported[1]['tool_calls'],[record['tool_call']])
+
     def execute(self, models=None, **options):
         return materialize(self.run,model_factory=models or FakeModels(),progress=False,**options)
 
@@ -185,6 +207,24 @@ class MaterializeTests(unittest.TestCase):
         self.assertEqual(models.calls,[])
         self.assertFalse((self.run/'media').exists())
         self.assertFalse((self.run/'media_manifest.json').exists())
+
+    def test_h3_lora_switch_selects_steps_and_invalidates_resume(self):
+        video = next(row for row in self.catalog if row.get('backend') == 'vdn_h3')
+        video['backend'] = 'minimax_h3'
+        self.persist()
+        models = FakeModels()
+        first = self.execute(models)
+        self.assertFalse(first['settings']['video_turbo_lora'])
+        self.assertEqual(first['settings']['video_steps_by_backend'], {'minimax_h3': 50})
+        self.assertEqual(next(c for c in models.calls if c['backend'] == 'minimax_h3')['options']['steps'], 50)
+        resumed = FakeModels()
+        second = self.execute(resumed, resume=True, video_turbo_lora=True)
+        self.assertTrue(second['settings']['video_turbo_lora'])
+        self.assertEqual(next(c for c in resumed.calls if c['backend'] == 'minimax_h3')['options']['steps'], 6)
+        report = self.execute(dry_run=True, video_turbo_lora=True, video_steps=8)
+        self.assertEqual(report['settings']['video_steps_by_backend'], {'minimax_h3': 8})
+        with self.assertRaisesRegex(ValueError, 'single pass'):
+            self.execute(dry_run=True, video_two_pass=True, video_steps=8)
 
     def test_untracked_output_is_not_overwritten(self):
         (self.run/'media').mkdir()
@@ -358,6 +398,11 @@ class MaterializeTests(unittest.TestCase):
         self.assertFalse(video.runtime.auto_setup)
         self.assertTrue(video.runtime.local_files_only)
         video.close()
+        for turbo in (False, True):
+            h3=default_model('minimax_h3',None,self.root/'h3',video_turbo_lora=turbo)
+            self.assertEqual(h3.runtime.turbo,turbo)
+            self.assertTrue(h3.runtime.local_files_only)
+            h3.close()
 
     def test_missing_checkpoint_fails_before_writing_outputs(self):
         from unittest.mock import patch

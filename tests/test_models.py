@@ -74,7 +74,7 @@ class Contracts(unittest.TestCase):
     def test_h3_routing_labels_and_graph(self):
         refs = [Reference("v", "v.mp4", "video"), Reference("i", "i.png", "image"),
                 Reference("a", "a.wav", "audio")]
-        for selected, variant in [([], "fl2va"), (refs, "ref2va")]:
+        for selected, variant in [([], "ref2va"), (refs, "ref2va")]:
             prompt = "x" if not selected else "{{artifact:i}} moves like {{artifact:v}} with {{artifact:a}}"
             request = MiniMaxH3()(prompt, selected, seconds=5, dry_run=True)
             self.assertEqual(request["options"]["variant"], variant)
@@ -99,6 +99,28 @@ class Contracts(unittest.TestCase):
             MiniMaxH3()("x", [Reference(str(i), "a.png", "image") for i in range(10)], dry_run=True)
         with self.assertRaises(ValueError):
             Qwen()("x", [Reference("a", "a.wav", "audio")], dry_run=True)
+
+    def test_h3_original_and_opt_in_turbo_have_separate_sampling_defaults(self):
+        for turbo, steps in ((False, 50), (True, 6)):
+            with self.subTest(turbo=turbo):
+                model = MiniMaxH3(runtime=H3Runtime(turbo=turbo))
+                request = model('x', dry_run=True)
+                self.assertEqual(request['options']['steps'], steps)
+                graph = build_graph(request, [])
+                self.assertEqual('turbo_lora' in graph, turbo)
+                self.assertEqual('turbo_sampler' in graph, turbo)
+                if turbo:
+                    self.assertEqual(graph['sample']['class_type'], 'SamplerCustomAdvanced')
+                    self.assertEqual(graph['sigmas']['inputs']['steps'], 6)
+                else:
+                    self.assertEqual(graph['sample']['class_type'], 'KSampler')
+                    self.assertEqual(graph['sample']['inputs']['steps'], 50)
+                    self.assertEqual(graph['shift']['inputs']['model'], ['model', 0])
+                self.assertEqual(model('x', steps=20, dry_run=True)['options']['steps'], 20)
+        self.assertFalse(MiniMaxH3().runtime.turbo)
+        for steps in (True, 0, 1.5):
+            with self.subTest(steps=steps), self.assertRaises(ValueError):
+                MiniMaxH3()('x', steps=steps, dry_run=True)
 
     def test_dry_run_has_no_side_effects_or_heavy_imports(self):
         script = '''

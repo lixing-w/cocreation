@@ -1,4 +1,4 @@
-"""Write a VDN-H3 prompt from selected attributes and image/video sources."""
+"""Write a MiniMax-H3 prompt from selected attributes and image/video sources."""
 from pathlib import Path
 import sys
 
@@ -19,7 +19,7 @@ def h3_prompter(attributes, references=None, user_prompt='', *, seconds=15.0,
             source elements use exact (from <Image N>) / (from <Video N>) markers.
         references: Ordered image/video References. Every source must be used.
         user_prompt: Optional creative brief for the target video.
-        seconds: Target VDN-H3 video duration, 5-15 seconds.
+        seconds: Target MiniMax-H3 video duration, 4-15 seconds.
         qwen: Optional shared instance; never closed by this tool.
         output_dir: Run-log root for an internally created Qwen instance.
         use_system_cache: Reuse the dedicated H3 writing-system prefix.
@@ -28,7 +28,7 @@ def h3_prompter(attributes, references=None, user_prompt='', *, seconds=15.0,
         video_max_frames: Maximum observed frames per source video.
         max_pixels: Qwen image/frame pixel budget.
 
-    Pass the resulting text and SAME ordered references directly to VDNH3, using
+    Pass the resulting text and SAME ordered references directly to MiniMaxH3, using
     the same seconds. This tool receives only selected reference text; no media is attached to Qwen.
     Rejected model outputs print diagnostics/raw text to stderr and, when output_dir
     is set, diagnostics.jsonl. Input/inference failures raise; an owned instance is closed on every exit.

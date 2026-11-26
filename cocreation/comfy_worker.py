@@ -13,7 +13,10 @@ import time
 import urllib.error
 import urllib.request
 
-from .h3 import COMFY_REVISION, MODEL_REPO, MODEL_REVISION, build_graph, model_files
+from .storage import runtime_environment
+
+from .h3 import (COMFY_REVISION, MODEL_REPO, MODEL_REVISION, build_graph, model_files,
+                 TURBO_REPO, TURBO_REVISION, TURBO_LORA, TURBO_NODE_REVISION, TURBO_NODE_FOLDER)
 
 
 def run(command, **kwargs):
@@ -71,8 +74,35 @@ for name in files:
         raise RuntimeError("Refusing to overwrite an unmanaged model file: " + str(target))
     target.symlink_to(cached)
 '''
-    run([python, "-c", script, json.dumps([MODEL_REPO, MODEL_REVISION, str(root), local_files_only, files])])
+    run([python, "-c", script, json.dumps([MODEL_REPO, MODEL_REVISION, str(root), local_files_only, files])],
+        env=runtime_environment())
     return files
+
+
+def prepare_turbo(python, root, rt):
+    """Install only the pinned Turbo extension and v4-600 EMA weights."""
+    node = root / "ComfyUI/custom_nodes" / TURBO_NODE_FOLDER
+    if not node.is_dir():
+        if not rt["auto_setup"] or rt["local_files_only"]:
+            raise RuntimeError("MiniMax-H3 Turbo nodes are not installed: " + str(node))
+        run(["git", "clone", "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git", node])
+        run(["git", "-C", node, "checkout", "--detach", TURBO_NODE_REVISION])
+    revision = subprocess.check_output(["git", "-C", str(node), "rev-parse", "HEAD"], text=True).strip()
+    if revision != TURBO_NODE_REVISION:
+        raise RuntimeError("Turbo nodes must be pinned to " + TURBO_NODE_REVISION)
+    script = """import json,sys
+from pathlib import Path
+from huggingface_hub import hf_hub_download
+repo,revision,name,root,offline=json.loads(sys.argv[1])
+cached=Path(hf_hub_download(repo,name,revision=revision,local_files_only=offline)).resolve()
+target=Path(root)/'models/loras'/name
+target.parent.mkdir(parents=True,exist_ok=True)
+if target.is_symlink() and target.resolve()==cached: pass
+elif target.exists() or target.is_symlink(): raise RuntimeError('Unmanaged LoRA: '+str(target))
+else: target.symlink_to(cached)
+"""
+    run([python, "-c", script, json.dumps([TURBO_REPO, TURBO_REVISION, TURBO_LORA,
+                                         str(root), rt["local_files_only"]])], env=runtime_environment())
 
 
 def probe_media(path, kind):
@@ -167,11 +197,12 @@ def server(source, python, root, job, startup_timeout):
     # JSON is valid YAML; model directories contain symlinks into the HF cache.
     paths = job / "model_paths.yaml"
     paths.write_text(json.dumps({"cocreation": {"base_path": str(root / "models"),
-        "diffusion_models": "diffusion_models", "text_encoders": "text_encoders", "vae": "vae"}}))
+        "diffusion_models": "diffusion_models", "text_encoders": "text_encoders", "vae": "vae", "loras": "loras"}}))
     command = [str(python), str(source / "main.py"), "--listen", "127.0.0.1", "--port", str(port),
         "--input-directory", str(job / "input"), "--output-directory", str(job / "comfy_output"),
         "--user-directory", str(root / "user"), "--extra-model-paths-config", str(paths),
-        "--disable-auto-launch", "--disable-all-custom-nodes", "--offline", "--cache-classic",
+        "--disable-auto-launch", "--disable-all-custom-nodes",
+        "--whitelist-custom-nodes", TURBO_NODE_FOLDER, "--offline", "--cache-classic",
         "--use-pytorch-cross-attention", "--preview-method", "none"]
     process = subprocess.Popen(command, cwd=source, start_new_session=True)
     base = f"http://127.0.0.1:{port}"
@@ -221,6 +252,8 @@ class ComfySession:
             if self.endpoint is None:
                 self.runtime = dict(rt)
                 self.source, self.python = prepare_runtime(rt)
+                if rt.get('turbo', False):
+                    prepare_turbo(self.python, root, rt)
                 self.home = job / 'comfy_session'
                 (self.home / 'input').mkdir(parents=True)
             if variant not in self.files:
@@ -251,6 +284,9 @@ class ComfySession:
         return dict(status='ok', kind='video', path=str(target), model_id=MODEL_REPO,
             model_revision=MODEL_REVISION, comfy_revision=COMFY_REVISION,
             weights=self.files[variant], variant=variant, frames=request['options']['frames'],
+            turbo=dict(repo=TURBO_REPO, revision=TURBO_REVISION, lora=TURBO_LORA,
+                       node_revision=TURBO_NODE_REVISION, strength=1.0,
+                       low_vram=rt.get('turbo_low_vram', False)) if rt.get('turbo', False) else None,
             fps=24, seconds=request['options']['frames']/24, reference_media=media_info,
             comfy_pid=process.pid, time_elapsed=time.perf_counter()-started)
 

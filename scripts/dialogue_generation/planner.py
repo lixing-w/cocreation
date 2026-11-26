@@ -5,12 +5,17 @@ from copy import deepcopy
 import math
 import random
 from scripts.dialogue_generation.conflicts import CONFLICTS
-from scripts.dialogue_generation.cross_turn_rule import CrossTurnRules, normalize_rule, validate_rule_timeline, matches
+from tools.attribute_authority import name_assets, neutral_asset_descriptions
+from tools.dialogue_intent import requested_products
+from scripts.dialogue_generation.cross_turn_rule import (
+    CrossTurnRules, normalize_rule, validate_rule_timeline, matches, effect_text, visible_effect, SCENE_FIELDS,
+)
 from scripts.dialogue_generation.references import assign_reference_materials, validate_reference_materials
 from scripts.dialogue_generation.generation_requirements import resolve_requirements
 from scripts.dialogue_generation.asset_variations import (
     POOLS, CATALOG, AssetSpec, asset_type, alternate, relative_variation,
     alternatives, validate_attributes, edit_request, changed_attributes, fields, register_attributes,
+    VARIATION_VALUES, canonical_value, design_key,
 )
 
 
@@ -74,9 +79,13 @@ def observation(value):
         asset.setdefault("name", asset["id"])
         if not isinstance(asset["name"], str) or not asset["name"].strip():
             raise ValueError("Every asset needs a nonempty name")
+        if asset['kind'] == 'indoor_environment' and isinstance(asset.get('attributes'), dict):
+            for key in ('season', 'weather'):
+                asset['attributes'].setdefault(key, 'unknown')
         register_attributes(asset, asset.get("attributes"))
         validate_attributes(asset)
         asset["asset_type"] = asset_type(asset)
+    aliases = name_assets(assets)
     shot_ids, used = set(), set()
     for shot in shots:
         if not isinstance(shot, dict) or not isinstance(shot.get("id"), str) or not shot["id"].strip():
@@ -92,6 +101,7 @@ def observation(value):
         if not isinstance(shot.get("description"), str) or not shot["description"].strip():
             raise ValueError("Every shot needs a description")
         used.update(refs)
+    neutral_asset_descriptions(assets, shots, aliases)
     if ids != used:
         raise ValueError("Every managed asset must be used by a target shot")
     order = data.setdefault("target_order", [s["id"] for s in shots])
@@ -106,7 +116,8 @@ def observation(value):
 
 class Planner:
     def __init__(self, value, *, seed=0, reworks=1, p_compile=0.65,
-                 modules=None, extra_behaviors=True, cross_turn_rules=None):
+                 modules=None, extra_behaviors=True, cross_turn_rules=None, legacy_rule_sampling=False,
+                 sample_time_of_day=True):
         self.source = observation(value)
         if type(reworks) is not int or not 0 <= reworks <= 2:
             raise ValueError("reworks must be 0, 1 or 2")
@@ -120,12 +131,14 @@ class Planner:
         self.variation_rng = random.Random(f"variation:{seed}")
         self.numbering_rng = random.Random(f"numbering:{seed}")
         self.conflict_rng = random.Random(f"conflict:{seed}")
+        self.preview_rng = random.Random(f"preview:{seed}")
         self.selections = []
         self.p_compile, self.extra = p_compile, extra_behaviors
         self.modules = tuple(modules or MODULES)
         self.assets = {a["id"]: a for a in self.source["assets"]}
         self.shots = {s["id"]: s for s in self.source["shots"]}
         self.ready, self.versions = {}, {a: [] for a in self.assets}
+        self.tried_designs = {a: set() for a in self.assets}
         self.rendered, self.bindings, self.overrides = {}, {}, {s: {} for s in self.shots}
         self.render_order, self.dirty = [], set()
         self.media, self.visible = {}, set()
@@ -133,7 +146,8 @@ class Planner:
         self.counts = {"image": 0, "video": 0}
         self.comp_order, self.comp_media, self.comp_snapshot = [], None, {}
         self.conflict_done = False
-        self.rules = CrossTurnRules(self, enabled=extra_behaviors if cross_turn_rules is None else cross_turn_rules)
+        self.rules = CrossTurnRules(self, enabled=extra_behaviors if cross_turn_rules is None else cross_turn_rules,
+                                    legacy_sampling=legacy_rule_sampling, sample_time_of_day=sample_time_of_day)
         self._rules_started = False
         candidates = [a for a, row in self.assets.items() if alternatives(row, locked=self.variation_locks(a))]
         # Every object now has color, even when unknown. Prefer editable objects
@@ -153,6 +167,12 @@ class Planner:
     def label(self, asset):
         return self.assets[asset]["name"]
 
+    def current_references(self, *, exclude=()):
+        """Clarification shows adopted versions, including intentional rollbacks."""
+        return sorted({token for token in self.ready.values()
+                       if token not in exclude and token in self.visible
+                       and self.media[token]['operation'] == 'create_reference'})
+
     def reference_label(self, asset):
         """Distinguish continuing the current subject from returning to an older one."""
         current = self.turns[-1]["intent"]["asset_ids"] if self.turns else []
@@ -162,16 +182,15 @@ class Planner:
         return self.shots[shot]["description"]
 
     def variation_locks(self, asset):
-        from scripts.dialogue_generation.appearance_policy import COLOR_FIELDS
-        row = dict(kind='image', purpose='asset', asset_ids=[asset])
+        row = dict(kind='image', operation='create_reference', asset_ids=[asset])
         rules = list(self.rules.active.values()) if self._rules_started or self.rules.active else self.source['constraints']
-        mode = None
-        locked=set()
+        locked = set()
         for rule in rules:
-            if matches(rule,row):
-                locked.update(rule['effect'].get('asset_attributes',{}).get(asset,{}))
-                if rule['effect'].get('color_mode'):mode=rule['effect']['color_mode']
-        return locked | COLOR_FIELDS if mode=='black_and_white' else locked
+            if matches(rule, row):
+                locked.update(rule['effect'].get('asset_attributes', {}).get(asset, {}))
+                locked.update(field for field in SCENE_FIELDS
+                              if field in rule['effect'] and field in self.assets[asset]['attributes'])
+        return locked
 
     def refresh_initial_spec(self, asset):
         """Rules sampled before first delivery can make a reserved hue edit invisible."""
@@ -193,37 +212,39 @@ class Planner:
 
     def alternate(self, asset, base=None):
         row = self.assets[asset]
-        return alternate(row, base or AssetSpec(row), self.rng, locked=self.variation_locks(asset))
+        return alternate(row, base or AssetSpec(row), self.rng, locked=self.variation_locks(asset),
+                         tried=self.tried_designs[asset])
 
     def compatible(self, module, asset):
         if module in ('direct', 'clarify'):
             return True
         return bool(alternatives(self.assets[asset], self.initial_specs[asset],
-                    relative=module == 'relative_preview', locked=self.variation_locks(asset)))
+                    relative=module == 'relative_preview', locked=self.variation_locks(asset), tried=self.tried_designs[asset]))
 
     def add_media(self, kind, description, *, assets=(), shots=(), inputs=(),
-                  parent=None, goal_match=False, purpose="asset", bindings=None, rule_role=None,
+                  parent=None, goal_match=False, operation='create_reference', bindings=None,
                   generation_requirements=None):
+        if kind not in ('image', 'video'):
+            raise ValueError('Media kind must be image or video')
+        self.rules.before_generation(kind, assets, operation)
         if parent is not None and parent not in self.visible:
             raise ValueError("Edit source has not been shown")
         depth = 0 if parent is None else self.media[parent]["edit_depth"] + 1
         if depth > 2:
             raise ValueError("At most two successive edits per initial proposal")
-        if not assets and purpose in ('compilation', 'final_export'):
+        if not assets and operation in ('assemble', 'export'):
             assets = list(dict.fromkeys(a for source in inputs for a in self.media[source]['asset_ids']))
         self.counts[kind] += 1
         token = f"[[{kind}_{self.counts[kind]:04d}]]"
         self.media[token] = dict(placeholder=token, kind=kind, description=str(description), base_description=str(description),
                                 asset_ids=list(assets), shot_ids=list(shots),
                                 inputs=list(inputs), edit_parent=parent, edit_depth=depth,
-                                goal_match=goal_match, purpose=purpose,
+                                goal_match=goal_match, operation=operation,
                                 source_frames={a: self.assets[a]["frames"] for a in assets})
-        self.media[token]['generation_requirements'] = resolve_requirements(kind, purpose,
+        self.media[token]['generation_requirements'] = resolve_requirements(kind, operation,
             [self.assets[aid]['kind'] for aid in assets],
             parent=self.media[parent]['generation_requirements'] if parent and kind == 'image' and self.media[parent]['kind'] == 'image' else None,
             requested=generation_requirements)
-        if rule_role is not None:
-            self.media[token]['rule_role'] = rule_role
         state, applied = self.rules.snapshot(self.media[token])
         self.media[token].update(render_state=state, applied_rules=applied,
             reference_render_states={p: deepcopy(self.media[p]['render_state'] or self.media[p].get('reference_render_states', {}))
@@ -235,6 +256,10 @@ class Planner:
     def emit(self, role, action, description, *, assets=(), shots=(), inputs=(),
              outputs=(), references=(), behaviors=(), decision=None, scope=None,
              generation_requirements=None):
+        confirmation = self.rules.take_confirmation(role, outputs)
+        if confirmation:
+            description = confirmation['intent']['description'] + ' ' + description
+            behaviors = sorted(set(behaviors) | set(confirmation['intent']['behavior_ids']))
         if any(p not in self.visible for p in (*inputs, *references)):
             raise ValueError("Turn refers to media from the future")
         if any(p in self.visible or p not in self.media for p in outputs):
@@ -256,6 +281,8 @@ class Planner:
             intent["scope"] = scope
         if generation_requirements is not None:
             intent['generation_requirements'] = deepcopy(generation_requirements)
+        if confirmation:
+            intent.update(rule_event=confirmation['intent']['rule_event'], rule_overlay=True)
         # Historical pointers are supervision. Actual delivery inputs are
         # finalized by the forward graph; only display_media is re-attached.
         if inputs:
@@ -270,6 +297,13 @@ class Planner:
         for p in outputs:
             self.media[p]["introduced_at"] = len(self.turns)
         self.visible.update(outputs)
+        if outputs:
+            self.rules.after_delivery()
+
+    def existing_version(self, asset, spec):
+        key = design_key(self.assets[asset], spec.attributes)
+        return next((p for p in reversed(self.versions[asset])
+                     if design_key(self.assets[asset], self.media[p]['attributes']) == key), None)
 
     def asset_media(self, asset, *, description=None, parent=None, kind="image", desired=True,
                     generation_requirements=None):
@@ -280,9 +314,20 @@ class Planner:
             turn = self.turns[-1]
             if turn['role'] == 'user' and asset in turn['intent']['asset_ids']:
                 generation_requirements = turn['intent'].get('generation_requirements')
+        key = design_key(self.assets[asset], spec.attributes)
+        if key in self.tried_designs[asset]:
+            raise ValueError('Design already tried; restore its earlier version: ' + asset)
+        self.tried_designs[asset].add(key)
         goal = desired and asset not in self.pending_reworks
         token = self.add_media(kind, spec, assets=[asset], inputs=[parent] if parent else [],
                                parent=parent, goal_match=goal, generation_requirements=generation_requirements)
+        import re
+        related = {}
+        for aid, version in self.ready.items():
+            if aid != asset and re.search(r'(?i)\b' + re.escape(self.label(aid)) + r'\b', self.assets[asset]['description']):
+                related[aid] = deepcopy(self.media[version].get('effective_attributes', self.media[version]['attributes']))
+        if related:
+            self.media[token]['related_subject_states'] = related
         self.versions[asset].append(token)
         self.media[token]["asset_type"] = self.assets[asset]["asset_type"]
         self.media[token]["attributes"] = dict(spec.attributes)
@@ -331,6 +376,10 @@ class Planner:
             self.adopt(asset, token, temporary=self.rng.random() < 0.3)
         elif module == "candidates":
             kind = self.rng.choice(("image", "video"))
+            # Most attribute comparisons need a still; retain occasional video
+            # candidates rather than paying for motion on every design choice.
+            if kind == 'video' and self.preview_rng.random() < .8:
+                kind = 'image'
             alternate = self.alternate(asset, desired)
             desired = AssetSpec(self.assets[asset], desired.attributes, focus=[alternate.change["field"]])
             specs = [desired, alternate]
@@ -351,6 +400,9 @@ class Planner:
         elif module == "trial_edit":
             trial = self.alternate(asset, desired)
             self.emit("user", "request_trial", f"Request the assistant to make a test image of the {name}. {trial}.", assets=[asset])
+            field = trial.change['field']
+            self.turns[-1]['intent']['required_attribute'] = dict(field=field,
+                label=fields(self.assets[asset])[field]['label'].lower(), value=trial.attributes[field])
             before = self.asset_media(asset, description=trial, desired=False)
             self.emit("assistant", "deliver_trial", "Show the test image.", assets=[asset], outputs=[before])
             self.emit("user", "reject_and_edit", f"Set that one aside. {edit_request(self.assets[asset], trial, desired)}.",
@@ -394,7 +446,8 @@ class Planner:
             raise ValueError(module)
 
     def relative_variation(self, asset, desired):
-        return relative_variation(self.assets[asset], desired, self.variation_rng, locked=self.variation_locks(asset))
+        return relative_variation(self.assets[asset], desired, self.variation_rng, locked=self.variation_locks(asset),
+                                  tried=self.tried_designs[asset])
 
     def cross(self, first, second, module):
         self.refresh_initial_spec(first);self.refresh_initial_spec(second)
@@ -456,7 +509,7 @@ class Planner:
                       assets=[first, second], inputs=refs, behaviors=[10, 15], decision="temporary")
             self.turns[-1]["intent"]["required_attribute"] = revision
             trial = self.add_media("video", f"Short trial of a plausible action or relationship between {self.media[alternative]['description']} and the {self.label(second)}. Keep the selected designs consistent throughout the action.",
-                                   assets=[first, second], inputs=refs, purpose="exploration")
+                                   assets=[first, second], inputs=refs, operation='generate')
             self.emit("assistant", "deliver_exploration", "Present the clip as a test.",
                       assets=[first, second], inputs=refs, outputs=[trial], behaviors=[15])
             self.adopt(first, base, rollback=True, contrast=original)
@@ -464,7 +517,7 @@ class Planner:
             raise ValueError(module)
 
     def ambiguity(self, asset, target):
-        other = [p for p in self.visible if p != target and self.media[p]["purpose"] == "asset"]
+        other = self.current_references(exclude=[target])
         if not other:
             return
         # Sort set-backed candidates before sampling to keep cross-process seeds stable.
@@ -487,23 +540,24 @@ class Planner:
                   assets=[asset], inputs=[target], behaviors=[8])
 
     def revision_target(self, asset, old):
-        from scripts.dialogue_generation.appearance_policy import COLOR_FIELDS
         before=AssetSpec(self.assets[asset],self.media[old]['attributes'])
         target=AssetSpec(self.assets[asset])
         locks=set(self.variation_locks(asset))
-        uses=[sid for sid in self.rendered if asset in self.shots[sid]['assets']]
-        if uses and all(self.rules.snapshot(dict(kind='video',purpose='shot',asset_ids=self.shots[sid]['assets']))[0].get('color_mode')=='black_and_white' for sid in uses):
-            locks.update(COLOR_FIELDS)
         changes=changed_attributes(before.attributes,target.attributes)
+        if not changes:
+            return None
         if changes and set(changes)<=locks:
-            if not alternatives(self.assets[asset],before,locked=locks):return None
-            return alternate(self.assets[asset],before,self.rng,locked=locks)
+            if not alternatives(self.assets[asset],before,locked=locks,tried=self.tried_designs[asset]):return None
+            return self.alternate(asset,before)
         return target
 
     def revision_preview(self, asset, old, target=None):
         before = AssetSpec(self.assets[asset], self.media[old]['attributes'])
         target = target or AssetSpec(self.assets[asset])
         changed = changed_attributes(before.attributes, target.attributes)
+        earlier = self.existing_version(asset, target)
+        if earlier:
+            return earlier
         new = self.asset_media(asset, description=AssetSpec(self.assets[asset], target.attributes, focus=list(changed)), parent=old)
         self.media[new]['goal_match'] = target.attributes == self.assets[asset]['attributes']
         return new
@@ -517,27 +571,49 @@ class Planner:
         self.pending_reworks.remove(asset)
         edit['applied_shots'] = list(targets)
 
-    def deliver_revision(self, edits, *, images=()):
+    def deliver_revision(self, edits, *, images=(), compilation_order=None, render_updates=None):
+        render_updates = render_updates or {}
+        self.dirty.update(render_updates)
         clips = self.render_due(automatic=True)
-        cut = self.refresh_compilation(automatic=True)
+        cut = (self.deliver_compilation(compilation_order, announce=False) if compilation_order is not None
+               else self.refresh_compilation(automatic=True))
         outputs = list(images) + clips + ([cut] if cut else [])
         self.module = 'batch_revision' if len(edits) > 1 else 'later_revision'
         self.emit('assistant', 'deliver_reworked_clips',
                   'The affected video clips are updated within the confirmed scope. Present every updated clip together.'
-                  + (' The existing cut also contains these replacements in the same order.' if cut else ''),
-                  assets=[e['asset_id'] for e in edits], shots=list(dict.fromkeys(s for e in edits for s in e['applied_shots'])),
-                  outputs=outputs, behaviors=[7, 10])
+                  + (' The requested assembly is ready in the agreed order, including the established rendering updates.'
+                     if compilation_order is not None else
+                     ' The existing cut also contains these replacements in the same order.' if cut else ''),
+                  assets=[e['asset_id'] for e in edits],
+                  shots=list(dict.fromkeys([s for e in edits for s in e['applied_shots']] + list(render_updates))),
+                  outputs=outputs, behaviors=[7, 10] + ([6] if compilation_order is not None else []))
         self.turns[-1]['intent'].update(resolved_edits=deepcopy(edits), updated_clips=clips,
                                        preview_media=list(images), updated_compilation=cut)
+        if images and clips:
+            self.turns[-1]['intent']['asset_update_workflow'] = dict(
+                images=list(images), clips=list(clips), compilation=cut)
+            self.turns[-1]['rework_transition'] = (
+                "Here's the updated asset image." if len(images) == 1 else
+                "Here are the updated asset images.") + (
+                " I'll rework the requested clip now." if len(clips) == 1 else
+                " I'll rework the requested clips now.")
+        if compilation_order is not None:
+            self.turns[-1]['intent'].update(compound_request=True, compilation_order=list(compilation_order),
+                                           render_updates=deepcopy(render_updates))
 
     def rework(self, asset, target=None):
         self.module = 'later_revision'
         old = self.ready[asset]
         target = target or self.revision_target(asset,old)
         if target is None:
-            self.pending_reworks.remove(asset)
+            self.pending_reworks.discard(asset)
+            before = self.media[old]['attributes']
+            if not changed_attributes(before, self.assets[asset]['attributes']):
+                self.emit('assistant', 'attribute_already_satisfied',
+                          f'The requested attributes already exist in the current {self.label(asset)} version, so no edit is needed.', assets=[asset])
             return
-        if self.extra and self.rng.random() < 0.7:
+        restore = self.existing_version(asset, target)
+        if not restore and self.extra and self.rng.random() < 0.7:
             self.ambiguity(asset, old)
         uses = [s for s in self.shots if asset in self.shots[s]['assets']]
         rendered = [s for s in uses if s in self.rendered]
@@ -548,26 +624,35 @@ class Planner:
                 return f'shot {self.comp_order.index(shot) + 1} in the current cut'
             return 'the existing clip, “' + self.shot_label(shot) + '”'
         before = AssetSpec(self.assets[asset], self.media[old]['attributes'])
-        self.emit('user', 'request_rework', f'In {reference(first)}: ' + edit_request(self.assets[asset], before, target) + '.',
-                  assets=[asset], shots=[first], inputs=[self.rendered[first]], behaviors=[7])
+        request = (f'I prefer the earlier {self.version_label(restore, old)}. Go back to that version in {reference(first)}.'
+                   if restore else f'In {reference(first)}: ' + edit_request(self.assets[asset], before, target) + '.')
+        self.emit('user', 'request_version_restore' if restore else 'request_rework', request,
+                  assets=[asset], shots=[first], inputs=[restore] if restore else [self.rendered[first]],
+                  behaviors=[7, 1] if restore else [7])
+        if restore:
+            self.turns[-1]['intent']['restore_media'] = restore
         self.turns[-1]['intent']['attribute_changes'] = changed_attributes(before.attributes, target.attributes)
-        new = self.revision_preview(asset, old, target)
         scope = 'all_uses' if len(uses) == 1 else 'shot'
-        images = [new]
         if len(rendered) > 1:
             others = ', '.join(reference(s) for s in rendered if s != first)
             self.emit('assistant', 'clarify_update_scope',
-                f'Here is the revised {self.label(asset)} reference preview. The videos have not been changed yet. '
+                (f'The earlier {self.label(asset)} reference is available. The videos have not been changed yet. ' if restore else
+                 f'I will update the {self.label(asset)} reference before reworking the videos. ') +
                 f'The same {self.label(asset)} also appears in {others}. Update just the mentioned shot, or all existing shots using it?',
-                assets=[asset], shots=rendered, inputs=[old], outputs=[new], behaviors=[7])
-            self.turns[-1]['intent']['preview_media'] = [new]
+                assets=[asset], shots=rendered, inputs=[restore] if restore else [old], behaviors=[7])
+            self.turns[-1]['intent']['preview_media'] = []
+            if restore:
+                self.turns[-1]['intent']['restore_media'] = restore
             scope = 'shot' if self.rng.random() < .5 else 'all_uses'
             self.emit('user', 'choose_update_scope', 'Change just the shot I mentioned.' if scope == 'shot' else 'Update all the existing shots that use it.',
                 assets=[asset], shots=[first] if scope == 'shot' else rendered, behaviors=[7], scope=scope)
-            images = []
+        new = self.revision_preview(asset, old, target)
+        images = [] if restore else [new]
         edit = dict(index=1, asset_id=asset, target_media=old, target_shot=first, uses=uses,
                     rendered_uses=rendered, scope=scope, new_media=new,
                     changes=changed_attributes(before.attributes, target.attributes), target_attributes=dict(target.attributes))
+        if restore:
+            edit['restore_media'] = restore
         self.accept_revision(edit)
         self.deliver_revision([edit], images=images)
 
@@ -579,12 +664,18 @@ class Planner:
 
     def rework_remaining(self):
         """Resolve unclear identities first; show known asset previews with scope questions."""
-        assets = [a for a in self.assets if a in self.pending_reworks]
+        self.rework_group([a for a in self.assets if a in self.pending_reworks])
+
+    def rework_group(self, assets, *, compilation_order=None, render_updates=None):
+        """Commit overlapping appearance, identity and assembly work after scope resolution."""
+        render_updates = render_updates or {}
+        compound = compilation_order is not None
         targets={a:self.revision_target(a,self.ready[a]) for a in assets}
         for asset in assets:
-            if targets[asset] is None:self.pending_reworks.remove(asset)
-        assets=[a for a in assets if targets[a] is not None]
-        if len(assets) < 2:
+            if targets[asset] is None:
+                self.rework(asset, targets[asset])
+        assets=[a for a in assets if a in self.pending_reworks]
+        if len(assets) < 2 and not compound:
             for asset in assets: self.rework(asset,targets[asset])
             return
         self.module = 'batch_revision'
@@ -593,20 +684,23 @@ class Planner:
             old = self.ready[asset]
             uses = [s for s in self.shots if asset in self.shots[s]['assets']]
             rendered = [s for s in uses if s in self.rendered]
-            shot = self.rng.choice(rendered)
-            where = (f'shot {self.comp_order.index(shot)+1} in the current cut' if shot in self.comp_order else
+            shot = self.rng.choice([s for s in rendered if s in compilation_order] if compound else rendered)
+            where = (f'shot {compilation_order.index(shot)+1} in the requested cut' if compound else
+                     f'shot {self.comp_order.index(shot)+1} in the current cut' if shot in self.comp_order else
                      f'shot {self.render_order.index(shot)+1} in generation order')
             target = targets[asset]; before = AssetSpec(self.assets[asset], self.media[old]['attributes'])
             changes = changed_attributes(before.attributes, target.attributes)
-            others = sorted(p for p in self.visible if p != old and self.media[p]['purpose']=='asset'
-                            and (self.media[p]['asset_ids'] != [asset] or self.media[p]['attributes'] != before.attributes))
-            ambiguous = bool(self.extra and others and self.rng.random()<.7)
+            others = self.current_references(exclude=[old])
+            restore = self.existing_version(asset, target)
+            ambiguous = bool(not restore and self.extra and others and self.rng.random()<.7)
             scope_required = len(rendered)>1
             scope = ('shot' if self.rng.random()<.5 else 'all_uses') if scope_required else ('all_uses' if len(uses)==1 else 'shot')
             edit = dict(index=index,asset_id=asset,target_media=old,target_shot=shot,uses=uses,
                         rendered_uses=rendered,changes=changes,target_attributes=dict(target.attributes),ambiguous=ambiguous,scope_required=scope_required,
-                        reference_basis='current_compilation' if shot in self.comp_order else 'generation_order',
-                        reference_position=self.comp_order.index(shot)+1 if shot in self.comp_order else self.render_order.index(shot)+1)
+                        reference_basis='requested_compilation' if compound else 'current_compilation' if shot in self.comp_order else 'generation_order',
+                        reference_position=compilation_order.index(shot)+1 if compound else self.comp_order.index(shot)+1 if shot in self.comp_order else self.render_order.index(shot)+1)
+            if restore:
+                edit['restore_media'] = restore
             edits.append(edit)
             if ambiguous:
                 change_text=', '.join(fields(self.assets[asset])[k]['label']+' to '+v['after'] for k,v in changes.items())
@@ -616,32 +710,81 @@ class Planner:
                 references.extend(candidates);queries.append(dict(edit_index=index,kind='reference',candidate_media=candidates))
                 answers.append(f'Edit {index}: I mean {self.version_label(old,next(p for p in candidates if p != old))}')
             else:
-                requests.append(f'Edit {index}: In {where}, '+edit_request(self.assets[asset],before,target))
+                requests.append((f'Edit {index}: I prefer the earlier {self.version_label(restore, old)}. Use that version again in {where}'
+                                 if restore else f'Edit {index}: In {where}, '+edit_request(self.assets[asset],before,target)))
             if scope_required:
                 questions.append(f'Edit {index}: update just the mentioned shot, or all existing shots that use it?')
                 queries.append(dict(edit_index=index,kind='scope'))
                 answers.append(f'Edit {index}: '+('just the mentioned shot' if scope=='shot' else 'all existing shots using it'))
             edit['resolved_scope']=scope
         scopes={e['index']:e.pop('resolved_scope') for e in edits}
-        self.emit('user','request_reworks','Make these edits together: '+'; '.join(requests)+'.',
-                  assets=assets,shots=[e['target_shot'] for e in edits],behaviors=[7]+([3] if any(e['ambiguous'] for e in edits) else []))
-        self.turns[-1]['intent']['edits']=deepcopy(edits)
-        previewable=not any(e['ambiguous'] for e in edits)
-        previews={e['index']:self.revision_preview(e['asset_id'],e['target_media'],targets[e['asset_id']]) for e in edits} if previewable else {}
-        if questions:
+        followup = compound and len(edits) > 1 and any(q['edit_index'] == 1 for q in queries)
+        opening_edits = edits[:1] if followup else edits
+        opening_requests = requests[:1] if followup else requests
+        # Name existing clips without repeating target-observation adjectives
+        # that may describe the pending edit rather than their current design.
+        assembly = ('Put the existing clips together in this order, using generation-order numbering: '
+                    + ', '.join(f'shot {self.render_order.index(s)+1}' for s in compilation_order) + '. Also, ') if compound else ''
+        acknowledgment = ''
+        if compound:
+            names = {a:self.label(a) for a in self.assets}
+            treatments = list(dict.fromkeys(effect_text(visible_effect(update['after'], self.media[self.rendered[s]]), names)
+                                            for s, update in render_updates.items()))
+            acknowledgment = ('I will assemble the clips in that order. Following the existing rules, I will also bring the affected clips '
+                              'into line with ' + ('; '.join(t for t in treatments if t) or 'the agreed rendering requirements')
+                              + '. Before updating the videos, ')
+        self.emit('user','request_reworks',assembly+'Make these edits together: '+'; '.join(opening_requests)+'.',
+                  assets=[e['asset_id'] for e in opening_edits],shots=list(compilation_order) if compound else [e['target_shot'] for e in edits],
+                  inputs=[self.rendered[s] for s in compilation_order] if compound else (),
+                  behaviors=[7]+([6] if compound else [])+([3] if any(e['ambiguous'] for e in edits) else []))
+        self.turns[-1]['intent']['edits']=deepcopy(opening_edits)
+        if compound:
+            self.turns[-1]['intent'].update(compound_request=True, compilation_order=list(compilation_order),
+                                           render_updates=deepcopy(render_updates))
+        # Resolve referents and scope before generating any replacement assets.
+        previews={}
+        if followup:
+            first_queries = [q for q in queries if q['edit_index'] == 1]
+            extra_queries = [q for q in queries if q['edit_index'] != 1]
+            self.emit('assistant','clarify_reworks', acknowledgment+' '.join(q for q in questions if q.startswith('Edit 1:')),
+                      assets=[edits[0]['asset_id']],
+                      references=list(dict.fromkeys(p for q in first_queries for p in q.get('candidate_media',[]))),
+                      behaviors=[7]+([3,8] if edits[0]['ambiguous'] else []))
+            self.turns[-1]['intent'].update(edits=deepcopy(opening_edits), clarifications=first_queries,
+                preview_media=[], compound_request=True, compilation_order=list(compilation_order), render_updates=deepcopy(render_updates))
+            self.emit('user','resolve_reworks',
+                      '; '.join(a for a in answers if a.startswith('Edit 1:'))+'. Also, '+ '; '.join(requests[1:])+'.',
+                      assets=assets, behaviors=[7]+([8] if edits[0]['ambiguous'] else []))
+            self.turns[-1]['intent'].update(resolved_edits=[dict(edits[0],scope=scopes[1])],
+                additional_edits=deepcopy(edits[1:]), edits=deepcopy(edits[1:]), reference_policy='per_edit')
+            if extra_queries:
+                self.emit('assistant','clarify_reworks',
+                          'The first change is confirmed. I will combine it with the additional change before updating the clips and assembly. '
+                          +' '.join(q for q in questions if not q.startswith('Edit 1:')),
+                          assets=[e['asset_id'] for e in edits[1:]],
+                          references=list(dict.fromkeys(p for q in extra_queries for p in q.get('candidate_media',[]))),
+                          behaviors=[7]+([3,8] if any(e['ambiguous'] for e in edits[1:]) else []))
+                self.turns[-1]['intent'].update(edits=deepcopy(edits[1:]), clarifications=extra_queries, preview_media=[])
+                self.emit('user','resolve_reworks','; '.join(a for a in answers if not a.startswith('Edit 1:'))+'.',
+                          assets=[e['asset_id'] for e in edits[1:]], behaviors=[7]+([8] if any(e['ambiguous'] for e in edits[1:]) else []))
+                self.turns[-1]['intent']['resolved_edits']=[dict(e,scope=scopes[e['index']]) for e in edits[1:]]
+        elif questions:
             self.emit('assistant','clarify_reworks',
-                ('Here are the revised reference previews; the videos are unchanged. ' if previewable else '')+' '.join(questions),
-                assets=assets,references=list(dict.fromkeys(references)),outputs=list(previews.values()),behaviors=[7]+([3,8] if references else []))
-            self.turns[-1]['intent'].update(edits=deepcopy(edits),clarifications=queries,preview_media=list(previews.values()))
+                acknowledgment+'Before updating the reference images and clips, '+' '.join(questions),
+                assets=assets,references=list(dict.fromkeys(references)),behaviors=[7]+([3,8] if references else []))
+            self.turns[-1]['intent'].update(edits=deepcopy(edits),clarifications=queries,preview_media=[])
+            if compound:
+                self.turns[-1]['intent'].update(compound_request=True, compilation_order=list(compilation_order),
+                                               render_updates=deepcopy(render_updates))
             self.emit('user','resolve_reworks','; '.join(answers)+'.',assets=assets,behaviors=[7]+([8] if references else []))
             self.turns[-1]['intent']['resolved_edits']=[dict(e,scope=scopes[e['index']]) for e in edits]
         resolved=[]; images=[]
         for edit in edits:
             new=previews.get(edit['index']) or self.revision_preview(edit['asset_id'],edit['target_media'],targets[edit['asset_id']])
-            if not questions or not previewable: images.append(new)
+            if new not in self.visible: images.append(new)
             item=dict(edit,scope=scopes[edit['index']],new_media=new)
             self.accept_revision(item);resolved.append(item)
-        self.deliver_revision(resolved,images=images)
+        self.deliver_revision(resolved,images=images,compilation_order=compilation_order,render_updates=render_updates)
         self.events.append(dict(module='batch_revision',asset_ids=assets,edits=deepcopy(resolved)))
 
     def version_label(self, token, other):
@@ -670,7 +813,7 @@ class Planner:
             new_shot = shot not in self.rendered
             binding = {a: self.overrides[shot].get(a, self.ready[a]) for a in row["assets"]}
             refs = list(binding.values())
-            appearance_update = (dict(before=self.media[self.rendered[shot]]['render_state'], after=self.rules.snapshot(dict(kind='video', purpose='shot', asset_ids=row['assets']))[0])
+            appearance_update = (dict(before=self.media[self.rendered[shot]]['render_state'], after=self.rules.snapshot(dict(kind='video', operation='generate_clip', asset_ids=row['assets']))[0])
                                  if not new_shot and self.media[self.rendered[shot]]['render_state'] else None)
             if appearance_update and appearance_update['before'] == appearance_update['after']:
                 appearance_update = None
@@ -717,7 +860,7 @@ class Planner:
             target = all(self.media[p]["goal_match"] for p in refs)
             spec = row["description"] + ". References used: " + "; ".join(self.media[p]["description"] for p in refs)
             token = self.add_media("video", spec, assets=row["assets"], shots=[shot], inputs=refs,
-                                   goal_match=target, purpose="shot", bindings=binding)
+                                   goal_match=target, operation='generate_clip', bindings=binding)
             outputs.append(token)
             if not automatic:
                 self.emit("assistant", "deliver_shot", "Present the shot without adding other changes.",
@@ -733,7 +876,26 @@ class Planner:
 
         return outputs
 
+    def compilation_render_updates(self, order):
+        updates = {}
+        for shot in order:
+            row = self.media[self.rendered[shot]]
+            after = self.rules.snapshot(dict(kind='video', operation='generate_clip', asset_ids=row['asset_ids']))[0]
+            if visible_effect(row['render_state'], row) != visible_effect(after, row):
+                updates[shot] = dict(before=deepcopy(row['render_state']), after=deepcopy(after))
+        return updates
+
     def compilation(self, order, action, *, specified=True, final=False):
+        # A rule-driven assembly is already about to revise these clips. Let the
+        # user raise one reserved identity edit now, keeping later feedback separate.
+        updates = self.compilation_render_updates(order)
+        if self.extra and not final and updates:
+            candidates = [a for a in self.assets if a in self.pending_reworks and a in self.ready
+                          and any(a in self.shots[s]['assets'] for s in order)
+                          and self.revision_target(a, self.ready[a]) is not None]
+            if candidates:
+                self.rework_group(candidates[:2], compilation_order=list(order), render_updates=updates)
+                return
         self.module = "final_order" if final else "compilation"
         refs = [self.rendered[s] for s in order]
         contents = " → ".join(self.shot_label(s) for s in order)
@@ -759,7 +921,7 @@ class Planner:
                 instruction = (f"Move shot {a} after shot {b}." if move else
                                f"Swap shot {a} and shot {b}.")
                 ambiguous = next(k for k in (a - 1, b - 1) if self.comp_order[k] != original[k])
-                self.emit("user", "ambiguous_shot_number", instruction,
+                self.emit("user", "ambiguous_shot_number", instruction + " Keep your reference deliberately ambiguous.",
                           shots=list(self.comp_order), behaviors=[11])
                 self.turns[-1]["intent"]["numbering_operation"] = operation
                 self.emit("assistant", "clarify_shot_number",
@@ -781,19 +943,21 @@ class Planner:
                   shots=order, inputs=refs, behaviors=[6] + ([11] if final else []))
         self.deliver_compilation(order, final=final)
 
-    def deliver_compilation(self, order, *, final=False, operation=None):
+    def deliver_compilation(self, order, *, final=False, operation=None, announce=True):
         refs = [self.rendered[s] for s in order]
         contents = " → ".join(self.shot_label(s) for s in order)
         token = self.add_media("video", "Edited video in this shot order: " + contents, shots=order,
-                               inputs=refs, goal_match=final, purpose="compilation")
+                               inputs=refs, goal_match=final, operation='assemble')
         self.media[token]["shot_versions"] = dict(zip(order, refs))
         if operation:
             self.media[token]["numbering_operation"] = operation
             self.media[token]["previous_compilation"] = self.comp_media
-        self.emit("assistant", "deliver_compilation", "Present the clips in the requested order without changing the individual shots.",
-                  shots=order, inputs=refs, outputs=[token], behaviors=[6])
+        if announce:
+            self.emit("assistant", "deliver_compilation", "Present the clips in the requested order without changing the individual shots.",
+                      shots=order, inputs=refs, outputs=[token], behaviors=[6])
         self.comp_order, self.comp_media = list(order), token
         self.comp_snapshot = dict(zip(order, refs))
+        return token
 
     def compile_preview(self):
         order = list(self.comp_order) + [s for s in self.render_order if s not in self.comp_order]
@@ -817,13 +981,49 @@ class Planner:
             self.emit("user", "replace_compilation_shots", "Replace the updated shots in the last preview. Keep everything else where it is.",
                       shots=changed, inputs=[self.comp_media] + [self.rendered[s] for s in changed], behaviors=[7])
         token = self.add_media("video", "Preview with replacement shots in the same order: " + " → ".join(self.shot_label(s) for s in order),
-                               shots=order, inputs=refs, purpose="compilation")
+                               shots=order, inputs=refs, operation='assemble')
         self.media[token]["shot_versions"] = dict(zip(order, refs))
         if not automatic:
             self.emit("assistant", "deliver_refreshed_compilation", "Show the preview with the agreed replacements and original order. The earlier cut remains available.",
                       shots=order, inputs=refs, outputs=[token], behaviors=[7])
         self.comp_media, self.comp_snapshot = token, dict(zip(order, refs))
         return token
+
+    def decorate_attributes(self):
+        """Attach current version state to its own request, never source-video adjectives."""
+        def states(tokens):
+            result = []
+            for output_position, token in enumerate(tokens, 1):
+                row = self.media[token]
+                bindings = row.get('bindings', {})
+                sources = list(bindings.values()) if bindings else ([token] if row.get('attributes') else row['inputs'])
+                for source in sources:
+                    ref = self.media[source]
+                    if not ref.get('attributes'):
+                        continue
+                    aid = ref['asset_ids'][0]
+                    state = dict(subject=self.label(aid), attributes=deepcopy(ref.get('effective_attributes', ref['attributes'])))
+                    if len(tokens) > 1:
+                        state['output_position'] = output_position
+                    if state not in result:
+                        result.append(state)
+                for aid, attrs in row.get('related_subject_states', {}).items():
+                    state = dict(subject=self.label(aid), attributes=deepcopy(attrs))
+                    if state not in result:
+                        result.append(state)
+            return result
+        for index, turn in enumerate(self.turns):
+            tokens = turn['output_media'] or turn['intent'].get('context_media', [])
+            attrs = states(tokens)
+            if attrs:
+                turn['intent']['attribute_overrides'] = attrs
+            if turn['output_media'] and attrs:
+                for previous in reversed(self.turns[:index]):
+                    if previous['output_media']:
+                        break
+                    if previous['role'] == 'user' and set(previous['intent']['asset_ids']) & set(turn['intent']['asset_ids']):
+                        previous['intent']['attribute_overrides'] = deepcopy(attrs)
+                        break
 
     def run(self):
         self._rules_started = True
@@ -872,7 +1072,7 @@ class Planner:
             self.emit("user", "request_final_export", "Export the current cut as the final video, keeping its shots and order unchanged.",
                       shots=goal, inputs=[final])
             exported = self.add_media("video", self.media[final]["description"], shots=goal,
-                                      inputs=[final], goal_match=True, purpose="final_export")
+                                      inputs=[final], goal_match=True, operation='export')
             self.emit("assistant", "deliver_final_export", "Here's the final video with the same shots and order.",
                       shots=goal, inputs=[final], outputs=[exported])
             final = exported
@@ -884,14 +1084,19 @@ class Planner:
         # description while constructing the version contrast.
         self.turns[0]["intent"]["description"] = "A fresh conversation starts. " + self.turns[0]["intent"]["description"]
         self.rules.decorate()
-        result = dict(schema_version=5, rules=deepcopy(self.rules.records), attribute_schema_version=CATALOG["schema_version"],
+        self.decorate_attributes()
+        for turn in self.turns:
+            products = requested_products(turn, self.media)
+            if products:
+                turn['intent']['requested_outputs'] = products
+        result = dict(schema_version=6, rules=deepcopy(self.rules.records), attribute_schema_version=CATALOG["schema_version"],
                       rework_plan=self.rework_plan,
                       target_assets={a: dict(id=a, name=row['name'], kind=row["kind"], description=row["description"],
                                               attributes=row["attributes"],
                                               **({"attribute_extensions": deepcopy(row["attribute_extensions"])} if row.get("attribute_extensions") else {})) for a, row in self.assets.items()},
                       seed=self.seed, source_video=self.source.get("video", ""),
                       media_generated=False, target_order=goal, events=self.events,
-                      selections=self.selections,
+                      selections=self.selections, version_history=deepcopy(self.versions),
                       turns=self.turns, placeholders=list(self.media.values()),
                       behavior_coverage=sorted({b for t in self.turns for b in t["intent"]["behavior_ids"]}),
                       behavior_labels={str(k): v for k, v in BEHAVIORS.items()},
@@ -911,6 +1116,24 @@ def validate_plan(plan):
     latest_shots = {}
     pending_numbering = resolved_numbering = None
     pending_batch = None
+    def validate_edit(edit):
+        if edit['target_media'] not in seen:
+            raise ValueError('Future/unknown batch referent')
+        parent = media[edit['target_media']]
+        target = plan['target_assets'][edit['asset_id']]
+        expected = {key:dict(before=parent['attributes'][key],after=value)
+                    for key,value in edit.get('target_attributes',target['attributes']).items()
+                    if value != parent['attributes'][key]}
+        if not expected or edit['changes'] != expected or edit['target_shot'] not in edit['rendered_uses']:
+            raise ValueError('Incorrect batch edit target')
+
+    def required_questions(edits):
+        return {(e['index'],kind) for e in edits for kind,enabled in
+                (('reference',e['ambiguous']),('scope',e['scope_required'])) if enabled}
+
+    def default_scopes(edits):
+        return {e['index']:'all_uses' if len(e['uses'])==1 else 'shot' for e in edits
+                if not e['ambiguous'] and not e['scope_required']}
     for turn in plan["turns"]:
         intent = turn["intent"]
         action = intent["action"]
@@ -919,18 +1142,23 @@ def validate_plan(plan):
             if pending_batch or [e["index"] for e in edits] != list(range(1, len(edits) + 1)) or len({e["asset_id"] for e in edits}) != len(edits):
                 raise ValueError("Invalid batch edit request")
             for edit in edits:
-                if edit["target_media"] not in seen:
-                    raise ValueError("Future/unknown batch referent")
-                parent = media[edit["target_media"]]
-                target = plan["target_assets"][edit["asset_id"]]
-                expected_changes = {key: dict(before=parent["attributes"][key], after=value)
-                                    for key, value in edit.get("target_attributes", target["attributes"]).items() if value != parent["attributes"][key]}
-                if not expected_changes or edit["changes"] != expected_changes or edit["target_shot"] not in edit["rendered_uses"]:
-                    raise ValueError("Incorrect batch edit target")
-            required = {(e["index"], kind) for e in edits for kind, enabled in
-                        (("reference", e["ambiguous"]), ("scope", e["scope_required"])) if enabled}
-            pending_batch = dict(edits=edits, required=required, asked=False, resolved={} if required else
-                                 {e["index"]: "all_uses" for e in edits})
+                validate_edit(edit)
+            required = required_questions(edits)
+            render_updates = intent.get('render_updates', {})
+            compilation_order = intent.get('compilation_order')
+            if render_updates and compilation_order is None:
+                raise ValueError('Rendering updates require an assembly request')
+            if compilation_order is not None:
+                if (not compilation_order or len(set(compilation_order)) != len(compilation_order)
+                        or any(s not in latest_shots for s in compilation_order)
+                        or any(e['target_shot'] not in compilation_order for e in edits)):
+                    raise ValueError('Invalid compound assembly order')
+                for shot, update in render_updates.items():
+                    if (shot not in compilation_order or update.get('before') != latest_shots[shot]['render_state']
+                            or not isinstance(update.get('after'), dict) or update['before'] == update['after']):
+                        raise ValueError('Incorrect compound rendering update')
+            pending_batch = dict(edits=list(edits), round_edits=list(edits), required=required, asked=False, resolved=default_scopes(edits),
+                                 compilation_order=compilation_order, render_updates=render_updates)
         if action == "clarify_reworks":
             if not pending_batch or pending_batch["asked"]:
                 raise ValueError("Unexpected batch clarification")
@@ -945,35 +1173,62 @@ def validate_plan(plan):
             if not pending_batch or not pending_batch["asked"]:
                 raise ValueError("Batch resolution without clarification")
             answers = intent["resolved_edits"]
-            if len(answers) != len(pending_batch["edits"]):
+            current = pending_batch['round_edits']
+            if len(answers) != len(current):
                 raise ValueError("Batch resolution omitted an edit")
-            for edit, answer in zip(pending_batch["edits"], answers):
+            for edit, answer in zip(current, answers):
                 if any(answer.get(k) != v for k, v in edit.items()) or answer.get("scope") not in ("shot", "all_uses"):
                     raise ValueError("Batch resolution changed its edit target")
-            pending_batch["resolved"] = {e["index"]: e["scope"] for e in answers}
+            pending_batch['resolved'].update({e['index']:e['scope'] for e in answers})
+            extra = intent.get('additional_edits', [])
+            if extra:
+                n = len(pending_batch['edits'])
+                if (pending_batch['compilation_order'] is None
+                        or [e['index'] for e in extra] != list(range(n+1,n+len(extra)+1))
+                        or len({e['asset_id'] for e in pending_batch['edits']+extra}) != n+len(extra)):
+                    raise ValueError('Invalid additional compound edit')
+                for edit in extra:
+                    validate_edit(edit)
+                    if edit['target_shot'] not in pending_batch['compilation_order']:
+                        raise ValueError('Additional edit is outside the requested assembly')
+                pending_batch['edits'].extend(extra)
+                pending_batch['resolved'].update(default_scopes(extra))
+                pending_batch.update(round_edits=extra, required=required_questions(extra), asked=False)
         if action == 'clarify_reworks' and turn['output_media']:
-            if any(e['ambiguous'] for e in pending_batch['edits']):
+            current = pending_batch['round_edits']
+            if any(e['ambiguous'] for e in current):
                 raise ValueError('Asset preview generated before its reference was resolved')
-            if len(turn['output_media']) != len(pending_batch['edits']):
+            fresh = [e for e in current if not e.get('restore_media')]
+            if len(turn['output_media']) != len(fresh):
                 raise ValueError('Batch preview omitted an edit')
-            for edit, token in zip(pending_batch['edits'],turn['output_media']):
-                if media[token]['purpose']!='asset' or media[token]['edit_parent']!=edit['target_media']:
+            for edit, token in zip(fresh,turn['output_media']):
+                if media[token]['operation']!='create_reference' or media[token]['edit_parent']!=edit['target_media']:
                     raise ValueError('Batch preview changed its edit target')
         if action == 'deliver_reworked_clips':
             delivered = intent['resolved_edits']
+            render_updates = intent.get('render_updates', {})
             if pending_batch:
-                if not pending_batch['resolved']:
+                if len(pending_batch['resolved']) != len(pending_batch['edits']):
                     raise ValueError('Batch generated before all clarifications were resolved')
                 if len(delivered)!=len(pending_batch['edits']):
                     raise ValueError('Batch delivery omitted an edit')
                 for edit, answer in zip(pending_batch['edits'],delivered):
                     if any(answer.get(k)!=v for k,v in edit.items()) or answer['scope']!=pending_batch['resolved'][edit['index']]:
                         raise ValueError('Batch delivery changed its target or confirmed scope')
+                if (render_updates != pending_batch['render_updates']
+                        or intent.get('compilation_order') != pending_batch['compilation_order']):
+                    raise ValueError('Compound delivery changed its assembly or rendering request')
                 pending_batch=None
-            expected_shots=set()
+            expected_shots=set(render_updates)
             for edit in delivered:
                 new=media[edit['new_media']]
-                if new['edit_parent']!=edit['target_media'] or new['asset_ids']!=[edit['asset_id']]:
+                if edit.get('restore_media'):
+                    if (edit['new_media'] != edit['restore_media'] or edit['new_media'] not in seen
+                            or new['asset_ids'] != [edit['asset_id']]
+                            or design_key(plan['target_assets'][edit['asset_id']], new['attributes'])
+                            != design_key(plan['target_assets'][edit['asset_id']], edit['target_attributes'])):
+                        raise ValueError('Restored version is not the established requested design')
+                elif new['edit_parent']!=edit['target_media'] or new['asset_ids']!=[edit['asset_id']]:
                     raise ValueError('Revision preview has the wrong parent or subject')
                 wanted=[edit['target_shot']] if edit['scope']=='shot' else edit['rendered_uses']
                 if edit['applied_shots']!=wanted:
@@ -984,9 +1239,25 @@ def validate_plan(plan):
                 raise ValueError('Revision delivery omitted or duplicated an affected clip')
             for token in clips:
                 row=media[token];sid=row['shot_ids'][0]
+                if sid in render_updates and row['render_state'] != render_updates[sid]['after']:
+                    raise ValueError('Updated clip omitted its compound rendering change')
+                if render_updates:
+                    expected_bindings = dict(latest_shots[sid]['bindings'])
+                    for edit in delivered:
+                        if sid in edit['applied_shots']:
+                            expected_bindings[edit['asset_id']] = edit['new_media']
+                    if row['bindings'] != expected_bindings:
+                        raise ValueError('Compound update changed an identity outside its confirmed scope')
                 for edit in delivered:
                     if sid in edit['applied_shots'] and row['bindings'][edit['asset_id']]!=edit['new_media']:
                         raise ValueError('Updated clip does not use its confirmed revision')
+            if intent.get('compilation_order') is not None:
+                cut = media.get(intent.get('updated_compilation'), {})
+                replacements = {media[token]['shot_ids'][0]:token for token in clips}
+                order = intent['compilation_order']
+                if (cut.get('shot_ids') != order or intent['updated_compilation'] not in turn['output_media']
+                        or cut.get('shot_versions') != {s:replacements.get(s, latest_shots[s]['placeholder']) for s in order}):
+                    raise ValueError('Compound assembly omitted its confirmed shot order or replacements')
         if intent["action"] == "ambiguous_shot_number" and "numbering_operation" in intent:
             pending_numbering = intent["numbering_operation"]
         if intent["action"] == "resolve_shot_number":
@@ -1017,7 +1288,7 @@ def validate_plan(plan):
         if turn["intent"].get("target_media") is not None and turn["intent"]["target_media"] not in seen:
             raise ValueError("Future/unknown oracle referent")
         for p in turn["output_media"]:
-            if pending_batch and not pending_batch["resolved"] and action != "clarify_reworks":
+            if pending_batch and len(pending_batch['resolved']) != len(pending_batch['edits']) and action != "clarify_reworks":
                 raise ValueError("Media generated before all batch clarifications were resolved")
             if pending_numbering is not None:
                 raise ValueError("Media generated before numbering clarification")
@@ -1026,11 +1297,11 @@ def validate_plan(plan):
             row = media[p]
             if 'generation_requirements' in row:
                 requirements = row['generation_requirements']
-                checked = resolve_requirements(row['kind'], row['purpose'],
+                checked = resolve_requirements(row['kind'], row['operation'],
                     [plan['target_assets'][aid]['kind'] for aid in row['asset_ids']], requested=requirements)
                 if requirements != checked:
                     raise ValueError('Invalid per-generation presentation requirements')
-            if row.get("purpose") == "asset" and "target_assets" in plan:
+            if row.get("operation") == 'create_reference' and "target_assets" in plan:
                 asset = plan["target_assets"][row["asset_ids"][0]]
                 validate_attributes(asset, row.get("attributes"))
                 if row["goal_match"] and row["attributes"] != asset["attributes"]:
@@ -1040,8 +1311,14 @@ def validate_plan(plan):
                     changes = changed_attributes(parent_attrs, row["attributes"])
                     if changes != row.get("attribute_changes"):
                         raise ValueError("Incorrect structured attribute edit")
-            if "variation" in row and row["variation"]["type"] not in fields(plan["target_assets"][row["asset_ids"][0]]):
-                raise ValueError("Variation is incompatible with the asset type")
+            if "variation" in row:
+                variation = row['variation']
+                kind = plan['target_assets'][row['asset_ids'][0]]['kind']
+                key = variation['type']
+                if key not in VARIATION_VALUES[kind]:
+                    raise ValueError("Variation is incompatible with the asset type")
+                if canonical_value(key, variation['before']) == canonical_value(key, variation['after']):
+                    raise ValueError('Variation repeats an existing attribute value')
             if "numbering_operation" in row:
                 previous = row.get("previous_compilation")
                 if previous not in seen or row["numbering_operation"] != resolved_numbering:
@@ -1056,7 +1333,7 @@ def validate_plan(plan):
             if row["edit_parent"] is not None:
                 if row["edit_depth"] != media[row["edit_parent"]]["edit_depth"] + 1:
                     raise ValueError("Incorrect edit ancestry")
-            if row["purpose"] == "shot":
+            if row["operation"] == 'generate_clip':
                 latest_shots[row["shot_ids"][0]] = row
             seen.add(p)
     if seen != set(media):
@@ -1070,13 +1347,13 @@ def validate_plan(plan):
         raise ValueError("Final shot order is wrong")
     for sid, shot in final['shots'].items():
         row=media[shot['media']]
-        if row['purpose']!='shot' or row['shot_ids']!=[sid] or row['bindings']!=shot['bindings']:
+        if row['operation']!='generate_clip' or row['shot_ids']!=[sid] or row['bindings']!=shot['bindings']:
             raise ValueError('Final shot binding is inconsistent')
         for aid, token in shot['bindings'].items():
-            if media[token]['purpose']!='asset' or media[token]['asset_ids']!=[aid]:
+            if media[token]['operation']!='create_reference' or media[token]['asset_ids']!=[aid]:
                 raise ValueError('Final asset binding has the wrong identity')
     artifact = media[final["media"]]
-    if artifact["purpose"] == "final_export":
+    if artifact["operation"] == 'export':
         artifact = media[artifact["inputs"][0]]
     if len(final["order"]) > 1:
         if artifact["shot_ids"] != final["order"]:

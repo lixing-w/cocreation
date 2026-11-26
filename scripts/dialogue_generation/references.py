@@ -7,13 +7,13 @@ def assign_reference_materials(plan):
     deliveries = {token: turn for turn in plan['turns'] for token in turn['output_media']}
     for row in plan['placeholders']:
         refs = list(row['inputs'])
-        if row['purpose'] == 'asset' and not refs:
+        if row['operation'] == 'create_reference' and not refs:
             turn = deliveries[row['placeholder']]
             # Rule cleanup regenerates the agreed identity from its last visible
             # version, even when the planner resets its bounded edit ancestry.
             refs = [ref for ref in turn['intent'].get('context_media', [])
                     if ref in media and set(row['asset_ids']) <= set(media[ref]['asset_ids'])]
-        if row['purpose'] == 'shot':
+        if row['operation'] == 'generate_clip':
             sid = row['shot_ids'][0]
             if sid in latest_shots:
                 previous = media[latest_shots[sid]]

@@ -21,9 +21,11 @@ if __package__ in (None, ''):
 
 from scripts.dialogue_generation.asset_variations import CATALOG, CATEGORIES, validate_attributes, fields, register_attributes
 from scripts.dialogue_generation.planner import observation as validate_observation
-from tools.dialogue_models import DEFAULT_OLLAMA_MODEL, DEFAULT_BACKEND, resolve_model
+from tools.dialogue_models import BACKENDS, DEFAULT_OLLAMA_MODEL, DEFAULT_BACKEND, SONNET_EFFORTS, resolve_model, resolve_think_mode
 from tools.video_frames import frame_timestamps, sample_indices, extract_frames
 from tools.video_observer_prompts import SYSTEM, inventory_prompt, attributes_prompt, review_prompt
+from tools.attribute_authority import name_assets, neutral_asset_descriptions
+from tools.observation_descriptions import ObservationPrompt, separate_descriptions, DESCRIPTION_POLICY_VERSION
 
 
 def _object(properties):
@@ -224,12 +226,15 @@ class VideoObserver:
     dialogue generation run to reuse them. close() only closes an owned local
     Qwen, never an injected instance or the Ollama server.
     """
+    system_prompt = SYSTEM
+
     def __init__(self, *, backend=None, qwen=None, model=None,
                  base_url=None, timeout=600,
-                 max_tokens=4096, context_tokens=32768, seed=0, retries=1, enable_thinking=False):
+                 max_tokens=4096, context_tokens=32768, seed=0, retries=1, enable_thinking=False, think_mode=None):
         self.backend = backend or ('local' if qwen is not None else DEFAULT_BACKEND)
-        if self.backend not in ('ollama', 'local', 'vllm'):
-            raise ValueError('backend must be ollama, local or vllm')
+        self.think_mode = resolve_think_mode(self.backend, think_mode)
+        if self.backend not in BACKENDS:
+            raise ValueError('backend must be one of ' + ', '.join(BACKENDS))
         if qwen is not None and (self.backend != 'local' or model is not None):
             raise ValueError('An injected qwen selects its own local model; omit model')
         if (not math.isfinite(timeout) or timeout <= 0 or max_tokens < 128 or context_tokens < 2048
@@ -262,13 +267,17 @@ class VideoObserver:
     def __exit__(self, *args):
         self.close()
 
-    def _request(self, prompt, images, schema, directory):
-        if self.backend in ('local', 'vllm'):
+    def _request(self, prompt, images, schema, directory, *, system_prompt=None):
+        system_prompt = self.system_prompt if system_prompt is None else system_prompt
+        if self.backend in ('local', 'vllm', 'sonnet'):
             from cocreation import Qwen, Reference
             if self.qwen is None:
                 if self.backend == 'vllm':
                     from cocreation import VLLMQwen
                     self.qwen = VLLMQwen(model_id=self.model, base_url=self.base_url, timeout=self.timeout, enable_thinking=self.enable_thinking)
+                elif self.backend == "sonnet":
+                    from cocreation import ClaudeSonnet
+                    self.qwen = ClaudeSonnet(model_id=self.model, timeout=self.timeout, effort=self.think_mode)
                 else:
                     self.qwen = Qwen(model_id=self.model)
                 self.owned = True
@@ -278,11 +287,26 @@ class VideoObserver:
                 # Unlike the serving APIs, native generate has no format/schema
                 # field. Supply the actual contract in its text context.
                 prompt += '\n\nJSON Schema (use integer frame numbers, and return JSON without code fences):\n' + json.dumps(schema)
-            result = self.qwen(media + '\n' + prompt, refs, system_prompt=SYSTEM,
+            result = self.qwen(media + '\n' + prompt, refs, system_prompt=system_prompt,
                 max_new_tokens=self.max_tokens, max_pixels=768*768, seed=self.seed,
                 output_dir=directory / 'runtime', temperature=0.1, top_p=0.95, top_k=50,
                 response_schema=_decoder_schema(schema))
-            return result.get('text', '')
+            raw = result.get('text') or ''
+            # Preserve the failed response too. A reasoning-only, length-limited
+            # reply must not be misreported as malformed JSON at character zero.
+            (directory / 'response.txt').write_text(raw, encoding='utf-8')
+            details = (result.get('usage') or {}).get('completion_tokens_details') or {}
+            metadata = dict(finish_reason=result.get('finish_reason'),
+                output_tokens=result.get('output_tokens'), reasoning_tokens=details.get('reasoning_tokens'),
+                enable_thinking=result.get('enable_thinking'), thinking_token_budget=result.get('thinking_token_budget'))
+            _save(directory / 'response_metadata.json', metadata)
+            if metadata['finish_reason'] == 'length':
+                raise ValueError(f"Response hit the token limit before a complete final answer "
+                                 f"(output_tokens={metadata['output_tokens']}, reasoning_tokens={metadata['reasoning_tokens']}). "
+                                 'Finish reasoning promptly, use unknown for ambiguous fields, and return the complete JSON object.')
+            if not raw.strip():
+                raise ValueError(f"Empty final response (finish_reason={metadata['finish_reason']}); return a complete JSON object")
+            return raw
         # Reject clearly undersized contexts before Ollama can truncate a frame
         # sequence. Qwen's Ollama vision encoder reserves at least 1024 tokens
         # per image; use a conservative text budget and allow media framing.
@@ -291,11 +315,11 @@ class VideoObserver:
         for path in images:
             with Image.open(path) as image:
                 image_budget += max(1024, math.ceil(image.width / 28) * math.ceil(image.height / 28)) + 64
-        budget = image_budget + math.ceil(len((SYSTEM + prompt).encode('utf-8')) / 2) + self.max_tokens + 256
+        budget = image_budget + math.ceil(len((system_prompt + prompt).encode('utf-8')) / 2) + self.max_tokens + 256
         if budget > self.context_tokens:
             raise ValueError('Frames and output exceed the estimated context budget; reduce --frames/--max-side or increase --context-tokens')
         body = dict(model=self.model, stream=False, keep_alive='15m', format=schema,
-            messages=[dict(role='system', content=SYSTEM), dict(role='user', content=prompt,
+            messages=[dict(role='system', content=system_prompt), dict(role='user', content=prompt,
                 images=[base64.b64encode(p.read_bytes()).decode('ascii') for p in images])],
             options=dict(num_ctx=self.context_tokens, num_predict=self.max_tokens,
                          temperature=0.1, top_p=0.95, top_k=50, seed=self.seed))
@@ -315,7 +339,11 @@ class VideoObserver:
         directory.mkdir()
         _save(directory / 'schema.json', schema)
         _save(directory / 'images.json', [str(p) for p in images])
-        (directory / 'system.txt').write_text(SYSTEM, encoding='utf-8')
+        system_prompt = self.system_prompt
+        if isinstance(prompt, ObservationPrompt):
+            system_prompt += '\n\n' + prompt.instructions
+            prompt = prompt.data
+        (directory / 'system.txt').write_text(system_prompt, encoding='utf-8')
         original = prompt
         for attempt in range(self.retries + 1):
             current = directory / f'attempt_{attempt + 1}'
@@ -323,7 +351,7 @@ class VideoObserver:
             (current / 'prompt.txt').write_text(prompt, encoding='utf-8')
             value = None
             try:
-                raw = self._request(prompt, images, schema, current)
+                raw = self._request(prompt, images, schema, current, system_prompt=system_prompt)
                 (current / 'response.txt').write_text(raw, encoding='utf-8')
                 candidate = raw
                 lines = raw.strip().splitlines()
@@ -341,7 +369,7 @@ class VideoObserver:
                 if attempt == self.retries:
                     raise ValueError(f'{directory.name} rejected: {exc}') from exc
                 detail = ''
-                if self.backend in ('local', 'vllm') and isinstance(value, dict):
+                if self.backend in ('local', 'vllm', 'sonnet') and isinstance(value, dict):
                     for asset in value.get('assets', []) if isinstance(value.get('assets'), list) else []:
                         frames = asset.get('frame_ids') if isinstance(asset, dict) else None
                         if isinstance(frames, list) and all(type(f) is int for f in frames) and len(set(frames)) < len(frames):
@@ -392,6 +420,7 @@ class VideoObserver:
             lambda v: validate_inventory(v, len(images), max_assets), directory / 'inventory',
             repair=lambda v: repair_inventory(v, len(images)))
         _save(directory / 'inventory.json', inventory)
+        aliases=name_assets(inventory['assets'])
         assets = []
         for index, asset in enumerate(inventory['assets'], 1):
             if progress:
@@ -417,9 +446,13 @@ class VideoObserver:
         shots = [dict(id=f'S{i+1}', start=boundaries[i], end=boundaries[i+1],
                       description=s['description'], assets=s['assets'])
                  for i, s in enumerate(inventory['shots'])]
+        neutral_asset_descriptions(assets,shots,aliases)
+        separate_descriptions(self, assets, shots, directory / "description_separation",
+            source_context=dict(frame_timestamps=times), source_images=images)
         result = dict(video=str(video), video_metadata=dict(width=source_width, height=source_height, duration=duration),
                       attribute_schema_version=CATALOG['schema_version'],
                       assets=assets, shots=shots, target_order=[s['id'] for s in shots], constraints=[])
+        result["description_policy"] = DESCRIPTION_POLICY_VERSION
         validate_observation(deepcopy(result))
         _save(directory / 'observation.json', result)
         return result
@@ -437,7 +470,8 @@ def main():
     parser.add_argument('video', type=Path)
     parser.add_argument('--output-dir', type=Path, required=True, help='New directory; never overwrite an existing run')
     parser.add_argument('--enable-thinking', action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument('--backend', choices=('ollama', 'local', 'vllm'), default=DEFAULT_BACKEND)
+    parser.add_argument('--backend', choices=BACKENDS, default=DEFAULT_BACKEND)
+    parser.add_argument('--think-mode', choices=SONNET_EFFORTS, help='Sonnet reasoning effort (default: low)')
     parser.add_argument('--model', help=f'Default Ollama model: {DEFAULT_OLLAMA_MODEL}')
     parser.add_argument('--base-url', help='Default: localhost:11434 (Ollama), localhost:8000 (vLLM)')
     parser.add_argument('--frames', type=int, default=24)
@@ -451,7 +485,7 @@ def main():
     parser.add_argument('--quiet', action='store_true')
     args = parser.parse_args()
     try:
-        result = observe_video(args.video, args.output_dir, backend=args.backend, enable_thinking=args.enable_thinking, model=args.model,
+        result = observe_video(args.video, args.output_dir, backend=args.backend, enable_thinking=args.enable_thinking, think_mode=args.think_mode, model=args.model,
             base_url=args.base_url, frames=args.frames, max_assets=args.max_assets, max_side=args.max_side,
             max_tokens=args.max_tokens, context_tokens=args.context_tokens, timeout=args.timeout,
             seed=args.seed, retries=args.retries, progress=not args.quiet)

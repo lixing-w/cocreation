@@ -11,6 +11,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.dialogue_generation.asset_variations import CATALOG, CATEGORIES, empty_attributes
+from scripts.dialogue_generation.cross_turn_rule import EFFECTS
+from tools.observation_descriptions import DESCRIPTION_POLICY
 
 
 def input_schema():
@@ -52,11 +54,11 @@ def input_schema():
                 "properties": {
                     "text": {"type": "string"}, "scope": {"enum": ["global", "partial"]},
                     "selector": {"type": "object", "additionalProperties": False, "properties": {
-                        "roles": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"enum": ["asset_image", "asset_video", "trial_video", "shot", "compilation", "final_export"]}},
+                        "kinds": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"enum": ["image", "video"]}},
                         "asset_ids": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"type": "string"}}}},
                     "effect": {"type": "object", "minProperties": 1, "additionalProperties": False, "properties": {
-                        "color_mode": {"enum": ["black_and_white", "original_colors"]},
                         "season": {"enum": ["spring", "summer", "fall", "winter"]},
+                        "aspect_ratio": {"enum": list(EFFECTS["aspect_ratio"])},
                         "asset_attributes": {"type": "object", "minProperties": 1, "additionalProperties": {
                             "type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}}}}},
                 "allOf": [
@@ -82,11 +84,12 @@ def observation_prompt():
         "Reuse an id for the same person, object, or environment across shots. If the final video has distinct visible versions, use a separate id for each version.",
         "Track only human-intuitive salient identities. Tiny incidental objects and decorative details belong in the owning asset description, not standalone assets. Describe distinctive details concisely. Additional supported attribute fields or values are legal per-identity extensions; prefer the listed choices for existing fields. Track the principal people, objects, and environments. List each shot's id, start, end, description (action and composition), and assets (the relevant asset ids).",
         "List ids in final playback order in target_order. Every asset must appear in at least one shot.",
-        *CATALOG["notes"],
+        *CATALOG["notes"], DESCRIPTION_POLICY,
         "Write names, descriptions, and any constraint text in English. Use exact enum strings as printed below. Use short, version-neutral names, such as traveler or tote bag.",
+        'Asset names describe stable object categories, independent of editable appearance: use teacup rather than porcelain teacup, bag rather than black leather bag, and table rather than wooden table. Keep material, color, size and finish in attributes. Use these neutral identities in shot action/camera prose.',
         "Use unknown for details such as actual material, apparent height, wind strength, and season when the video cannot establish them. Use numbers only in numeric fields.",
         "Include constraints only when the input explicitly supplies lasting production requirements. A visible property alone does not establish a persistent user rule.",
-        "For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify roles or asset_ids. Effects may specify color_mode (black_and_white or original_colors), season (spring, summer, fall, winter), or asset_attributes. Do not infer user rules from video appearance.",
+        "For explicit user rules only, use constraints with scope global or partial, a selector for partial scope, and a structured effect. Global means every generated image and video. Partial selectors may specify kinds (image/video) or asset_ids. Effects may specify season (spring, summer, fall, winter), aspect_ratio (portrait, landscape, square_assets_landscape_video, square_assets_portrait_video), or asset_attributes. Do not infer user rules from video appearance.",
         "Follow the compatibility rules below.", "",
         "## Attribute values", "",
     ]

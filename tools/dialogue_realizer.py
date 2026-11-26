@@ -9,37 +9,58 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from tools.dialogue_personas import choose_personas
-from scripts.dialogue_generation.appearance_policy import neutral_text, output_contract, monochrome
+from tools.attribute_authority import ATTRIBUTE_AUTHORITY
+from tools.dialogue_intent import (requested_products, content_description,
+    additional_requirements, product_lines, requirement_lines)
 from cocreation.qwen_sampling import generation_options
-from tools.dialogue_verifier import (QwenVerifier, passed, SYSTEM as VERIFIER_SYSTEM,
-    REPORT_SCHEMA, CRITERIA, VERIFIER_MAX_TOKENS, THINKING_VERIFIER_MAX_TOKENS, VERIFIER_TEMPERATURE)
+from tools.dialogue_verifier import (QwenVerifier, passed, SYSTEM as VERIFIER_SYSTEM, KEEP_SYSTEM as KEEP_VERIFIER_SYSTEM, KEEP_REPORT_SCHEMA,
+    REPORT_SCHEMA, CRITERIA, VERIFIER_MAX_TOKENS, THINKING_VERIFIER_MAX_TOKENS, VERIFIER_TEMPERATURE,
+    shot_staging_lines, source_design_lines, reference_state_lines)
 
-from tools.dialogue_models import DEFAULT_OLLAMA_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_BACKEND, resolve_model
+from tools.dialogue_models import DEFAULT_OLLAMA_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_BACKEND, BACKENDS, resolve_model, resolve_think_mode
 MAX_REWRITE_ATTEMPTS = 5
 
 
-SYSTEM = """Write one natural English spoken turn for the specified user or creative assistant making a video together. The current intention decides meaning; history and media notes supply context. Express requirements in your own words, rather than copying the notes or tone examples.
-Keep all requested details, option bindings, shot order and scope. For edits, state the change and enough to identify the subject; leave unchanged properties implicit. Distinguish images from videos, temporary from final choices, new from earlier versions, and pending from completed work. Correcting a referent is not adopting a version. Keep deliberate ambiguity and conflicting requirements until the planned clarification.
+SYSTEM = ATTRIBUTE_AUTHORITY + "\n" + """Write one natural English spoken turn for the specified user or creative assistant making a video together. The current intention decides meaning; history and media notes supply context. Express requirements in your own words, rather than copying the notes or tone examples.
+Keep all requested details, option bindings, shot order and scope. For edits, state the change and enough to identify the subject; leave unchanged properties implicit. Distinguish images from videos, new from earlier versions, and pending from completed work. Correcting a referent is not adopting a version. Keep deliberate ambiguity and conflicting requirements until the planned clarification.
+The product request and attached requirements are separate facts. Preserve the exact requested product types and counts. A rule describing formats for images and videos does not request both. State continuing settings as requirements taking effect from now on; state one-request settings as applying only this time. A rule decision changes settings, never the pending product type or count.
 The user directs the assistant to create media. The assistant delivers briefly, acknowledges a decision, or asks the specified question. Do not invent designs, prior discussion, production, preferences or scope. Use ordinary words and the supplied persona; vary structure when stock openings repeat. Usually use one or two sentences, allowing more for multiple edits/questions. Return dialogue only, without headings, role labels, arrow notation, field lists, JSON, analysis or media markers.
-For asset descriptions, the enumerated requested attributes describe the CURRENT version and override conflicting baseline observation prose (for example shoulder-length overrides short hair). Keep non-conflicting distinctive details. Convey all required details naturally, using several sentences when needed. Do not drop details merely to make the line short.
+For asset descriptions, the enumerated requested attributes describe the CURRENT version and override conflicting baseline observation prose (for example shoulder-length overrides short hair). Keep non-conflicting distinctive details. Convey all required details naturally, using several sentences when needed. Keep the details needed to carry out the request.
 """
 
+def current_source_design(description, overrides):
+    """Do not prime a first-reference writer with an obsolete source age."""
+    ages=[row.get('attributes',{}).get('age_group') for row in overrides
+          if row.get('attributes',{}).get('age_group') not in (None,'','unknown','not applicable')]
+    if len(ages)!=1:
+        return description
+    # Exact current age is supplied in reference_state_lines. Source prose is
+    # useful for compatible design details, but must not contradict that age.
+    text=re.sub(r'(?i)\b(?:(?:young|older|old|elderly|adult|adolescent|teenage|teen|senior)\s+)+(female|male|woman|man|girl|boy|person)\b',r'\1',description,count=1)
+    text=re.sub(r'(?i)\b(?:girl|woman)\b','female person',text,count=1)
+    text=re.sub(r'(?i)\b(?:boy|man)\b','male person',text,count=1)
+    text=re.sub(r'(?i)\b(?:child|children|toddler|baby|infant|teenager|adolescent)\b','person',text,count=1)
+    parts=[part for part in text.split(';') if not re.search(r'(?i)apparent age group\s*:',part)]
+    return re.sub(r' +',' ',';'.join(parts)).strip()
+
+
 PLACEHOLDER = re.compile(r"\[\[(?:image|video)_\d{4}\]\]")
-RULE_ACTIONS = {"set_persistent_rule", "confirm_rule", "override_rule", "confirm_override"}
+RULE_ACTIONS = {"set_cross_turn_rule", "confirm_cross_turn_rule", "resolve_rule_conflict", "confirm_rule_resolution", "request_rule_exception"}
 NO_DESIGN_ACTIONS = {"switch_for_trial", "suspend_task", "vague_request", "clarify_goal", "confirm_switch",
                      "clarify_update_scope", "ambiguous_reference", "request_preview",
                      "request_compilation", "reorder_shots", "replace_compilation_shots"} | RULE_ACTIONS
 REFERENCE_REQUESTS = {"request_asset", "specify_goal", "request_trial", "begin_task"}
 EDIT_REQUESTS = {"reject_and_edit", "request_variant", "request_rework", "request_reworks",
-                 "relative_request", "resume_task", "request_shot_update"}
+                 "relative_request", "resume_task", "request_shot_update", "request_version_restore"}
 ACKNOWLEDGMENTS = {"confirm_selection", "confirm_final", "confirm_synchronization",
-                   "confirm_project_rule", "confirm_rule", "confirm_override"}
+                   "confirm_project_rule"}
 ACT_GUIDANCE = {
+    "request_rule_exception": "State the specified image/video request and explicitly limit the differing requirement to this request only. Preserve the continuing rule for later requests. This exception is already explicit; do not invent a need for another permission question.",
     "set_cross_turn_rule": "Introduce the supplied rule and its exact global or partial scope. Do not invent exemptions for a global rule.",
     "confirm_cross_turn_rule": "Confirm the supplied effect and scope. For a partial rule, explicitly say other output categories are outside this particular rule; other existing rules still apply.",
-    "request_rule_conflict": "Request the specified media category explicitly, with the new treatment. A trial clip, standalone asset image and formal shot have different rule scopes. Leave the conflict for the assistant to point out; do not pre-authorize an exception.",
+    "request_rule_conflict": "Request the specified media category explicitly, with the new treatment. Only images and videos are media kinds; preserve the specified scope. Leave the conflict for the assistant to point out; do not pre-authorize an exception.",
     "clarify_rule_conflict": "Name the existing rule and why the new request conflicts. Offer every stated decision, including keeping the existing rule, before producing media.",
-    "resolve_rule_conflict": "State the chosen decision and its full stated scope: keep the earlier rule, allow this request only, or replace it going forward. If a rule covers all trial clips or all outputs, say so explicitly; do not narrow it to the current subject.",
+    "resolve_rule_conflict": "State the chosen decision and its full stated scope: keep the earlier rule, allow this request only, or replace it going forward. If a rule covers all images, all videos or all outputs, say so explicitly; do not narrow it to the current subject.",
     "cancel_cross_turn_rule": "Explicitly cancel only the specified rule. Keep other rules and already produced media unchanged.",
     "confirm_rule_cancel": "Confirm cancellation of this rule for future outputs. Other rules and existing media remain unchanged.",
     "confirm_rule_resolution": "Confirm the supplied rule decision and its exact duration and scope.",
@@ -49,10 +70,11 @@ ACT_GUIDANCE = {
     "set_project_rule": "State the project-wide footage requirement and its exact scope. Include any exemption for standalone references.",
     "confirm_project_rule": "Confirm the footage requirement, scope, and standalone-reference exemption stated in the content requirements.",
     "begin_task": "Request one initial still test image and state the subject's specified appearance.",
-    "request_shot": "Request a formal video shot using the existing references. Preserve every specified action, framing, camera direction and speed, and revealed scene detail even in a casual voice.",
+    "request_shot": "Request a video using the existing references. Preserve every specified action, framing, camera direction and speed, and revealed scene detail even in a casual voice.",
     "request_compilation": "Ask to assemble the existing clips in the specified order. Name them in spoken English, using first/then/finally rather than arrow notation.",
     "reorder_shots": "Ask to reorder the existing clips. Name each clip in exactly the intention's sequence; a generic 'this order' or 'this shot only' cannot convey that sequence.",
     "replace_compilation_shots": "Ask to replace the updated clips in the existing cut while keeping the other clips and order.",
+    "request_version_restore": "Express a preference for the specified earlier version and ask to use that same version again in the specified existing shot. This reuses an established reference; it is not a new design trial.",
     "request_rework": "Request the specified change to the existing subject in the named clip. Preserve the scope.",
     "suspend_task": "Pause the current task and switch to the other named subject. Leave the unfinished design unchanged.",
     "resume_task": "Return to the unfinished task and request only the specified change.",
@@ -61,13 +83,12 @@ ACT_GUIDANCE = {
     "accept_project": "Accept the existing cut as final. Do not request more production.",
     "correct_reference": "Correct the assistant: distinguish what was just shown from the earlier reference actually intended.",
     "clarify_reference": "Ask whether the existing reference shown is the one the user means. Do not propose edits.",
-    "conflicting_request": "Ask for the preview in the specified colors. Leave the conflict with the earlier rule for the assistant to clarify.",
-    "request_asset": "Request one still reference of this subject and retain the visible details in the content requirements.",
+    "request_asset": "Ask for one still reference image using the supplied visual description.",
     "request_variant": "Request the specified variant of the existing reference. When returning after discussion of another subject, reestablish which subject you want changed; a bare pronoun must have a clear conversational referent.",
     "specify_goal": "Request one still and state the visual details that clarify the preceding request.",
     "request_trial": "Request one still as an initial test of the specified design.",
     "request_candidates": "Ask the assistant to make two alternatives in the stated medium. Include every shared attribute once, even in a concise voice. Bind each differing detail to the first or second option.",
-    "adopt": "Choose or accept the existing version. Leave further production for another turn. For numbered options, explicitly keep the chosen number.",
+    "adopt": "Choose or accept the existing version. Leave further production for another turn. Use option numbers only when multiple alternatives were actually shown. Accepting a single image should sound like This one works or Let us use this one; do not call it first, option 1, or version 1.",
     "rollback": "Choose to return to the specified earlier version after trying the new one. This is a deliberate switch back, not a correction of what you meant earlier.",
     "vague_request": "Open a conversation about designing the subject without settling any visual details.",
     "clarify_goal": "Ask what the current subject should look like. Let the user supply the details.",
@@ -77,21 +98,16 @@ ACT_GUIDANCE = {
     "incompatible_requirements": "Deliberately request both incompatible requirements at the same time. Keep restrictions such as a single shot, camera, or file. Do not remove either requirement or resolve the contradiction; the assistant will ask about it next.",
     "clarify_conflict": "Explain the physical or editing reason specified for this turn. Ask the user which approach to take.",
     "resolve_conflict": "Propose the new action and framing yourself, as the user. The assistant gave a choice, so this is your own alternative shot description.",
-    "request_reworks": "Keep each requested change, shot number, and numbering basis. Leave deliberately vague subjects unnamed. Separate the two requests clearly.",
-    "clarify_reworks": "Ask all reference and scope questions in this one turn. Use ‘edit one’ and ‘edit two’ where helpful. Keep the candidates and scope questions with the right edit.",
-    "resolve_reworks": "Identify the intended versions and specify whether each change stays in that shot or carries over. Use clear labels if the two edits have different scopes.",
-    "temporary_adoption_trial": "Temporarily choose the newly delivered variant for the test, identifying its distinguishing detail. Request a short test clip showing a plausible action or relationship between the two specified subjects.",
+    "request_reworks": "Keep every requested task, change, shot number, and numbering basis. If assembly is also requested, retain its exact shot order and the appearance edit in the same turn. Leave deliberately vague subjects unnamed. Keep separate edits identifiable.",
+    "clarify_reworks": "Acknowledge any accompanying assembly request and its established rendering updates, then ask all reference and scope questions in this one turn. Keep each question with the right edit. The videos and assembly are still pending.",
+    "resolve_reworks": "Identify the intended versions and specify whether each change stays in that shot or carries over. Preserve any additional edit introduced while answering; its own scope/reference question remains pending. Use clear labels if edits have different scopes.",
+    "temporary_adoption_trial": "Choose the newly delivered variant for the test, identifying its distinguishing detail. Request a short test clip showing a plausible action or relationship between the two specified subjects.",
     "reject_and_edit": "Change only the specified field of the named subject or the whole setting. Preserve the distinction between changing the subject and changing a detail within it.",
     "request_preview": "Request another preview in a short sentence. Leave color processing and all visual design decisions unstated.",
-    "clarify_rule_override": "Ask whether color is a one-time exception or the default from now on.",
-    "clarify_update_scope": "Present the accompanying revised IMAGE preview, then ask whether to update just the mentioned shot or all EXISTING shots using this identity. Video clips have not been changed yet. Do not ask about future shots.",
-    "deliver_reworked_clips": "Present all accompanying updated clips together and confirm the agreed scope is complete. If a refreshed cut accompanies them, it contains those replacements in its existing order. Do not request more user work.",
+    "clarify_update_scope": "Ask whether to update just the mentioned shot or all EXISTING shots using this identity. Reference images and video clips are still pending unless a ready image is explicitly attached. Do not claim completed work or ask about future shots.",
+    "deliver_reworked_clips": "Present the completed revised video clip or clips and confirm the agreed scope. Asset reference images are separate from clips and are presented earlier in this assistant workflow. Mention a refreshed cut only if an assembly actually accompanies the clips. Do not request more user work.",
     "ambiguous_reference": "Ask to change an unspecified thing in one of the earlier still images. Leave the object, appearance, image number, and shot number unspecified.",
-    "set_persistent_rule": "Introduce black and white as the default for standalone previews and preserve the underlying designs.",
-    "confirm_rule": "Confirm black and white as the preview default and preserve the final footage.",
-    "one_time_exception": "Say that original colors apply just this once and that subsequent previews remain black and white.",
-    "override_rule": "End the black-and-white preview rule and restore original colors for all subsequent previews.",
-    "confirm_override": "Confirm that original colors are now the default for previews.",
+    "attribute_already_satisfied": "Explain that the requested attribute already exists in the current version and no edit is needed.",
 }
 
 # Content requirements, deliberately not fully worded character lines.
@@ -110,8 +126,6 @@ ASSISTANT_CONTENT = {
     "confirm_reference": "Clarified referent: the earlier object the user meant; next question: what change do they want? No version has been selected or revised.",
     "deliver_reworked_clips": "Completed results: every affected video clip within the confirmed scope, delivered together. Unaffected clips are unchanged.",
     "confirm_synchronization": "Decision to acknowledge: use the revised reference in the other shots too. Keep the earlier version available.",
-    "deliver_exception": "Completed result: this preview in original colors. Later previews remain black and white.",
-    "restore_persistent_rule": "Completed result: a preview following the black-and-white default.",
     "deliver_shot": "Completed result: the requested video shot.",
     "deliver_compilation": "Completed result: the requested assembly of existing clips.",
     "deliver_refreshed_compilation": "Completed result: updated shots substituted into the existing cut without changing the order. Earlier cut remains available.",
@@ -169,13 +183,14 @@ class QwenRealizer:
     def __init__(self, *, backend=DEFAULT_BACKEND, model=None,
                  base_url=None, output_dir=None,
                  max_tokens=256, timeout=180, temperature=0.9, top_p=0.95, top_k=50,
-                 personas=None, context_tokens=32768, asset_names=None, model_mode=None):
-        if backend not in ("ollama", "local", "vllm"):
-            raise ValueError("backend must be ollama, local or vllm")
+                 personas=None, context_tokens=32768, asset_names=None, model_mode=None, think_mode=None):
+        if backend not in BACKENDS:
+            raise ValueError("backend must be one of " + ", ".join(BACKENDS))
         if max_tokens < 32 or timeout <= 0:
             raise ValueError("Invalid Qwen generation budget")
         sampling = generation_options(dict(temperature=temperature, top_p=top_p, top_k=top_k))
         self.backend = backend
+        self.think_mode = resolve_think_mode(backend, think_mode)
         self.model, self.model_mode = resolve_model(backend, model, model_mode)
         self.rewrite_attempts = 0
         self.metrics = dict(model_requests=0, prompt_tokens=0, completion_tokens=0,
@@ -191,7 +206,7 @@ class QwenRealizer:
         self.context_tokens = context_tokens
         self.personas = personas or choose_personas(0)
         self.asset_names = asset_names or {}
-        self.verifier = QwenVerifier(self._verify_request,
+        self.verifier = QwenVerifier(self._verify_request, keep_request=self._verify_keep_request,
                                     output_dir=self.output_dir / "verifier" if self.output_dir else None)
         self.local = None
         if backend == "local":
@@ -202,6 +217,10 @@ class QwenRealizer:
             from cocreation import VLLMQwen
             self.local = VLLMQwen(model_id=self.model, base_url=self.base_url, timeout=timeout,
                                   output_dir=self.output_dir / 'runtime' if self.output_dir else None)
+        elif backend == "sonnet":
+            from cocreation import ClaudeSonnet
+            self.local = ClaudeSonnet(model_id=self.model, timeout=timeout, effort=self.think_mode,
+                                      output_dir=self.output_dir / "runtime" if self.output_dir else None)
 
     def close(self):
         if self.local is not None:
@@ -212,17 +231,79 @@ class QwenRealizer:
         purpose = getattr(self, "_writer_purpose", "Express the supplied content requirements.")
         prefix = (f"<think>\nThe {speaker}'s dialogue act has been decided: {purpose} "
                   "The content facts are fixed. Only the natural spoken wording remains.\n</think>\n\n")
-        control = getattr(self, "_writer_control", "")
-        system = SYSTEM + ("\nCurrent speech act (instructions, not spoken content): " + control if control else "")
-        text, self._last_finish_reason = self._generate(prompt, seed, system=system,
+        text, self._last_finish_reason = self._generate(prompt, seed, system=SYSTEM,
                                                        max_tokens=self.max_tokens,
                                                        assistant_prefill=prefix if self.model_mode == "thinking" else "")
         return text
+
+    def generation_candidates(self,tasks,*,seed,output_dir):
+        from tools.candidate_prompter import rewrite_candidates
+        return rewrite_candidates(tasks,self.generation_request,seed=seed,output_dir=output_dir)
 
     def generation_request(self, prompt, *, system, seed, max_tokens):
         """Reuse this model for text-only expert rewriting after the dialogue."""
         return self._generate(prompt, seed, system=system, max_tokens=max_tokens,
                               stage='prompt_rewriter', temperature=0.3)
+
+    def generation_reasoning(self, context, prompt, kind, *, seed, output_dir, references=()):
+        from tools.prompt_reasoner import PromptReasoner
+        def request(user, refs, **options):
+            text,finish=self._generate(user,options['seed'],system=options['system_prompt'],
+                max_tokens=options['max_new_tokens'],stage='prompt_reasoner',temperature=options['temperature'],
+                response_schema=options['response_schema'])
+            return dict(text=text,finish_reason=finish,enable_thinking=False)
+        return PromptReasoner(request, public_brief=getattr(self, "backend", DEFAULT_BACKEND) == "sonnet").write(context['visible_sequence'],prompt,context['latest_rules'],
+            kind=kind,references=references,output_position=context['output_position'],
+            output_count=context['output_count'],seed=seed%2**63,output_dir=output_dir,
+            rule_applicability=context.get('rule_applicability'))
+
+    def operation_reasoning(self, context, tool_call, *, seed, output_dir):
+        from tools.prompt_reasoner import PromptReasoner
+        def request(user, refs, **options):
+            text,finish=self._generate(user,options['seed'],system=options['system_prompt'],
+                max_tokens=options['max_new_tokens'],stage='operation_reasoner',temperature=options['temperature'],
+                response_schema=options['response_schema'])
+            return dict(text=text,finish_reason=finish,enable_thinking=False)
+        return PromptReasoner(request, public_brief=getattr(self, "backend", DEFAULT_BACKEND) == "sonnet").write_operation(context['visible_sequence'],tool_call,
+            context['latest_rules'],seed=seed%2**63,output_dir=output_dir,
+            source_formats=context.get('source_formats',()),
+            rule_applicability=context.get('rule_applicability'))
+
+    def delivery_reasoning(self, context, generation_steps, *, seed, output_dir):
+        return self._group_reasoning(context,generation_steps,seed=seed,output_dir=output_dir,
+                                     workflow='independent_outputs')
+
+    def rework_reasoning(self, context, generation_steps, *, seed, output_dir):
+        return self._group_reasoning(context,generation_steps,seed=seed,output_dir=output_dir,
+                                     workflow='asset_clip_rework')
+
+    def _group_reasoning(self, context, generation_steps, *, seed, output_dir, workflow):
+        from tools.prompt_reasoner import PromptReasoner
+        def request(user, refs, **options):
+            text,finish=self._generate(user,options['seed'],system=options['system_prompt'],
+                max_tokens=options['max_new_tokens'],stage='prompt_reasoner',temperature=options['temperature'],
+                response_schema=options['response_schema'])
+            return dict(text=text,finish_reason=finish,enable_thinking=False)
+        reasoner=PromptReasoner(request, public_brief=getattr(self, "backend", DEFAULT_BACKEND) == "sonnet")
+        write=reasoner.write_rework if workflow=='asset_clip_rework' else reasoner.write_delivery
+        return write(context['visible_sequence'],generation_steps,seed=seed%2**63,output_dir=output_dir)
+
+    def production_opening(self, context, *, seed):
+        payload = {key: context[key] for key in ('current_user_request', 'planned_outputs', 'planned_workflow')
+                   if key in context}
+        exchange = context.get('current_exchange', [])
+        if (len(exchange) >= 2 and exchange[-2]['role'] == 'assistant'
+                and exchange[-1]['role'] == 'user'
+                and (context.get('answers_clarification') or exchange[-2]['content'].rstrip().endswith('?'))):
+            payload['preceding_clarification'] = [
+                {key: turn[key] for key in ('role', 'content')} for turn in exchange[-3:-1]
+            ]
+        text, finish = self._generate(json.dumps(payload, ensure_ascii=False), seed,
+            system="Speak as the creative assistant. In one short, natural first-person sentence, acknowledge the current user request and say what I will make from the supplied plan. Use the preceding exchange only to resolve a clarification. Do not claim the media is ready. Return only the spoken sentence without tags, JSON or media markers.",
+            max_tokens=128, stage='production_opening', temperature=.6)
+        if finish == 'length' or _format_problems(text):
+            raise RuntimeError('Invalid pre-generation assistant reply')
+        return text.strip()
 
     def _verify_request(self, prompt, seed):
         # One invocation produces the whole report. No second finalization call.
@@ -231,22 +312,35 @@ class QwenRealizer:
                               max_tokens=budget, temperature=VERIFIER_TEMPERATURE,
                               response_schema=REPORT_SCHEMA)
 
+    def _verify_keep_request(self,prompt,seed):
+        self._verifier_thinking = ''
+        budget = THINKING_VERIFIER_MAX_TOKENS if self.model_mode == 'thinking' else VERIFIER_MAX_TOKENS
+        return self._generate(prompt,seed,system=KEEP_VERIFIER_SYSTEM,stage='verifier',
+                              max_tokens=budget,temperature=VERIFIER_TEMPERATURE,
+                              response_schema=KEEP_REPORT_SCHEMA)
+
     def _generate(self, *args, **kwargs):
         started = time.perf_counter()
         self.metrics["model_requests"] += 1
+        stage = kwargs.get('stage', 'rewrite')
         try:
             return self._generate_once(*args, **kwargs)
         finally:
-            self.metrics["model_seconds"] += time.perf_counter() - started
+            seconds = time.perf_counter() - started
+            self.metrics['model_seconds'] += seconds
+            timing = self.metrics.setdefault('stages', {}).setdefault(stage, dict(requests=0, seconds=0.0))
+            timing['requests'] += 1
+            timing['seconds'] += seconds
 
     def _generate_once(self, prompt, seed, *, system, max_tokens, stage="rewrite",
                   temperature=None, response_schema=None, assistant_prefill=None):
+        analysis_stage = stage in ("prompt_reasoner", "operation_reasoner")
         # Short spoken rewriting and semantic review have different budgets.
         # The judge must not inherit the writer's closed reasoning prefix.
-        if self.backend == "vllm":
+        if self.backend in ("vllm", "sonnet"):
             assistant_prefill = ""
         elif assistant_prefill is None:
-            assistant_prefill = ("<think>\n" if stage == "verifier" else "<think>\n\n</think>\n\n") if self.model_mode == "thinking" else ""
+            assistant_prefill = ("<think>\n" if stage == "verifier" else "<think>\n\n</think>\n\n") if self.model_mode == "thinking" and not analysis_stage else ""
         sampling = dict(self.sampling)
         if temperature is not None:
             sampling["temperature"] = temperature
@@ -255,15 +349,16 @@ class QwenRealizer:
         if self.local is not None:
             result = self.local(prompt, [], system_prompt=system,
                                 assistant_prefill=assistant_prefill or None,
-                                **({"enable_thinking": self.model_mode == "thinking"} if self.backend == "vllm" else {}),
+                                **({"enable_thinking": self.model_mode == "thinking" and not analysis_stage} if self.backend == "vllm" else {}),
                                 max_new_tokens=max_tokens, seed=seed, **sampling,
-                                **({'response_schema': response_schema} if self.backend == 'vllm'
+                                **({'effort': 'low'} if self.backend == 'sonnet' and stage in ('rewrite', 'verifier') else {}),
+                                **({'response_schema': response_schema} if self.backend in ('vllm', 'sonnet')
                                    or (self.backend == 'local' and self.model_mode == 'instruct') else {}))
-            if self.backend == 'vllm':
+            if self.backend in ('vllm', 'sonnet'):
                 self.metrics['prompt_tokens'] += result.get('input_tokens') or 0
                 self.metrics['completion_tokens'] += result.get('output_tokens') or 0
             text = result.get("text", "")
-            if stage == "verifier" and self.model_mode == "thinking" and self.backend != "vllm":
+            if stage == "verifier" and self.model_mode == "thinking" and self.backend not in ("vllm", "sonnet"):
                 if "</think>" in text:
                     self._verifier_thinking, text = text.rsplit("</think>", 1)
                     text = text.strip()
@@ -277,10 +372,9 @@ class QwenRealizer:
         body = dict(model=self.model, stream=False, keep_alive="15m",
                     options=dict(num_predict=max_tokens, **sampling, seed=seed, num_ctx=self.context_tokens))
         endpoint = "/api/generate"
-        if stage == "verifier":
+        if stage == "verifier" or analysis_stage:
             body.update(messages=[dict(role="system", content=system), dict(role="user", content=prompt)])
-            if self.model_mode == "thinking":
-                body["think"] = True
+            body["think"] = self.model_mode == "thinking" and not analysis_stage
             endpoint = "/api/chat"
         else:
             body.update(raw=True, prompt=chatml)
@@ -320,6 +414,8 @@ class QwenRealizer:
                 with (self.output_dir / "verifier" / "responses.jsonl").open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(result, ensure_ascii=False) + "\n")
             return result.get("message", {}).get("content", ""), result.get("done_reason")
+        if analysis_stage:
+            return result.get("message", {}).get("content", ""), result.get("done_reason")
         return result.get("response", ""), result.get("done_reason")
 
     def __call__(self, turn, media, previous=(), *, seed=None, review_feedback=None):
@@ -331,21 +427,26 @@ class QwenRealizer:
         last = history[-1] if history else None
         intent = turn["intent"]
         action = intent["action"]
+        products = requested_products(turn, media)
+        requirements = additional_requirements(intent)
         speaker = turn["role"].title()
         self._writer_speaker = speaker
         self._writer_purpose = ACT_GUIDANCE.get(action, "Express the supplied content requirements.")
+        if action == "clarify_update_scope" and intent.get("restore_media"):
+            self._writer_purpose = "Acknowledge that the earlier reference is available and ask the specified scope question. Video updates are pending. No new reference was generated."
         persona = self.personas[turn["role"]]
         prior_subject_discussion = []
         if intent.get("first_creation"):
             subjects = set(intent.get("asset_ids", []))
             prior_subject_discussion = [dict(role=old["role"], content=spoken_context(old)) for old in previous
                                         if subjects & set(old.get("intent", {}).get("asset_ids", []))]
-        draft = intent["description"]
+        draft = content_description(intent)
+        # Older plans may predate the explicit instruction in the description.
+        ambiguity = "Keep your reference deliberately ambiguous."
+        if action == "ambiguous_shot_number" and not draft.endswith(ambiguity):
+            draft = f"{draft} {ambiguity}"
         if turn["role"] == "assistant":
             draft = ASSISTANT_CONTENT.get(action, draft)
-        render_state = intent.get('output_render_state', {})
-        if monochrome(render_state) and action not in {'request_rule_conflict','resolve_rule_conflict'}:
-            draft = neutral_text(draft)
         current_names = [self.asset_names[a] for a in intent.get("asset_ids", []) if a in self.asset_names]
         shown_references = [dict(kind=media[p].get("kind"), description=media[p]["description"],
                                  subjects=[self.asset_names.get(a, a) for a in media[p].get("asset_ids", [])])
@@ -358,10 +459,19 @@ class QwenRealizer:
                      for p in intent.get("context_media", []) if p in media and media[p].get("kind") == "video"]
             draft = ("Assemble the existing video clips in this order; " + "; ".join(
                 f"{('First', 'Second', 'Third', 'Fourth')[i]}: {description}" for i, description in enumerate(clips))) if clips else draft.replace(" → ", "; Next clip: ")
-        if action == "request_shot" and intent.get("shot_description"):
-            draft = "Video content: " + intent["shot_description"] + ". Use the existing " + ", ".join(current_names) + " references."
-        if monochrome(render_state):
-            current_names=[neutral_text(name) for name in current_names]
+        shot_staging = None
+        if action in {"request_shot", "resolve_conflict"} and intent.get("shot_description"):
+            shot_staging = intent['shot_description'].replace('long shot', 'wide shot')
+            if action == 'request_shot':
+                draft = ("Request a new video using the existing " + ", ".join(current_names) + " references"
+                         "; Preserve the setting, framing, camera movement, subject actions and spatial layout of the shot staging below.")
+            self._writer_purpose += ' Shot staging supplies action and camera information. Use the current adopted attributes for every subject; this shot request does not authorize a silent asset appearance edit.'
+        if action == 'request_reworks' and intent.get('compound_request'):
+            draft = draft.replace(' → ', '; then ')
+        if action == 'request_candidates':
+            draft += '; Request two separate media outputs, one per option, in the stated medium.'
+            self._writer_purpose += ' Make the separate output count explicit: two separate images or two independent single-shot clips, matching the stated medium. Comparison is the purpose of these outputs, not a combined canvas or a multi-shot video.'
+            self._writer_purpose += ' Current attributes are bound to their numbered option and override conflicting baseline wording in that option. A color applies to the named subject itself, not an invented accessory or another main object. Express the resulting appearance naturally; do not say main object color.'
         if action == "confirm_switch" and current_names:
             draft = f"Ask the user how the {current_names[0]} should look."
         if action == "request_preview":
@@ -375,15 +485,21 @@ class QwenRealizer:
             choices = last.get("output_media", []) if last else []
             selected = intent.get("context_media", [])
             if action == "adopt" and len(choices) == 1 and selected == choices:
-                draft = f"Version decision: accept the single reference{subject} just shown."
+                draft = f"Version decision: accept the single reference{subject} just shown. Say this one works or let us use this one; no numbered choice exists."
             if len(choices) > 1 and len(selected) == 1 and selected[0] in choices:
                 draft += f" Selected option number: {choices.index(selected[0]) + 1}."
-            draft += " Decision status: " + intent.get("decision", "accepted") + "."
+        if action == "temporary_adoption_trial":
+            # Legacy action/decision names describe planner state, not spoken requirements.
+            draft = ("Choose the newly delivered variant and request a short test clip "
+                     "showing a plausible action or interaction between the specified subjects.")
+        if action == "clarify_update_scope" and intent.get("restore_media"):
+            draft = "The earlier reference is available. Video clips are unchanged. Ask whether to use that version in the mentioned shot only or all existing shots using the subject."
         if action == "deliver_reworked_asset":
             draft = ("Completed result: the revised reference image. Clip updates are still pending. Agreed scope: "
                      + ("this shot only; other uses keep the earlier version."
                         if intent.get("scope") == "shot" else "all existing clips using this subject."))
-        if "required_attribute" in intent and action not in REFERENCE_REQUESTS | {"request_candidates"}:
+        if "required_attribute" in intent and (action not in REFERENCE_REQUESTS | {"request_candidates"}
+                                                  or intent["required_attribute"].get("field") == "age_group"):
             attribute = intent["required_attribute"]
             draft += f"; Required {attribute['label']} of this version: {attribute['value']}."
         if action == "deliver_reworked_assets":
@@ -391,10 +507,18 @@ class QwenRealizer:
                 name = self.asset_names.get(edit["asset_id"], edit["asset_id"])
                 scope = "this shot only" if edit["scope"] == "shot" else "all existing shots using this subject"
                 draft += f"; {name}: revised reference ready, clip updates still pending for {scope}."
+        if action == 'deliver_reworked_clips' and intent.get('compound_request'):
+            draft = 'Completed results: the clips with the confirmed identity changes and established rendering updates, plus their assembly in the requested order. No further scope confirmation is needed.'
+        if action == 'deliver_reworked_clips' and intent.get('asset_update_workflow'):
+            workflow=intent['asset_update_workflow']
+            draft=('Completed result: '+str(len(workflow['clips']))+' revised video clip(s). '
+                   'The asset reference image(s) were already presented earlier in this same workflow; they are not additional clips. '
+                   +('The refreshed assembly is also ready.' if workflow.get('compilation') else ''))
         # Project only facts this speech act needs to express. Detailed media
         # evidence belongs to the independent judge, not the spoken writer.
         minimal_delivery = (turn["role"] == "assistant" and bool(turn.get("output_media"))
                             and action in ASSISTANT_CONTENT and "required_attribute" not in intent
+                            and not intent.get('rule_event')
                             and action not in {"deliver_reworked_asset", "deliver_reworked_assets"})
         self_contained = (turn["role"] == "assistant" and bool(turn.get("output_media"))) or action in (
             ACKNOWLEDGMENTS | {"request_asset", "request_trial", "begin_task", "request_candidates",
@@ -404,26 +528,44 @@ class QwenRealizer:
                               "ambiguous_reference", "request_reworks", "request_rule_followup"})
         writer_history = [] if self_contained else history
         draft = draft.replace("long shot", "wide shot")
-        if monochrome(render_state) and action not in {"request_rule_conflict","resolve_rule_conflict"}:
-            draft = neutral_text(draft)
+        source_design = None
+        if action in REFERENCE_REQUESTS and intent.get('attribute_overrides'):
+            source_design = draft
+            draft = "Request a still reference image of " + ", ".join(current_names)
         self._writer_control = self._writer_purpose
+        if intent.get('rule_overlay'):
+            self._writer_control += ' Express the requested products and their attached settings as distinct requirements. The products section alone determines what and how many to create. The settings section determines treatment, duration and scope; mentions of other media categories there do not add products. A delivery with a rule replacement also briefly acknowledges its continuing scope.'
+        elif action == 'clarify_reworks' and intent.get('compound_request'):
+            self._writer_control += ' Acknowledge the requested assembly and the rendering updates required by established rules before asking the outstanding scope/reference questions. These updates are pending, not completed; the rule itself needs no new permission.'
+        else:
+            self._writer_control += ' Do not restate previously agreed persistent rules in routine requests or deliveries. Only discuss a rule when this turn sets, cancels, challenges or overrides it.'
         if not previous and turn["role"] == "user":
             self._writer_control += " A fresh conversation starts. You are the user originating this request or these project requirements. Address the assistant directly with what you want them to do. The assistant is receiving your requirements for the first time; they have not given you instructions or an explanation to confirm."
-        if turn["role"] == "assistant" and turn.get("output_media") and action in ASSISTANT_CONTENT and action not in {"clarify_update_scope", "clarify_reworks"}:
+        if action == 'clarify_reworks' and not turn.get('output_media'):
+            self._writer_control += ' None of the requested edits has been rendered yet. Acknowledge the requested changes as pending and ask the supplied questions; do not say that an edit has been applied.'
+        if turn["role"] == "assistant" and turn.get("output_media") and action in ASSISTANT_CONTENT and action not in {"clarify_update_scope", "clarify_reworks"} and not intent.get('rule_event'):
             self._writer_control += " This is a delivery-only turn: use a single brief presentation, without a follow-up offer or question."
         rule_decision = intent.get("rule_event", {}).get("outcome") if action == "resolve_rule_conflict" else None
         if rule_decision == "keep":
-            self._writer_control += " The user chooses to keep the earlier rule and withdraw the conflicting change. The current request must follow the earlier rule too. Do not ask for the rejected treatment as a test or exception."
+            self._writer_control += " The user keeps the earlier rule with its full stated scope and still wants the pending media. Explicitly ask to proceed with the requested content under the retained setting. Only the conflicting setting is withdrawn; the image/video request is not canceled. Do not request the conflicting treatment."
         if action in {'clarify_update_scope','clarify_reworks'} and turn.get('output_media'):
             self._writer_control += ' The attached asset images are ready previews. Say the reference preview is updated and ask the specified scope question. The VIDEO clips are pending. Never claim a clip is already updated.'
         if intent.get('generation_mode') == 'new_video':
             self._writer_control += ' This turn concerns a NEW video shot. Do not call it the previous/final video or describe it as reformatting a previously generated clip.'
-        if monochrome(render_state) and action not in {'request_rule_conflict','resolve_rule_conflict'}:
-            self._writer_control += ' The entire requested media output must be black and white under the higher-priority agreed rule. Omit source hue and saturation details; never deny this rule or invent a selective-color exception.'
-        base_control = self._writer_control
-        if review_feedback:
-            self._writer_control += "\nReviewer correction to apply: " + str(review_feedback)
+        first_reference_without_source = (turn['role']=='user' and intent.get('first_creation')
+            and not turn.get('input_media') and not intent.get('context_media') and not intent.get('display_media'))
+        first_reference_requirement = ('This is the first reference image for these subjects and no source media is supplied. '
+            'Describe the desired image directly using the supplied concrete details and known attributes. '
+            'The design notes are content to express, not a visual reference the assistant can inspect. '
+            'Do not ask to preserve, match or inspect an existing/current/source reference that does not exist. '
+            'Leave unspecified appearance open rather than inventing prior media.') if first_reference_without_source else None
+        if first_reference_requirement:
+            self._writer_control += ' '+first_reference_requirement
         lines = [f"Speak as the {speaker} with this tone:", persona["style"]]
+        if turn["role"] == "user":
+            lines.append("Speak casually when it fits. Use conversational shorthand or leave incidental details implicit "
+                         "when the request remains clear. Keep the core action, identifying details, explicit decisions, "
+                         "requested changes and their scope.")
         if persona.get("example"):
             lines += ["", "Tone examples:", "<tone_examples>", persona["example"], "</tone_examples>",
                       "Imitate tone only; use the current intention for content."]
@@ -437,9 +579,19 @@ class QwenRealizer:
             lines.append("(No previous message.)" if not previous else "(The current intention contains the necessary context.)")
         reply_instruction = (f"Now, write a natural reply to this message from the {speaker}'s point of view."
                              if writer_history else f"Now, write the current turn from the {speaker}'s point of view.")
-        lines += ["", reply_instruction,
-                  "", "Reply intention:", "Content requirements (meaning to express, not wording to copy):"]
+        prefix = [*lines, "", reply_instruction, "",
+                  "Current speech act (instructions, not spoken content): " + self._writer_control]
+        lines = ["Reply intention:"]
+        if products:
+            lines += ['', *product_lines(products)]
+        lines += ['', 'Content and action for this turn (meaning to express, not wording to copy):']
         lines += ["- " + part.strip() for part in draft.split(";") if part.strip()]
+        if products or requirements:
+            lines += ['', *requirement_lines(requirements)]
+        if shot_staging:
+            lines += ['', *shot_staging_lines(shot_staging)]
+        if source_design:
+            lines += ['', *source_design_lines(current_source_design(source_design,intent.get('attribute_overrides',[])))]
         if not minimal_delivery and action not in {"ambiguous_reference", "ambiguous_shot_number", "request_reworks", "clarify_reworks", "resolve_reworks"} and current_names:
             lines.append("Subject(s): " + ", ".join(current_names))
         if turn["role"] == "assistant" and turn.get("output_media"):
@@ -451,23 +603,23 @@ class QwenRealizer:
             target = correction["target_name"]
         bound_references = []
         if action not in {"ambiguous_reference", "ambiguous_shot_number", "request_reworks", "clarify_reworks", "resolve_reworks"}:
-            bound_references = [dict(kind=media[p].get("kind"), purpose=media[p].get("purpose"),
+            bound_references = [dict(kind=media[p].get("kind"), operation=media[p].get("operation"),
                                      subjects=[self.asset_names.get(a, a) for a in media[p].get("asset_ids", [])])
                                 for p in intent.get("context_media", []) if p in media]
-        return_instruction = f"Return only the {speaker.lower()}'s spoken line."
+        return_instruction = f"Use 5–200 English words. Return only the {speaker.lower()}'s spoken line."
         rule_context = intent.get('media_rule_context', [])
-        if rule_context and turn['role'] == 'user':
-            lines += ['', 'Exact rule scope for this generation request (other partial rules do not apply):'] + rule_context
-            lines.append('These conditions are already agreed. Do not extend them to another output category. Color processing and background season are separate: original-color rendering is not a season. Underlying design colors are distinct from rendering treatment; current output conditions replace conflicting source-shot conditions.')
-        if turn['role'] == 'assistant' and turn.get('output_media') and action not in {'clarify_update_scope','clarify_reworks'}:
+        # Routine speech expresses only the new request. Persistent state stays
+        # in Python and the generation contracts; rule events already contain
+        # their exact scope and requirements in the draft.
+        if turn['role'] == 'assistant' and turn.get('output_media') and action not in {'clarify_update_scope','clarify_reworks'} and not intent.get('rule_event'):
             lines.append('This is only a delivery of the prepared result. Do not add appearance, scene, rule or processing claims, a question, or an offer of further work.')
-        # Planner shot requests produce purpose='shot' media. State that category
-        # to both models so partial formal-shot rules cannot be misclassified.
-        requested_media_role = intent.get('requested_media_role') or ('shot' if action in {'request_shot','request_shot_update'} else None)
-        if requested_media_role:
-            from scripts.dialogue_generation.cross_turn_rule import ROLE_NAMES
-            lines += ['', 'Required media category: ' + ROLE_NAMES[requested_media_role] + '.',
-                      'Use natural language for this category: a new video shot or an update to the existing clip, according to generation_mode. Do not say formal shots category, production category, or similar internal labels. A video shot differs from a still image or exploratory trial.']
+        requested_media_kind = ((products[0]['kind'] if len(products) == 1 else None) if products else
+            intent.get('requested_media_kind') or ('video' if action in {'request_shot', 'request_shot_update'} else None))
+        if requested_media_kind:
+            lines += ['', 'Requested media kind: ' + requested_media_kind + '.', 'Images and videos are the only media categories. Do not invent trial/formal/final categories or treat those as visual styles.']
+        overrides = intent.get('attribute_overrides', [])
+        if overrides and not minimal_delivery and action not in NO_DESIGN_ACTIONS:
+            lines += ['', *reference_state_lines(overrides)]
         if action == 'clarify_rule_conflict':
             lines += ['', 'Required question structure:',
                       '1. Remind the user of the existing rule and its scope.',
@@ -475,9 +627,8 @@ class QwenRealizer:
                       'Do not choose, promise or announce any of these decisions yourself. The user has not answered yet.']
         if action == 'confirm_cross_turn_rule' and intent.get('scope') == 'partial':
             lines.append('Explicitly say that other output categories are not restricted by this particular rule. Do not leave this boundary implicit.')
-        prompt = "\n".join(lines + ["", return_instruction])
-        if monochrome(render_state) and action not in {'request_rule_conflict','resolve_rule_conflict'}:
-            draft = neutral_text(draft)
+        suffix = [*lines, "", return_instruction]
+        important_requirements = [str(review_feedback)] if review_feedback else []
         # Give the judge a factual evaluation brief, not a role-playing prompt.
         # Each semicolon-delimited planning note stays separate so a less salient
         # requirement is not hidden behind the main action. This only formats
@@ -492,29 +643,40 @@ class QwenRealizer:
             "clarify_reworks", "resolve_reworks"
         } else [])
         brief = dict(
-            speaker=turn["role"], speaking_style=persona["style"], action=action,
+            speaker=turn["role"], action=action,
             subjects=explicit_subjects,
             conversation_start=not previous,
-            python_description=neutral_text(intent["description"]) if monochrome(render_state) else intent["description"],
             reference_requirements=reference_requirements(intent),
             draft_content_requirements=[part.strip() for part in draft.split(";") if part.strip()],
-            semantic_purpose=ACT_GUIDANCE.get(action, "Express the current content requirements."),
-            intent_facts={key:intent[key] for key in ("decision", "scope", "first_creation", "required_attribute",
-                         "numbering_operation", "numbering_basis", "requested_media_role") if key in intent},
+            requested_outputs=products,
+            additional_requirements=requirements,
+            semantic_purpose=self._writer_purpose,
+            intent_facts={key:intent[key] for key in ("scope", "first_creation", "required_attribute",
+                         "numbering_operation", "numbering_basis", "requested_media_kind") if key in intent},
             previous_messages=[dict(role=old["role"], content=spoken_context(old)) for old in verification_history],
             recent_same_speaker_openings=openings,
             bound_references=bound_references,
             shown_media=[{key: value for key, value in row.items() if key != "description"} for row in shown_references],
-            delivered_media=[dict(kind=media[p].get("kind"), purpose=media[p].get("purpose"),
+            delivered_media=[dict(kind=media[p].get("kind"), operation=media[p].get("operation"),
                                  subjects=[] if minimal_delivery else [self.asset_names.get(a, a) for a in media[p].get("asset_ids", [])])
                             for p in turn.get("output_media", []) if p in media],
         )
-        if requested_media_role:
-            brief['intent_facts']['requested_media_role'] = requested_media_role
+        if requested_media_kind:
+            brief['intent_facts']['requested_media_kind'] = requested_media_kind
+        if first_reference_requirement:
+            brief['reference_creation_requirement'] = first_reference_requirement
+        if shot_staging:
+            brief['shot_staging'] = shot_staging
+        if source_design:
+            brief['source_design'] = source_design
         if rule_decision:
             brief["intent_facts"]["rule_decision"] = rule_decision
+        if overrides:
+            brief['attribute_overrides'] = overrides
         if rule_context:
             brief['media_rule_context'] = rule_context
+        if intent.get('rule_request'):
+            brief['rule_request'] = intent['rule_request']
         if (action in EDIT_REQUESTS | {"request_variant"} and len(explicit_subjects) == 1 and previous
                 and intent.get("reference_policy", "clear") == "clear"):
             last_subjects = previous[-1].get("intent", {}).get("asset_ids", [])
@@ -545,7 +707,8 @@ class QwenRealizer:
                 )
         if action == "adopt" and len(selected) == 1 and selected[0] in choices:
             brief["offered_choice_count"] = len(choices)
-            brief["selected_choice_number"] = choices.index(selected[0]) + 1
+            if len(choices) > 1:
+                brief["selected_choice_number"] = choices.index(selected[0]) + 1
         # An alternative may be a future planned variant. It is not a fact
         # about the current conversation and is unnecessary for this judgment.
         if "required_attribute" in brief["intent_facts"]:
@@ -575,12 +738,15 @@ class QwenRealizer:
         if intent.get("first_creation"):
             brief["prior_subject_discussion"] = prior_subject_discussion
             brief["subject_previously_discussed"] = bool(prior_subject_discussion)
-        if turn["role"] == "assistant" and turn.get("output_media") and action not in {"clarify_update_scope","clarify_reworks"}:
-            brief["delivery_requirement"] = "Briefly present the ready media, without a follow-up offer, question, or extra claims about appearance, scene, rules or processing. Such added claims are outside this delivery intention."
+        if turn["role"] == "assistant" and turn.get("output_media") and action not in {"clarify_update_scope","clarify_reworks"} and not intent.get('rule_event'):
+            brief["delivery_requirement"] = "Present the ready media. Ordinary cues to view or explore this result are part of the delivery. A new offer of work, a question requiring an answer, or an unsupported claim about appearance, scene, rules or processing is outside this delivery intention."
         if action in ACKNOWLEDGMENTS:
             brief["acknowledgment_requirement"] = "Confirm the already-made decision; no question or next production step."
         problems = []
         for attempt in range(MAX_REWRITE_ATTEMPTS):
+            requirements_block = [f"Important turn requirement: {item}" for item in important_requirements]
+            sections = [prefix, requirements_block, suffix] if requirements_block else [prefix, suffix]
+            prompt = "\n\n".join("\n".join(section) for section in sections)
             self._last_finish_reason = None
             self.rewrite_attempts += 1
             text = self._request(prompt, seed + attempt)
@@ -589,8 +755,6 @@ class QwenRealizer:
                 text = text.rsplit("</think>", 1)[1]
             text = text.strip() if isinstance(text, str) else text
             problems = _format_problems(text)
-            if monochrome(render_state) and action not in {'request_rule_conflict','resolve_rule_conflict'} and re.search(r"(?i)(?:not|never|isn't|is not) (?:in |rendered in )?black[ -]and[ -]white|except .*colou?r|selective colou?r", text):
-                problems.append('The current output must follow the agreed black-and-white rule. Do not deny it or invent a selective-color exception.')
             if problems:
                 self.metrics["format_rejections"] += 1
             report = None
@@ -631,10 +795,9 @@ class QwenRealizer:
                 return text
             # Feedback describes the LAST candidate. Do not accumulate stale
             # diagnoses of candidates which have already been replaced.
-            correction = report["critique"] if report else " ".join(problems)
-            self._writer_control = base_control + "\nCorrection to apply: " + correction
+            latest_requirement = report["critique"] if report else " ".join(problems)
+            important_requirements = [latest_requirement]
             if review_feedback:
-                self._writer_control += "\nReviewer correction: " + str(review_feedback)
-            prompt = "\n".join(lines + ["", return_instruction])
+                important_requirements.append(str(review_feedback))
         raise RuntimeError(f"Qwen rewrite rejected for turn {turn['id']} after {MAX_REWRITE_ATTEMPTS} attempts: "
                            + " ".join(problems))

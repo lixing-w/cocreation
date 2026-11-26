@@ -16,6 +16,17 @@ from cocreation.vdn_worker import validate_media, prepare_assets, stop
 
 
 class VDNTests(unittest.TestCase):
+    def test_classic_two_pass_canvas_is_sent_as_cli_parameters(self):
+        installation=dict(python='python',cache='cache',base='base',checkpoint='checkpoint',
+                          comfy_root='comfy',model_paths='paths')
+        for width,height in ((1024,576),(576,1024),(1024,1024)):
+            r=VDNH3()('A single object moves.',width=width,height=height,steps=8,two_pass=True,dry_run=True)
+            self.assertEqual((r['options']['base_steps'],r['options']['refine_steps']),(8,3))
+            command=generation_command(r,Path('/tmp/job'),installation)
+            for flag,value in (('--width',width),('--height',height),('--base-steps',8),('--refine-steps',3),('--upscale-factor',2)):
+                self.assertEqual(command[command.index(flag)+1],str(value))
+            self.assertIn('--two-pass',command)
+
     def test_multimodal_labels_and_two_pass(self):
         refs = [Reference('v', 'v.mp4', 'video'), Reference('a', 'a.wav', 'audio'),
                 Reference('i', 'i.png', 'image'), Reference('i2', 'i2.png', 'image')]
