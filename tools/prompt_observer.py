@@ -1,6 +1,6 @@
 """Convert H3 structured prompts / OpenVid captions to observation.json, without media.
 
-This describes intended content, not verified video content. See docs/prompt_observer.md.
+This describes intended content, not verified video content. See docs/observation.md.
 """
 from __future__ import annotations
 

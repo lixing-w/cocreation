@@ -1,5 +1,7 @@
 # VDN-H3 through the FreeVideo CLI
 
+> **Legacy backend.** VDN-H3 (FreeVideo) is a distilled H3. It runs fast, but its visual quality was too poor for our data, so the production pipeline (native batch) does not use it. Production uses native MiniMax-H3 / H3-Image via SGLang (see [media_backends.md](media_backends.md)). The wrapper and setup below are kept for reference and older catalogs.
+
 The `VDNH3` wrapper supports ordered image, video and audio references. It runs
 FreeVideo's native CLI, not the ComfyUI web server. ComfyUI remains an encoder-library
 dependency. Existing Qwen, Flux and official MiniMaxH3 backends are unchanged.
